@@ -8,7 +8,13 @@ from dotenv import load_dotenv
 from typing import Dict, Any
 
 # Load environment variables from .env file
+# Try to load from current directory first, then from backend directory
 load_dotenv()
+if not os.path.exists('.env'):
+    # If .env not found in current directory, try backend directory
+    backend_env_path = os.path.join(os.path.dirname(__file__), '.env')
+    if os.path.exists(backend_env_path):
+        load_dotenv(backend_env_path)
 
 
 class ATSConfig:

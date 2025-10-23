@@ -20,6 +20,12 @@ python -m spacy download en_core_web_sm
 mkdir -p backend/uploads
 mkdir -p logs
 
+# Check if .env exists in backend directory
+if [ ! -f "backend/.env" ]; then
+    echo "WARNING: backend/.env file not found!"
+    echo "Please ensure environment variables are set in Railpack dashboard"
+fi
+
 # Start the Flask application
 echo "Starting Flask application on port $PORT..."
 cd backend

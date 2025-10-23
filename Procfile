@@ -1,1 +1,1 @@
-web: cd backend && python ats_api.py
+web: bash start.sh

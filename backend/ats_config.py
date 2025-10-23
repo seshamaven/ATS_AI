@@ -113,6 +113,14 @@ class ATSConfig:
     @classmethod
     def validate_config(cls) -> bool:
         """Validate that all required configuration is present."""
+        # Debug: Print environment variables for troubleshooting
+        print("=== DEBUG: Environment Variables ===")
+        print(f"OPENAI_API_KEY: {'SET' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
+        print(f"AZURE_OPENAI_API_KEY: {'SET' if os.getenv('AZURE_OPENAI_API_KEY') else 'NOT SET'}")
+        print(f"AZURE_OPENAI_ENDPOINT: {'SET' if os.getenv('AZURE_OPENAI_ENDPOINT') else 'NOT SET'}")
+        print(f"All env vars: {list(os.environ.keys())}")
+        print("=====================================")
+        
         required_vars = [
             'MYSQL_HOST',
             'MYSQL_USER',
@@ -123,6 +131,9 @@ class ATSConfig:
         # Check for either Azure OpenAI or regular OpenAI
         has_azure = cls.AZURE_OPENAI_API_KEY and cls.AZURE_OPENAI_ENDPOINT
         has_openai = cls.OPENAI_API_KEY
+        
+        print(f"has_azure: {has_azure} (key: {bool(cls.AZURE_OPENAI_API_KEY)}, endpoint: {bool(cls.AZURE_OPENAI_ENDPOINT)})")
+        print(f"has_openai: {has_openai} (key: {bool(cls.OPENAI_API_KEY)})")
         
         if not (has_azure or has_openai):
             print("Missing OpenAI configuration: Need either AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY")

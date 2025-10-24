@@ -143,6 +143,42 @@ class ATSDatabase:
                 self.connection.rollback()
             return None
     
+    def get_all_resumes(self) -> List[Dict[str, Any]]:
+        """Get all resumes from database."""
+        try:
+            query = """
+                SELECT 
+                    candidate_id, name, email, phone,
+                    total_experience, primary_skills, secondary_skills, all_skills,
+                    domain, sub_domain,
+                    education, education_details,
+                    current_location, preferred_locations,
+                    current_company, current_designation,
+                    notice_period, expected_salary, current_salary,
+                    resume_text, resume_summary,
+                    file_name, file_type, file_size_kb,
+                    embedding, embedding_model,
+                    status, source,
+                    created_at, updated_at
+                FROM resume_metadata 
+                ORDER BY created_at DESC
+            """
+            
+            self.cursor.execute(query)
+            columns = [desc[0] for desc in self.cursor.description]
+            results = []
+            
+            for row in self.cursor.fetchall():
+                resume_dict = dict(zip(columns, row))
+                results.append(resume_dict)
+            
+            logger.info(f"Retrieved {len(results)} resumes from database")
+            return results
+            
+        except Error as e:
+            logger.error(f"Error retrieving resumes: {e}")
+            return []
+    
     def get_resume_by_id(self, candidate_id: int) -> Optional[Dict[str, Any]]:
         """Get resume by candidate ID."""
         try:

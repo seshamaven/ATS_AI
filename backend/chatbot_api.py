@@ -642,8 +642,334 @@ class SemanticSimilarityChecker:
             return False, 0.0
 
 
-@app.route('/chat', methods=['POST'])
-def chat():
+def analyze_job_description(job_description: str, job_title: str = '') -> Dict[str, Any]:
+    """
+    Analyze job description to extract key requirements.
+    
+    Args:
+        job_description: The job description text
+        job_title: Optional job title
+    
+    Returns:
+        Dictionary with extracted requirements
+    """
+    try:
+        # Common technical skills patterns
+        technical_skills = [
+            'python', 'java', 'javascript', 'typescript', 'react', 'angular', 'vue',
+            'node.js', 'django', 'flask', 'spring', 'express', 'sql', 'postgresql',
+            'mysql', 'mongodb', 'redis', 'docker', 'kubernetes', 'aws', 'azure',
+            'gcp', 'terraform', 'jenkins', 'git', 'linux', 'unix', 'html', 'css',
+            'bootstrap', 'jquery', 'webpack', 'babel', 'eslint', 'jest', 'cypress',
+            'selenium', 'pytest', 'machine learning', 'deep learning', 'tensorflow',
+            'pytorch', 'pandas', 'numpy', 'scikit-learn', 'data science', 'analytics',
+            'tableau', 'power bi', 'excel', 'r', 'matlab', 'spark', 'hadoop', 'kafka'
+        ]
+        
+        # Experience patterns
+        experience_patterns = [
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?experience',
+            r'(\d+)\+?\s*years?\s*(?:of\s*)?(?:relevant\s*)?experience',
+            r'minimum\s*(\d+)\s*years?',
+            r'at\s*least\s*(\d+)\s*years?',
+            r'(\d+)\s*to\s*(\d+)\s*years?'
+        ]
+        
+        # Education patterns
+        education_patterns = [
+            r'bachelor[s]?\s*(?:of\s*)?(?:science\s*)?(?:in\s*)?(?:computer\s*)?(?:science|engineering)',
+            r'master[s]?\s*(?:of\s*)?(?:science\s*)?(?:in\s*)?(?:computer\s*)?(?:science|engineering)',
+            r'phd\s*(?:in\s*)?(?:computer\s*)?(?:science|engineering)',
+            r'degree\s*in\s*(?:computer\s*)?(?:science|engineering)',
+            r'engineering\s*degree',
+            r'computer\s*science\s*degree'
+        ]
+        
+        # Location patterns
+        location_patterns = [
+            r'(?:based\s*in|located\s*in|work\s*from)\s*([a-zA-Z\s,]+)',
+            r'(?:hybrid|remote|onsite|work\s*from\s*home)',
+            r'(?:bangalore|mumbai|delhi|hyderabad|chennai|pune|kolkata|gurgaon|noida)'
+        ]
+        
+        # Initialize analysis result
+        analysis = {
+            'job_title': job_title,
+            'required_skills': [],
+            'preferred_skills': [],
+            'min_experience': 0,
+            'max_experience': 0,
+            'education_requirements': [],
+            'location_requirements': [],
+            'work_mode': [],
+            'key_requirements': [],
+            'responsibilities': []
+        }
+        
+        # Convert to lowercase for analysis
+        jd_lower = job_description.lower()
+        
+        # Extract technical skills
+        for skill in technical_skills:
+            if skill in jd_lower:
+                # Check if it's required or preferred
+                skill_context = jd_lower[max(0, jd_lower.find(skill)-50):jd_lower.find(skill)+50]
+                if any(word in skill_context for word in ['required', 'must', 'mandatory', 'essential']):
+                    analysis['required_skills'].append(skill)
+                elif any(word in skill_context for word in ['preferred', 'nice to have', 'bonus', 'plus']):
+                    analysis['preferred_skills'].append(skill)
+                else:
+                    analysis['required_skills'].append(skill)  # Default to required
+        
+        # Extract experience requirements
+        import re
+        for pattern in experience_patterns:
+            matches = re.findall(pattern, jd_lower)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # Range pattern
+                    min_exp, max_exp = int(match[0]), int(match[1])
+                    analysis['min_experience'] = max(analysis['min_experience'], min_exp)
+                    analysis['max_experience'] = max(analysis['max_experience'], max_exp)
+                else:
+                    # Single value pattern
+                    exp = int(match)
+                    analysis['min_experience'] = max(analysis['min_experience'], exp)
+        
+        # Extract education requirements
+        for pattern in education_patterns:
+            if re.search(pattern, jd_lower):
+                analysis['education_requirements'].append(pattern)
+        
+        # Extract location requirements
+        for pattern in location_patterns:
+            matches = re.findall(pattern, jd_lower)
+            for match in matches:
+                if isinstance(match, str):
+                    analysis['location_requirements'].append(match.strip())
+        
+        # Extract work mode
+        if 'remote' in jd_lower or 'work from home' in jd_lower:
+            analysis['work_mode'].append('remote')
+        if 'hybrid' in jd_lower:
+            analysis['work_mode'].append('hybrid')
+        if 'onsite' in jd_lower or 'office' in jd_lower:
+            analysis['work_mode'].append('onsite')
+        
+        # Extract key requirements (first few sentences)
+        sentences = job_description.split('.')[:3]
+        analysis['key_requirements'] = [s.strip() for s in sentences if s.strip()]
+        
+        # Extract responsibilities (look for bullet points or numbered lists)
+        lines = job_description.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith(('•', '-', '*', '1.', '2.', '3.')) or 'responsibility' in line.lower():
+                analysis['responsibilities'].append(line)
+        
+        logger.info(f"JD Analysis completed: {len(analysis['required_skills'])} required skills, "
+                   f"{len(analysis['preferred_skills'])} preferred skills")
+        
+        return analysis
+        
+    except Exception as e:
+        logger.error(f"Error analyzing job description: {e}")
+        return {
+            'job_title': job_title,
+            'required_skills': [],
+            'preferred_skills': [],
+            'min_experience': 0,
+            'max_experience': 0,
+            'education_requirements': [],
+            'location_requirements': [],
+            'work_mode': [],
+            'key_requirements': [],
+            'responsibilities': []
+        }
+
+
+def calculate_job_candidate_match_score(jd_analysis: Dict[str, Any], candidate_data: Dict[str, Any], pinecone_score: float) -> float:
+    """
+    Calculate comprehensive match score between job description and candidate.
+    
+    Args:
+        jd_analysis: Analyzed job description requirements
+        candidate_data: Candidate resume data
+        pinecone_score: Pinecone similarity score
+    
+    Returns:
+        Overall match score (0.0 to 1.0)
+    """
+    try:
+        # Base score from Pinecone similarity
+        base_score = pinecone_score
+        
+        # Skills match score
+        skills_score = calculate_skills_match(jd_analysis, candidate_data)
+        
+        # Experience match score
+        experience_score = calculate_experience_match(jd_analysis, candidate_data)
+        
+        # Education match score
+        education_score = calculate_education_match(jd_analysis, candidate_data)
+        
+        # Location match score
+        location_score = calculate_location_match('', candidate_data)
+        
+        # Weighted combination
+        weights = {
+            'base': 0.4,      # Pinecone similarity
+            'skills': 0.3,    # Skills match
+            'experience': 0.2, # Experience match
+            'education': 0.05, # Education match
+            'location': 0.05   # Location match
+        }
+        
+        overall_score = (
+            weights['base'] * base_score +
+            weights['skills'] * skills_score +
+            weights['experience'] * experience_score +
+            weights['education'] * education_score +
+            weights['location'] * location_score
+        )
+        
+        # Ensure score is between 0 and 1
+        return min(1.0, max(0.0, overall_score))
+        
+    except Exception as e:
+        logger.error(f"Error calculating match score: {e}")
+        return pinecone_score
+
+
+def calculate_skills_match(jd_analysis: Dict[str, Any], candidate_data: Dict[str, Any]) -> float:
+    """Calculate skills match score."""
+    try:
+        required_skills = [skill.lower() for skill in jd_analysis.get('required_skills', [])]
+        preferred_skills = [skill.lower() for skill in jd_analysis.get('preferred_skills', [])]
+        
+        candidate_skills = candidate_data.get('primary_skills', '').lower()
+        candidate_secondary_skills = candidate_data.get('secondary_skills', '').lower()
+        all_candidate_skills = candidate_skills + ' ' + candidate_secondary_skills
+        
+        if not required_skills:
+            return 0.5  # Neutral score if no required skills specified
+        
+        # Calculate required skills match
+        required_matches = sum(1 for skill in required_skills if skill in all_candidate_skills)
+        required_score = required_matches / len(required_skills)
+        
+        # Calculate preferred skills match
+        preferred_matches = sum(1 for skill in preferred_skills if skill in all_candidate_skills)
+        preferred_score = preferred_matches / len(preferred_skills) if preferred_skills else 0
+        
+        # Weighted combination (required skills are more important)
+        total_score = (required_score * 0.8) + (preferred_score * 0.2)
+        
+        return min(1.0, total_score)
+        
+    except Exception as e:
+        logger.error(f"Error calculating skills match: {e}")
+        return 0.0
+
+
+def calculate_experience_match(jd_analysis: Dict[str, Any], candidate_data: Dict[str, Any]) -> float:
+    """Calculate experience match score."""
+    try:
+        min_exp = jd_analysis.get('min_experience', 0)
+        max_exp = jd_analysis.get('max_experience', 0)
+        candidate_exp = candidate_data.get('total_experience', 0)
+        
+        if min_exp == 0:
+            return 0.5  # Neutral score if no experience requirement
+        
+        # Convert candidate experience to years (assuming it's in months)
+        if candidate_exp > 100:  # Likely in months
+            candidate_exp_years = candidate_exp / 12
+        else:
+            candidate_exp_years = candidate_exp
+        
+        if candidate_exp_years >= min_exp:
+            if max_exp > 0 and candidate_exp_years <= max_exp:
+                return 1.0  # Perfect match
+            elif max_exp > 0 and candidate_exp_years > max_exp:
+                # Overqualified but still good
+                return 0.8
+            else:
+                return 1.0  # Meets minimum requirement
+        else:
+            # Underqualified
+            return max(0.0, candidate_exp_years / min_exp)
+        
+    except Exception as e:
+        logger.error(f"Error calculating experience match: {e}")
+        return 0.0
+
+
+def calculate_education_match(jd_analysis: Dict[str, Any], candidate_data: Dict[str, Any]) -> float:
+    """Calculate education match score."""
+    try:
+        education_requirements = jd_analysis.get('education_requirements', [])
+        candidate_education = candidate_data.get('education', '').lower()
+        
+        if not education_requirements:
+            return 0.5  # Neutral score if no education requirement
+        
+        # Check if candidate education matches any requirement
+        for requirement in education_requirements:
+            if any(word in candidate_education for word in requirement.split()):
+                return 1.0
+        
+        # Partial match for degree-related terms
+        degree_terms = ['bachelor', 'master', 'phd', 'degree', 'engineering', 'science']
+        if any(term in candidate_education for term in degree_terms):
+            return 0.7
+        
+        return 0.0
+        
+    except Exception as e:
+        logger.error(f"Error calculating education match: {e}")
+        return 0.0
+
+
+def calculate_location_match(job_location: str, candidate_data: Dict[str, Any]) -> float:
+    """Calculate location match score."""
+    try:
+        if not job_location:
+            return 0.5  # Neutral score if no location specified
+        
+        candidate_location = candidate_data.get('current_location', '').lower()
+        preferred_locations = candidate_data.get('preferred_locations', '').lower()
+        
+        job_location_lower = job_location.lower()
+        
+        # Exact match
+        if job_location_lower in candidate_location or job_location_lower in preferred_locations:
+            return 1.0
+        
+        # Partial match for major cities
+        major_cities = {
+            'bangalore': ['bengaluru', 'blore'],
+            'mumbai': ['bombay'],
+            'delhi': ['new delhi', 'ncr'],
+            'hyderabad': ['hyd'],
+            'chennai': ['madras'],
+            'pune': ['pun'],
+            'kolkata': ['calcutta']
+        }
+        
+        for city, aliases in major_cities.items():
+            if city in job_location_lower:
+                for alias in aliases:
+                    if alias in candidate_location or alias in preferred_locations:
+                        return 0.8
+        
+        return 0.0
+        
+    except Exception as e:
+        logger.error(f"Error calculating location match: {e}")
+        return 0.0
+
+
     """
     Endpoint for LLM-based chat response using Pinecone data only.
     Retrieves relevant regulations from Pinecone and uses them as context for LLM response.
@@ -953,12 +1279,590 @@ def chat():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
+@app.route('/resume-search', methods=['POST'])
+def resume_search():
     """
-    Health check endpoint for production monitoring.
-    Returns system health status and performance metrics.
+    Enhanced resume search endpoint that combines Pinecone vector search with MySQL metadata.
+    Returns comprehensive candidate information including candidate_id and all resume_metadata columns.
     """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if 'query' not in data:
+            return jsonify({'error': 'Missing query field'}), 400
+        
+        user_query = data['query'].strip()
+        if not user_query:
+            return jsonify({'error': 'Query cannot be empty'}), 400
+        
+        # Optional parameters
+        filters = data.get('filters', {})
+        top_k = data.get('top_k', 10)
+        include_full_details = data.get('include_full_details', True)
+        
+        logger.info(f"Processing resume search query: {user_query}")
+        logger.info(f"Applied filters: {filters}")
+        
+        # Start timing for performance monitoring
+        start_time = time.time()
+        
+        # Initialize components
+        from ats_database import create_ats_database
+        from embed_api import PineconeManager
+        from ats_config import ATSConfig
+        
+        # Check if Pinecone is enabled
+        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
+            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        
+        # Initialize Pinecone manager
+        pinecone_manager = PineconeManager()
+        pinecone_manager.get_or_create_index()
+        
+        # Generate embedding for query
+        query_embedding = embeddings.embed_query(user_query)
+        
+        # Perform vector search in Pinecone
+        search_results = pinecone_manager.index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filters if filters else None
+        )
+        
+        if not search_results.matches:
+            return jsonify({
+                'message': 'No matching resumes found',
+                'user_query': user_query,
+                'candidates': [],
+                'total_matches': 0,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Extract candidate IDs from Pinecone results
+        candidate_ids = []
+        pinecone_matches = {}
+        
+        for match in search_results.matches:
+            candidate_id = match.metadata.get('candidate_id')
+            if candidate_id:
+                candidate_ids.append(candidate_id)
+                pinecone_matches[candidate_id] = {
+                    'similarity_score': match.score,
+                    'pinecone_metadata': match.metadata
+                }
+        
+        if not candidate_ids:
+            return jsonify({
+                'message': 'No valid candidate IDs found in Pinecone results',
+                'user_query': user_query,
+                'candidates': [],
+                'total_matches': 0,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Fetch detailed resume data from MySQL
+        candidates = []
+        with create_ats_database() as db:
+            for candidate_id in candidate_ids:
+                try:
+                    # Get full resume details from MySQL
+                    resume_data = db.get_resume_by_id(candidate_id)
+                    
+                    if resume_data:
+                        # Combine Pinecone similarity score with MySQL data
+                        candidate_info = {
+                            'candidate_id': candidate_id,
+                            'similarity_score': pinecone_matches[candidate_id]['similarity_score'],
+                            'name': resume_data.get('name'),
+                            'email': resume_data.get('email'),
+                            'phone': resume_data.get('phone'),
+                            'total_experience': resume_data.get('total_experience'),
+                            'primary_skills': resume_data.get('primary_skills'),
+                            'secondary_skills': resume_data.get('secondary_skills'),
+                            'all_skills': resume_data.get('all_skills'),
+                            'domain': resume_data.get('domain'),
+                            'sub_domain': resume_data.get('sub_domain'),
+                            'education': resume_data.get('education'),
+                            'education_details': resume_data.get('education_details'),
+                            'current_location': resume_data.get('current_location'),
+                            'preferred_locations': resume_data.get('preferred_locations'),
+                            'current_company': resume_data.get('current_company'),
+                            'current_designation': resume_data.get('current_designation'),
+                            'notice_period': resume_data.get('notice_period'),
+                            'expected_salary': resume_data.get('expected_salary'),
+                            'current_salary': resume_data.get('current_salary'),
+                            'resume_summary': resume_data.get('resume_summary'),
+                            'file_name': resume_data.get('file_name'),
+                            'file_type': resume_data.get('file_type'),
+                            'file_size_kb': resume_data.get('file_size_kb'),
+                            'embedding_model': resume_data.get('embedding_model'),
+                            'status': resume_data.get('status'),
+                            'source': resume_data.get('source'),
+                            'created_at': resume_data.get('created_at'),
+                            'updated_at': resume_data.get('updated_at')
+                        }
+                        
+                        # Include full resume text if requested
+                        if include_full_details:
+                            candidate_info['resume_text'] = resume_data.get('resume_text')
+                        
+                        candidates.append(candidate_info)
+                        
+                except Exception as e:
+                    logger.error(f"Error fetching resume data for candidate {candidate_id}: {e}")
+                    continue
+        
+        # Sort candidates by similarity score (highest first)
+        candidates.sort(key=lambda x: x['similarity_score'], reverse=True)
+        
+        # Prepare response
+        response_data = {
+            'message': 'Resume search completed successfully',
+            'user_query': user_query,
+            'candidates': candidates,
+            'total_matches': len(candidates),
+            'applied_filters': filters,
+            'search_parameters': {
+                'top_k': top_k,
+                'include_full_details': include_full_details
+            },
+            'processing_time_ms': (time.time() - start_time) * 1000,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info(f"Resume search completed: {len(candidates)} candidates found")
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in resume search endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/jd-processor', methods=['POST'])
+def jd_processor():
+    """
+    Job Description Processor API that analyzes job descriptions and finds matching candidates.
+    
+    Input: Job description text
+    Output: Ranked list of matching candidates with metadata and scores
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if 'job_description' not in data:
+            return jsonify({'error': 'Missing job_description field'}), 400
+        
+        job_description = data['job_description'].strip()
+        if not job_description:
+            return jsonify({'error': 'Job description cannot be empty'}), 400
+        
+        # Optional parameters
+        job_title = data.get('job_title', '')
+        company_name = data.get('company_name', '')
+        location = data.get('location', '')
+        top_k = data.get('top_k', 10)
+        min_match_score = data.get('min_match_score', 0.3)
+        include_full_details = data.get('include_full_details', True)
+        
+        logger.info(f"Processing job description: {job_title or 'Untitled Position'}")
+        logger.info(f"Job description length: {len(job_description)} characters")
+        
+        # Start timing for performance monitoring
+        start_time = time.time()
+        
+        # Initialize components
+        from ats_database import create_ats_database
+        from embed_api import PineconeManager
+        from ats_config import ATSConfig
+        
+        # Check if Pinecone is enabled
+        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
+            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        
+        # Initialize Pinecone manager
+        pinecone_manager = PineconeManager()
+        pinecone_manager.get_or_create_index()
+        
+        # Step 1: Extract key requirements from job description
+        jd_analysis = analyze_job_description(job_description, job_title)
+        logger.info(f"JD Analysis: {jd_analysis}")
+        
+        # Step 2: Generate embedding for job description
+        jd_embedding = embeddings.embed_query(job_description)
+        
+        # Step 3: Perform vector search in Pinecone
+        search_results = pinecone_manager.index.query(
+            vector=jd_embedding,
+            top_k=top_k * 2,  # Get more results for filtering
+            include_metadata=True
+        )
+        
+        if not search_results.matches:
+            return jsonify({
+                'message': 'No matching candidates found for this job description',
+                'job_title': job_title,
+                'candidates': [],
+                'total_matches': 0,
+                'jd_analysis': jd_analysis,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Step 4: Extract candidate IDs and calculate match scores
+        candidate_ids = []
+        pinecone_scores = {}
+        
+        for match in search_results.matches:
+            candidate_id = match.metadata.get('candidate_id')
+            if candidate_id:
+                candidate_ids.append(candidate_id)
+                pinecone_scores[candidate_id] = match.score
+        
+        if not candidate_ids:
+            return jsonify({
+                'message': 'No valid candidate IDs found in Pinecone results',
+                'job_title': job_title,
+                'candidates': [],
+                'total_matches': 0,
+                'jd_analysis': jd_analysis,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Step 5: Fetch detailed candidate data and calculate job-candidate match scores
+        candidates = []
+        with create_ats_database() as db:
+            for candidate_id in candidate_ids:
+                try:
+                    # Get full candidate details from MySQL
+                    candidate_data = db.get_resume_by_id(candidate_id)
+                    
+                    if candidate_data:
+                        # Calculate comprehensive match score
+                        pinecone_score = pinecone_scores[candidate_id]
+                        match_score = calculate_job_candidate_match_score(
+                            jd_analysis, candidate_data, pinecone_score
+                        )
+                        
+                        # Filter by minimum match score
+                        if match_score < min_match_score:
+                            continue
+                        
+                        # Prepare candidate information
+                        candidate_info = {
+                            'candidate_id': candidate_id,
+                            'pinecone_similarity': pinecone_score,
+                            'job_match_score': match_score,
+                            'name': candidate_data.get('name'),
+                            'email': candidate_data.get('email'),
+                            'phone': candidate_data.get('phone'),
+                            'total_experience': candidate_data.get('total_experience'),
+                            'primary_skills': candidate_data.get('primary_skills'),
+                            'secondary_skills': candidate_data.get('secondary_skills'),
+                            'all_skills': candidate_data.get('all_skills'),
+                            'domain': candidate_data.get('domain'),
+                            'sub_domain': candidate_data.get('sub_domain'),
+                            'education': candidate_data.get('education'),
+                            'education_details': candidate_data.get('education_details'),
+                            'current_location': candidate_data.get('current_location'),
+                            'preferred_locations': candidate_data.get('preferred_locations'),
+                            'current_company': candidate_data.get('current_company'),
+                            'current_designation': candidate_data.get('current_designation'),
+                            'notice_period': candidate_data.get('notice_period'),
+                            'expected_salary': candidate_data.get('expected_salary'),
+                            'current_salary': candidate_data.get('current_salary'),
+                            'resume_summary': candidate_data.get('resume_summary'),
+                            'file_name': candidate_data.get('file_name'),
+                            'file_type': candidate_data.get('file_type'),
+                            'file_size_kb': candidate_data.get('file_size_kb'),
+                            'embedding_model': candidate_data.get('embedding_model'),
+                            'status': candidate_data.get('status'),
+                            'source': candidate_data.get('source'),
+                            'created_at': candidate_data.get('created_at'),
+                            'updated_at': candidate_data.get('updated_at'),
+                            'match_details': {
+                                'skills_match': calculate_skills_match(jd_analysis, candidate_data),
+                                'experience_match': calculate_experience_match(jd_analysis, candidate_data),
+                                'education_match': calculate_education_match(jd_analysis, candidate_data),
+                                'location_match': calculate_location_match(location, candidate_data)
+                            }
+                        }
+                        
+                        # Include full resume text if requested
+                        if include_full_details:
+                            candidate_info['resume_text'] = candidate_data.get('resume_text')
+                        
+                        candidates.append(candidate_info)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing candidate {candidate_id}: {e}")
+                    continue
+        
+        # Step 6: Sort candidates by job match score (highest first)
+        candidates.sort(key=lambda x: x['job_match_score'], reverse=True)
+        
+        # Step 7: Limit to requested top_k
+        candidates = candidates[:top_k]
+        
+        # Step 8: Prepare response
+        response_data = {
+            'message': 'Job description processed successfully',
+            'job_title': job_title,
+            'company_name': company_name,
+            'location': location,
+            'candidates': candidates,
+            'total_matches': len(candidates),
+            'jd_analysis': jd_analysis,
+            'search_parameters': {
+                'top_k': top_k,
+                'min_match_score': min_match_score,
+                'include_full_details': include_full_details
+            },
+            'processing_time_ms': (time.time() - start_time) * 1000,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info(f"JD Processor completed: {len(candidates)} candidates found for job '{job_title}'")
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in JD processor endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+    """
+    Advanced resume search with hybrid approach:
+    1. Pinecone vector search for semantic similarity
+    2. MySQL filtering for precise metadata matching
+    3. Combined ranking and scoring
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if 'query' not in data:
+            return jsonify({'error': 'Missing query field'}), 400
+        
+        user_query = data['query'].strip()
+        if not user_query:
+            return jsonify({'error': 'Query cannot be empty'}), 400
+        
+        # Advanced search parameters
+        filters = data.get('filters', {})
+        top_k = data.get('top_k', 10)
+        include_full_details = data.get('include_full_details', True)
+        use_hybrid_search = data.get('use_hybrid_search', True)
+        min_similarity_score = data.get('min_similarity_score', 0.0)
+        
+        logger.info(f"Processing advanced resume search: {user_query}")
+        logger.info(f"Search parameters: filters={filters}, top_k={top_k}, hybrid={use_hybrid_search}")
+        
+        start_time = time.time()
+        
+        # Initialize components
+        from ats_database import create_ats_database
+        from embed_api import PineconeManager
+        from ats_config import ATSConfig
+        
+        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
+            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        
+        pinecone_manager = PineconeManager()
+        pinecone_manager.get_or_create_index()
+        
+        # Generate embedding for query
+        query_embedding = embeddings.embed_query(user_query)
+        
+        # Step 1: Pinecone vector search
+        search_results = pinecone_manager.index.query(
+            vector=query_embedding,
+            top_k=top_k * 2,  # Get more results for filtering
+            include_metadata=True,
+            filter=filters if filters else None
+        )
+        
+        if not search_results.matches:
+            return jsonify({
+                'message': 'No matching resumes found',
+                'user_query': user_query,
+                'candidates': [],
+                'total_matches': 0,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Step 2: Extract candidate IDs and filter by similarity score
+        candidate_ids = []
+        pinecone_scores = {}
+        
+        for match in search_results.matches:
+            if match.score >= min_similarity_score:
+                candidate_id = match.metadata.get('candidate_id')
+                if candidate_id:
+                    candidate_ids.append(candidate_id)
+                    pinecone_scores[candidate_id] = match.score
+        
+        if not candidate_ids:
+            return jsonify({
+                'message': f'No candidates meet minimum similarity score of {min_similarity_score}',
+                'user_query': user_query,
+                'candidates': [],
+                'total_matches': 0,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Step 3: Fetch detailed data from MySQL with additional filtering
+        candidates = []
+        with create_ats_database() as db:
+            for candidate_id in candidate_ids:
+                try:
+                    resume_data = db.get_resume_by_id(candidate_id)
+                    
+                    if resume_data:
+                        # Apply additional MySQL-based filtering
+                        passes_filter = True
+                        
+                        # Filter by experience range
+                        if 'min_experience' in filters:
+                            if resume_data.get('total_experience', 0) < filters['min_experience']:
+                                passes_filter = False
+                        
+                        if 'max_experience' in filters:
+                            if resume_data.get('total_experience', 0) > filters['max_experience']:
+                                passes_filter = False
+                        
+                        # Filter by domain
+                        if 'domain' in filters:
+                            if resume_data.get('domain') != filters['domain']:
+                                passes_filter = False
+                        
+                        # Filter by education
+                        if 'education' in filters:
+                            if filters['education'].lower() not in resume_data.get('education', '').lower():
+                                passes_filter = False
+                        
+                        # Filter by location
+                        if 'location' in filters:
+                            location = resume_data.get('current_location', '')
+                            if filters['location'].lower() not in location.lower():
+                                passes_filter = False
+                        
+                        # Filter by skills
+                        if 'required_skills' in filters:
+                            required_skills = [skill.lower() for skill in filters['required_skills']]
+                            candidate_skills = resume_data.get('primary_skills', '').lower()
+                            if not any(skill in candidate_skills for skill in required_skills):
+                                passes_filter = False
+                        
+                        if not passes_filter:
+                            continue
+                        
+                        # Calculate hybrid score (combine Pinecone similarity with other factors)
+                        pinecone_score = pinecone_scores[candidate_id]
+                        hybrid_score = pinecone_score
+                        
+                        # Boost score for exact skill matches
+                        if 'required_skills' in filters:
+                            required_skills = [skill.lower() for skill in filters['required_skills']]
+                            candidate_skills = resume_data.get('primary_skills', '').lower()
+                            skill_matches = sum(1 for skill in required_skills if skill in candidate_skills)
+                            if skill_matches > 0:
+                                hybrid_score += (skill_matches / len(required_skills)) * 0.1
+                        
+                        # Boost score for experience match
+                        if 'target_experience' in filters:
+                            target_exp = filters['target_experience']
+                            candidate_exp = resume_data.get('total_experience', 0)
+                            if candidate_exp > 0:
+                                exp_ratio = min(candidate_exp, target_exp) / max(candidate_exp, target_exp)
+                                hybrid_score += exp_ratio * 0.05
+                        
+                        # Prepare candidate information
+                        candidate_info = {
+                            'candidate_id': candidate_id,
+                            'similarity_score': pinecone_score,
+                            'hybrid_score': hybrid_score,
+                            'name': resume_data.get('name'),
+                            'email': resume_data.get('email'),
+                            'phone': resume_data.get('phone'),
+                            'total_experience': resume_data.get('total_experience'),
+                            'primary_skills': resume_data.get('primary_skills'),
+                            'secondary_skills': resume_data.get('secondary_skills'),
+                            'all_skills': resume_data.get('all_skills'),
+                            'domain': resume_data.get('domain'),
+                            'sub_domain': resume_data.get('sub_domain'),
+                            'education': resume_data.get('education'),
+                            'education_details': resume_data.get('education_details'),
+                            'current_location': resume_data.get('current_location'),
+                            'preferred_locations': resume_data.get('preferred_locations'),
+                            'current_company': resume_data.get('current_company'),
+                            'current_designation': resume_data.get('current_designation'),
+                            'notice_period': resume_data.get('notice_period'),
+                            'expected_salary': resume_data.get('expected_salary'),
+                            'current_salary': resume_data.get('current_salary'),
+                            'resume_summary': resume_data.get('resume_summary'),
+                            'file_name': resume_data.get('file_name'),
+                            'file_type': resume_data.get('file_type'),
+                            'file_size_kb': resume_data.get('file_size_kb'),
+                            'embedding_model': resume_data.get('embedding_model'),
+                            'status': resume_data.get('status'),
+                            'source': resume_data.get('source'),
+                            'created_at': resume_data.get('created_at'),
+                            'updated_at': resume_data.get('updated_at')
+                        }
+                        
+                        if include_full_details:
+                            candidate_info['resume_text'] = resume_data.get('resume_text')
+                        
+                        candidates.append(candidate_info)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing candidate {candidate_id}: {e}")
+                    continue
+        
+        # Sort by hybrid score (highest first)
+        candidates.sort(key=lambda x: x['hybrid_score'], reverse=True)
+        
+        # Limit to requested top_k
+        candidates = candidates[:top_k]
+        
+        # Prepare response
+        response_data = {
+            'message': 'Advanced resume search completed successfully',
+            'user_query': user_query,
+            'candidates': candidates,
+            'total_matches': len(candidates),
+            'applied_filters': filters,
+            'search_parameters': {
+                'top_k': top_k,
+                'include_full_details': include_full_details,
+                'use_hybrid_search': use_hybrid_search,
+                'min_similarity_score': min_similarity_score
+            },
+            'processing_time_ms': (time.time() - start_time) * 1000,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info(f"Advanced resume search completed: {len(candidates)} candidates found")
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in advanced resume search endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
     try:
         from production_monitoring import get_system_health, get_performance_metrics
         

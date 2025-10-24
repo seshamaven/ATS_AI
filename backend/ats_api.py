@@ -214,16 +214,16 @@ def process_resume():
                     )
                     pinecone_manager.get_or_create_index()
                     
-                    # Prepare metadata for Pinecone
+                    # Prepare metadata for Pinecone with NULL value handling
                     pinecone_metadata = {
                         'candidate_id': candidate_id,
-                        'name': parsed_data.get('name'),
-                        'email': parsed_data.get('email'),
-                        'domain': parsed_data.get('domain'),
-                        'primary_skills': parsed_data.get('primary_skills'),
+                        'name': parsed_data.get('name') or 'Unknown',
+                        'email': parsed_data.get('email') or 'No email',
+                        'domain': parsed_data.get('domain') or 'Unknown',
+                        'primary_skills': parsed_data.get('primary_skills') or 'No skills',
                         'total_experience': parsed_data.get('total_experience', 0),
-                        'education': parsed_data.get('education'),
-                        'file_type': file_type,
+                        'education': parsed_data.get('education') or 'Unknown',
+                        'file_type': file_type or 'Unknown',
                         'source': 'resume_upload',
                         'created_at': datetime.now().isoformat()
                     }
@@ -326,16 +326,16 @@ def index_existing_resumes():
                 import json
                 embedding = json.loads(resume['embedding']) if isinstance(resume['embedding'], str) else resume['embedding']
                 
-                # Prepare metadata for Pinecone
+                # Prepare metadata for Pinecone with NULL value handling
                 pinecone_metadata = {
                     'candidate_id': resume['candidate_id'],
-                    'name': resume.get('name'),
-                    'email': resume.get('email'),
-                    'domain': resume.get('domain'),
-                    'primary_skills': resume.get('primary_skills'),
+                    'name': resume.get('name') or 'Unknown',
+                    'email': resume.get('email') or 'No email',
+                    'domain': resume.get('domain') or 'Unknown',
+                    'primary_skills': resume.get('primary_skills') or 'No skills',
                     'total_experience': resume.get('total_experience', 0),
-                    'education': resume.get('education'),
-                    'file_type': resume.get('file_type'),
+                    'education': resume.get('education') or 'Unknown',
+                    'file_type': resume.get('file_type') or 'Unknown',
                     'source': 'batch_indexing',
                     'created_at': resume.get('created_at', datetime.now().isoformat())
                 }

@@ -161,7 +161,8 @@ class EnhancedPineconeManager:
         try:
             logger.info(f"Upserting {len(vectors)} vectors to Pinecone index '{self.index_name}'")
             
-            # Validate vector dimensions
+            # Prepare vectors with cleaned metadata
+            prepared_vectors = []
             for i, vector in enumerate(vectors):
                 if 'values' not in vector:
                     raise ValueError(f"Vector {i} missing 'values' field")
@@ -171,10 +172,23 @@ class EnhancedPineconeManager:
                     raise ValueError(
                         f"Vector {i} has dimension {vector_dim}, expected {self.dimension}"
                     )
+                
+                # Prepare metadata to handle NULL values
+                prepared_vector = {
+                    'id': vector['id'],
+                    'values': vector['values']
+                }
+                
+                if 'metadata' in vector:
+                    prepared_vector['metadata'] = self.prepare_metadata(vector['metadata'])
+                else:
+                    prepared_vector['metadata'] = {}
+                
+                prepared_vectors.append(prepared_vector)
             
             # Perform upsert operation
-            self.index.upsert(vectors=vectors)
-            logger.info(f"Successfully upserted {len(vectors)} vectors to Pinecone")
+            self.index.upsert(vectors=prepared_vectors)
+            logger.info(f"Successfully upserted {len(prepared_vectors)} vectors to Pinecone")
             
         except PineconeException as e:
             error_msg = f"Pinecone upsert error: {e}"
@@ -242,24 +256,50 @@ class EnhancedPineconeManager:
             logger.error(f"Error getting index stats: {e}")
             raise
     
-    def delete_index(self, confirm: bool = False):
+    def prepare_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Delete the Pinecone index.
+        Prepare metadata for Pinecone by handling NULL values.
+        Converts NULL values to appropriate default values.
         
         Args:
-            confirm: Must be True to actually delete the index
+            metadata: Raw metadata dictionary
+            
+        Returns:
+            Cleaned metadata dictionary safe for Pinecone
         """
-        if not confirm:
-            raise ValueError("Index deletion requires confirm=True")
+        cleaned_metadata = {}
         
-        try:
-            logger.warning(f"Deleting Pinecone index '{self.index_name}'")
-            self.pc.delete_index(self.index_name)
-            logger.info(f"Successfully deleted index '{self.index_name}'")
-            self._index_initialized = False
-        except Exception as e:
-            logger.error(f"Error deleting index: {e}")
-            raise
+        for key, value in metadata.items():
+            if value is None:
+                # Convert NULL values to appropriate defaults
+                if key in ['name', 'email', 'domain', 'education', 'file_type', 'source']:
+                    cleaned_metadata[key] = 'Unknown'
+                elif key in ['primary_skills', 'secondary_skills', 'all_skills']:
+                    cleaned_metadata[key] = 'No skills'
+                elif key in ['current_location', 'preferred_locations']:
+                    cleaned_metadata[key] = 'Unknown'
+                elif key in ['current_company', 'current_designation']:
+                    cleaned_metadata[key] = 'Unknown'
+                elif key in ['notice_period', 'expected_salary', 'current_salary']:
+                    cleaned_metadata[key] = 'Not specified'
+                else:
+                    # For other fields, use 'Unknown' as default
+                    cleaned_metadata[key] = 'Unknown'
+            elif isinstance(value, (str, int, float, bool)):
+                # Valid Pinecone types - keep as is
+                cleaned_metadata[key] = value
+            elif isinstance(value, list):
+                # Lists are allowed if they contain strings
+                if all(isinstance(item, str) for item in value):
+                    cleaned_metadata[key] = value
+                else:
+                    # Convert mixed lists to strings
+                    cleaned_metadata[key] = ', '.join(str(item) for item in value)
+            else:
+                # Convert other types to strings
+                cleaned_metadata[key] = str(value)
+        
+        return cleaned_metadata
 
 
 def create_pinecone_manager() -> EnhancedPineconeManager:

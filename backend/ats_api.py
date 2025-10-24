@@ -163,11 +163,11 @@ def process_resume():
     Returns: JSON with candidate_id and status
     """
     try:
-        # Validate file in request
+                # Validate file in request
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in request'}), 400
         
-        file = request.files['file']
+        file = request.files.get('file')
         
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400

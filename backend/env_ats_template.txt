@@ -34,6 +34,11 @@ ATS_PINECONE_INDEX_NAME=ats-resumes
 ATS_PINECONE_CLOUD=aws
 ATS_PINECONE_REGION=us-east-1
 
+# Legacy Pinecone variables (for backward compatibility)
+PINECONE_API_KEY=your_pinecone_key_here
+PINECONE_INDEX_NAME=ats-resumes
+PINECONE_DIMENSION=1536
+
 # ==========================================
 # Flask API Configuration
 # ==========================================

@@ -81,46 +81,35 @@ class TextProcessor:
             return len(text) // 4
 
 
+# Import the enhanced Pinecone manager
+from enhanced_pinecone_manager import EnhancedPineconeManager
+
+# Legacy PineconeManager for backward compatibility
 class PineconeManager:
-    """Handles Pinecone vector database operations."""
+    """Legacy Pinecone manager - use EnhancedPineconeManager for new code."""
     
     def __init__(self, api_key: str = None, index_name: str = None):
-        self.pc = Pinecone(api_key=api_key or Config.PINECONE_API_KEY)
-        self.index_name = index_name or Config.PINECONE_INDEX_NAME
+        # Create enhanced manager instance
+        self.enhanced_manager = EnhancedPineconeManager(
+            api_key=api_key or Config.PINECONE_API_KEY,
+            index_name=index_name or Config.PINECONE_INDEX_NAME,
+            dimension=Config.EMBEDDING_DIMENSION
+        )
         self.index = None
     
     def get_or_create_index(self):
-        """Get existing index or create new one."""
+        """Get existing index or create new one using enhanced manager."""
         try:
-            # Check if index exists
-            if self.index_name in self.pc.list_indexes().names():
-                self.index = self.pc.Index(self.index_name)
-                logger.info(f"Connected to existing Pinecone index: {self.index_name}")
-            else:
-                # Create new index
-                self.pc.create_index(
-                    name=self.index_name,
-                    dimension=Config.EMBEDDING_DIMENSION,
-                    metric='cosine',
-                    spec={
-                        'serverless': {
-                            'cloud': Config.PINECONE_CLOUD,
-                            'region': Config.PINECONE_REGION
-                        }
-                    }
-                )
-                self.index = self.pc.Index(self.index_name)
-                logger.info(f"Created new Pinecone index: {self.index_name}")
+            self.index = self.enhanced_manager.get_or_create_index()
+            return self.index
         except Exception as e:
             logger.error(f"Error with Pinecone index: {e}")
             raise
     
     def upsert_vectors(self, vectors: List[Dict[str, Any]]):
-        """Insert vectors into Pinecone."""
-        logger.info(vectors)
+        """Insert vectors into Pinecone using enhanced manager."""
         try:
-            self.index.upsert(vectors=vectors)
-            logger.info(f"Successfully upserted {len(vectors)} vectors to Pinecone")
+            self.enhanced_manager.upsert_vectors(vectors)
         except Exception as e:
             logger.error(f"Error upserting vectors to Pinecone: {e}")
             raise

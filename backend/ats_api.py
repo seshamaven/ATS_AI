@@ -206,8 +206,12 @@ def process_resume():
             pinecone_indexed = False
             if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
                 try:
-                    from embed_api import PineconeManager
-                    pinecone_manager = PineconeManager()
+                    from enhanced_pinecone_manager import EnhancedPineconeManager
+                    pinecone_manager = EnhancedPineconeManager(
+                        api_key=ATSConfig.PINECONE_API_KEY,
+                        index_name=ATSConfig.PINECONE_INDEX_NAME,
+                        dimension=ATSConfig.EMBEDDING_DIMENSION
+                    )
                     pinecone_manager.get_or_create_index()
                     
                     # Prepare metadata for Pinecone
@@ -298,8 +302,12 @@ def index_existing_resumes():
             return jsonify({'message': 'No resumes found in database'}), 200
         
         # Initialize Pinecone
-        from embed_api import PineconeManager
-        pinecone_manager = PineconeManager()
+        from enhanced_pinecone_manager import EnhancedPineconeManager
+        pinecone_manager = EnhancedPineconeManager(
+            api_key=ATSConfig.PINECONE_API_KEY,
+            index_name=ATSConfig.PINECONE_INDEX_NAME,
+            dimension=ATSConfig.EMBEDDING_DIMENSION
+        )
         pinecone_manager.get_or_create_index()
         
         indexed_count = 0

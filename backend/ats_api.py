@@ -424,7 +424,7 @@ def search_resumes():
         pinecone_manager.get_or_create_index()
         
         # Generate embedding for query
-        query_embedding = embeddings.embed_query(user_query)
+        query_embedding = embedding_service.generate_embedding(user_query)
         
         # Perform vector search in Pinecone
         search_results = pinecone_manager.query_vectors(

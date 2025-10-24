@@ -1,0 +1,33 @@
+Mike Johnson - Data Scientist
+
+Email: mike.johnson@example.com
+Phone: +1-555-0125
+
+EXPERIENCE:
+4 years of experience in data science and machine learning
+Senior Data Scientist at DataCorp (2021-Present)
+Data Analyst at Analytics Inc (2020-2021)
+
+SKILLS:
+- Python (Expert)
+- Machine Learning (Advanced)
+- SQL (Advanced)
+- Azure (Advanced)
+- Git (Advanced)
+- Pandas (Expert)
+- NumPy (Advanced)
+- Scikit-learn (Advanced)
+- TensorFlow (Intermediate)
+- Jupyter Notebooks (Expert)
+
+EDUCATION:
+Master of Computer Science - Data Science Specialization - Tech University (2020)
+
+DOMAIN:
+Data Science, Machine Learning, Analytics, Cloud Computing
+
+PROJECTS:
+- Built ML models for predictive analytics
+- Implemented data pipelines using Python
+- Developed cloud-based analytics solutions on Azure
+- Created automated reporting systems

@@ -1,0 +1,34 @@
+John Doe - Senior Python Developer
+
+Email: john.doe@example.com
+Phone: +1-555-0123
+
+EXPERIENCE:
+5+ years of professional experience in Python development
+Senior Software Engineer at TechCorp (2020-Present)
+Software Developer at StartupXYZ (2018-2020)
+
+SKILLS:
+- Python (Expert)
+- Django (Advanced)
+- Flask (Advanced)
+- SQL (Advanced)
+- MySQL (Advanced)
+- PostgreSQL (Intermediate)
+- AWS (Advanced)
+- Git (Expert)
+- Docker (Intermediate)
+- REST API (Advanced)
+- Agile/Scrum (Advanced)
+
+EDUCATION:
+Bachelor of Computer Science - University of Technology (2018)
+
+DOMAIN:
+Software Development, Web Applications, Backend Systems
+
+PROJECTS:
+- Built scalable Django applications serving 100K+ users
+- Implemented microservices architecture using Flask
+- Designed and optimized database schemas
+- Led agile development teams

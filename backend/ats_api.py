@@ -730,6 +730,155 @@ def profile_ranking_by_jd():
         }), 500
 
 
+@app.route('/api/comprehensive-profile-ranking', methods=['POST'])
+def comprehensive_profile_ranking():
+    """
+    Comprehensive Profile Ranking Endpoint
+    
+    Input: JSON with job requirements and optional profiles directory
+    Output: Ranked list of candidates with detailed analysis
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        
+        # Extract job requirements
+        job_requirements = data.get('job_requirements', {})
+        profiles_dir = data.get('profiles_directory', 'D:\\profiles')
+        top_k = data.get('top_k', 10)
+        
+        # Validate job requirements
+        if not job_requirements:
+            return jsonify({'error': 'job_requirements is required'}), 400
+        
+        logger.info(f"Processing comprehensive ranking for directory: {profiles_dir}")
+        
+        # Read profiles from directory
+        start_time = time.time()
+        profiles = read_profiles_from_directory(profiles_dir)
+        
+        if not profiles:
+            return jsonify({
+                'status': 'success',
+                'message': 'No profiles found in directory',
+                'profiles_directory': profiles_dir,
+                'ranked_profiles': [],
+                'total_candidates_evaluated': 0,
+                'job_requirements': job_requirements,
+                'processing_time_ms': (time.time() - start_time) * 1000,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        logger.info(f"Found {len(profiles)} profiles")
+        
+        # Initialize ranking engine
+        ranking_engine = create_ranking_engine()
+        
+        # Convert profiles to the format expected by ranking engine
+        candidates = []
+        for profile in profiles:
+            candidate = {
+                'candidate_id': profile.get('candidate_id'),
+                'name': profile.get('name', 'Unknown'),
+                'email': profile.get('email', ''),
+                'phone': profile.get('phone', ''),
+                'resume_text': profile.get('content', ''),
+                'domain': profile.get('domain', ''),
+                'education': profile.get('education', ''),
+                'status': 'active'
+            }
+            candidates.append(candidate)
+        
+        # Rank candidates using existing ranking engine
+        ranked_profiles = ranking_engine.rank_candidates_against_jd(
+            candidates=candidates,
+            job_description=job_requirements.get('job_description', ''),
+            job_requirements=job_requirements,
+            jd_embedding=None  # Will be generated if needed
+        )
+        
+        # Limit to top_k
+        ranked_profiles = ranked_profiles[:top_k]
+        
+        # Prepare response
+        response_data = {
+            'status': 'success',
+            'message': 'Comprehensive profile ranking completed successfully',
+            'profiles_directory': profiles_dir,
+            'ranked_profiles': ranked_profiles,
+            'total_candidates_evaluated': len(profiles),
+            'top_candidates_returned': len(ranked_profiles),
+            'job_requirements': job_requirements,
+            'ranking_criteria': {
+                'weights': ATSConfig.RANKING_WEIGHTS,
+                'semantic_similarity': 'enabled',
+                'analysis_depth': 'comprehensive'
+            },
+            'processing_time_ms': (time.time() - start_time) * 1000,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in comprehensive profile ranking: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def read_profiles_from_directory(profiles_dir: str) -> List[Dict]:
+    """Read all profile files from directory"""
+    profiles = []
+    
+    if not os.path.exists(profiles_dir):
+        logger.warning(f"Profiles directory {profiles_dir} does not exist")
+        return profiles
+    
+    try:
+        for filename in os.listdir(profiles_dir):
+            if filename.lower().endswith(('.pdf', '.docx', '.doc', '.txt')):
+                file_path = os.path.join(profiles_dir, filename)
+                
+                # Extract candidate ID from filename
+                candidate_id = os.path.splitext(filename)[0]
+                
+                try:
+                    # Read file content
+                    if filename.lower().endswith('.txt'):
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    else:
+                        # For PDF/DOCX files, you would need additional libraries
+                        # For now, create a placeholder
+                        content = f"Profile content for candidate {candidate_id}"
+                    
+                    profile = {
+                        'candidate_id': candidate_id,
+                        'filename': filename,
+                        'content': content,
+                        'name': f"Candidate {candidate_id}",
+                        'email': f"candidate{candidate_id}@example.com",
+                        'phone': '',
+                        'domain': '',
+                        'education': ''
+                    }
+                    
+                    profiles.append(profile)
+                    logger.info(f"Loaded profile: {filename}")
+                    
+                except Exception as e:
+                    logger.error(f"Error reading file {filename}: {e}")
+    
+    except Exception as e:
+        logger.error(f"Error reading profiles directory: {e}")
+    
+    return profiles
+
+
 @app.route('/api/candidate/<int:candidate_id>', methods=['GET'])
 def get_candidate(candidate_id):
     # Get candidate details by ID

@@ -780,24 +780,34 @@ def comprehensive_profile_ranking():
         # Convert profiles to the format expected by ranking engine
         candidates = []
         for profile in profiles:
+            # Extract skills and experience from content
+            from resume_parser import extract_skills_from_text, extract_experience_from_text
+            
+            content = profile.get('content', '')
+            extracted_skills = extract_skills_from_text(content)
+            extracted_experience = extract_experience_from_text(content)
+            
             candidate = {
                 'candidate_id': profile.get('candidate_id'),
                 'name': profile.get('name', 'Unknown'),
                 'email': profile.get('email', ''),
                 'phone': profile.get('phone', ''),
-                'resume_text': profile.get('content', ''),
+                'primary_skills': ', '.join(extracted_skills[:10]),  # Top 10 skills as primary
+                'secondary_skills': ', '.join(extracted_skills[10:]),  # Rest as secondary
+                'total_experience': extracted_experience,
                 'domain': profile.get('domain', ''),
                 'education': profile.get('education', ''),
+                'resume_text': content,
                 'status': 'active'
             }
             candidates.append(candidate)
         
         # Rank candidates using existing ranking engine
-        ranked_profiles = ranking_engine.rank_candidates_against_jd(
+        ranked_profiles = ranking_engine.rank_candidates(
             candidates=candidates,
-            job_description=job_requirements.get('job_description', ''),
             job_requirements=job_requirements,
-            jd_embedding=None  # Will be generated if needed
+            jd_embedding=None,  # Will be generated if needed
+            top_k=top_k
         )
         
         # Limit to top_k

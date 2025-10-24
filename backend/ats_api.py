@@ -202,6 +202,44 @@ def process_resume():
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
             
+            # Index in Pinecone if enabled
+            pinecone_indexed = False
+            if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+                try:
+                    from embed_api import PineconeManager
+                    pinecone_manager = PineconeManager()
+                    pinecone_manager.get_or_create_index()
+                    
+                    # Prepare metadata for Pinecone
+                    pinecone_metadata = {
+                        'candidate_id': candidate_id,
+                        'name': parsed_data.get('name'),
+                        'email': parsed_data.get('email'),
+                        'domain': parsed_data.get('domain'),
+                        'primary_skills': parsed_data.get('primary_skills'),
+                        'total_experience': parsed_data.get('total_experience', 0),
+                        'education': parsed_data.get('education'),
+                        'file_type': file_type,
+                        'source': 'resume_upload',
+                        'created_at': datetime.now().isoformat()
+                    }
+                    
+                    # Create vector for Pinecone
+                    vector_data = {
+                        'id': f'resume_{candidate_id}',
+                        'values': resume_embedding,
+                        'metadata': pinecone_metadata
+                    }
+                    
+                    # Upsert to Pinecone
+                    pinecone_manager.upsert_vectors([vector_data])
+                    pinecone_indexed = True
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {e}")
+                    # Don't fail the entire request if Pinecone indexing fails
+            
             # Clean up uploaded file
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -218,6 +256,7 @@ def process_resume():
                 'domain': parsed_data.get('domain'),
                 'education': parsed_data.get('education'),
                 'embedding_dimensions': len(resume_embedding),
+                'pinecone_indexed': pinecone_indexed,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -240,9 +279,107 @@ def process_resume():
         }), 500
 
 
+@app.route('/api/indexExistingResumes', methods=['POST'])
+def index_existing_resumes():
+    """
+    Index all existing resumes from database to Pinecone.
+    
+    Returns: JSON with indexing results
+    """
+    try:
+        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
+            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        
+        # Get all resumes from database
+        with create_ats_database() as db:
+            resumes = db.get_all_resumes()
+        
+        if not resumes:
+            return jsonify({'message': 'No resumes found in database'}), 200
+        
+        # Initialize Pinecone
+        from embed_api import PineconeManager
+        pinecone_manager = PineconeManager()
+        pinecone_manager.get_or_create_index()
+        
+        indexed_count = 0
+        failed_count = 0
+        vectors_to_upsert = []
+        
+        for resume in resumes:
+            try:
+                # Skip if no embedding exists
+                if not resume.get('embedding'):
+                    logger.warning(f"Resume {resume['candidate_id']} has no embedding, skipping")
+                    failed_count += 1
+                    continue
+                
+                # Parse embedding from JSON
+                import json
+                embedding = json.loads(resume['embedding']) if isinstance(resume['embedding'], str) else resume['embedding']
+                
+                # Prepare metadata for Pinecone
+                pinecone_metadata = {
+                    'candidate_id': resume['candidate_id'],
+                    'name': resume.get('name'),
+                    'email': resume.get('email'),
+                    'domain': resume.get('domain'),
+                    'primary_skills': resume.get('primary_skills'),
+                    'total_experience': resume.get('total_experience', 0),
+                    'education': resume.get('education'),
+                    'file_type': resume.get('file_type'),
+                    'source': 'batch_indexing',
+                    'created_at': resume.get('created_at', datetime.now().isoformat())
+                }
+                
+                # Create vector for Pinecone
+                vector_data = {
+                    'id': f'resume_{resume["candidate_id"]}',
+                    'values': embedding,
+                    'metadata': pinecone_metadata
+                }
+                
+                vectors_to_upsert.append(vector_data)
+                indexed_count += 1
+                
+                # Batch upsert every 100 vectors
+                if len(vectors_to_upsert) >= 100:
+                    pinecone_manager.upsert_vectors(vectors_to_upsert)
+                    vectors_to_upsert = []
+                    
+            except Exception as e:
+                logger.error(f"Failed to prepare resume {resume.get('candidate_id', 'unknown')} for indexing: {e}")
+                failed_count += 1
+                continue
+        
+        # Upsert remaining vectors
+        if vectors_to_upsert:
+            pinecone_manager.upsert_vectors(vectors_to_upsert)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Batch indexing completed',
+            'total_resumes': len(resumes),
+            'indexed_count': indexed_count,
+            'failed_count': failed_count,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in batch indexing: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/searchResumes', methods=['POST'])
+def search_resumes():
+    """
+    Search resumes using Pinecone vector similarity.
+    
+    Accepts: JSON with query text and optional filters
+    Returns: JSON with matching resumes and scores
+    """
 @app.route('/api/profileRankingByJD', methods=['POST'])
 def profile_ranking_by_jd():
-    """
     Rank candidate profiles against a Job Description.
     
     Input: JSON with job_id and job_description

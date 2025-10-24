@@ -46,6 +46,15 @@ class Config:
     EMBED_API_PORT = int(os.getenv('EMBED_API_PORT', '5000'))
     CHAT_API_PORT = int(os.getenv('CHAT_API_PORT', '5001'))
     
+    # SQLAlchemy Configuration
+    SQLALCHEMY_DATABASE_URI = (
+        f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('MYSQL_USER', 'root'))}:"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'root'))}@"
+        f"{os.getenv('MYSQLHOST', os.getenv('MYSQL_HOST', 'localhost'))}:"
+        f"{os.getenv('MYSQLPORT', os.getenv('MYSQL_PORT', '3306'))}/"
+        f"{os.getenv('MYSQLDATABASE', os.getenv('MYSQL_DATABASE', 'reglib'))}"
+    )
+    
     # Application Configuration
     CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '1000'))
     CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '200'))
@@ -63,6 +72,14 @@ class Config:
             'database': cls.MYSQL_DATABASE,
             'port': cls.MYSQL_PORT
         }
+    
+    @classmethod
+    def get_sqlalchemy_uri(cls) -> str:
+        """Get SQLAlchemy database URI for Flask."""
+        return (
+            f"mysql+mysqlclient://{cls.MYSQL_USER}:{cls.MYSQL_PASSWORD}@"
+            f"{cls.MYSQL_HOST}:{cls.MYSQL_PORT}/{cls.MYSQL_DATABASE}"
+        )
     
     @classmethod
     def get_pinecone_config(cls) -> Dict[str, Any]:

@@ -46,6 +46,15 @@ class ATSConfig:
     # Railway uses PORT environment variable, fallback to ATS_API_PORT
     ATS_API_PORT = int(os.getenv('PORT', os.getenv('ATS_API_PORT', '5002')))
     
+    # SQLAlchemy Configuration
+    SQLALCHEMY_DATABASE_URI = (
+        f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))}:"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))}@"
+        f"{os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))}:"
+        f"{os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))}/"
+        f"{os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))}"
+    )
+    
     # File Upload Configuration
     MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '10'))
     ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc'}
@@ -82,6 +91,14 @@ class ATSConfig:
             'database': cls.MYSQL_DATABASE,
             'port': cls.MYSQL_PORT
         }
+    
+    @classmethod
+    def get_sqlalchemy_uri(cls) -> str:
+        """Get SQLAlchemy database URI for Flask."""
+        return (
+            f"mysql+mysqlclient://{cls.MYSQL_USER}:{cls.MYSQL_PASSWORD}@"
+            f"{cls.MYSQL_HOST}:{cls.MYSQL_PORT}/{cls.MYSQL_DATABASE}"
+        )
     
     @classmethod
     def get_azure_openai_config(cls) -> Dict[str, Any]:

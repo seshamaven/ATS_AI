@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     embedding JSON COMMENT '1536-dimension vector as JSON array',
     embedding_model VARCHAR(100) DEFAULT 'text-embedding-ada-002',
     
+    -- AI Analysis Fields
+    ai_primary_skills JSON COMMENT 'AI-extracted primary skills with experience and weights',
+    ai_secondary_skills JSON COMMENT 'AI-extracted secondary skills with experience and weights',
+    ai_project_details JSON COMMENT 'AI-extracted project details and skill usage',
+    ai_extraction_used BOOLEAN DEFAULT FALSE COMMENT 'Whether AI extraction was used',
+    
     -- Status and Metadata
     status VARCHAR(50) DEFAULT 'active' COMMENT 'active, archived, blacklisted',
     source VARCHAR(100) COMMENT 'Upload source',

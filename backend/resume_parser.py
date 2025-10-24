@@ -1,9 +1,10 @@
 """
 Resume Parser for ATS System.
-Extracts structured information from PDF and DOCX resumes.
+Extracts structured information from PDF and DOCX resumes with AI-powered skill analysis.
 """
 
 import re
+import json
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -23,11 +24,70 @@ try:
 except ImportError:
     pass
 
+# OpenAI/Azure OpenAI for AI-powered extraction
+try:
+    from openai import OpenAI, AzureOpenAI
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
 class ResumeParser:
-    """Intelligent resume parser with NLP capabilities."""
+    """Intelligent resume parser with NLP and AI capabilities."""
+    
+    # AI-powered skill extraction prompt
+    AI_SKILL_EXTRACTION_PROMPT = """
+You are an AI recruiter tasked with analyzing candidate resumes and extracting structured metadata about their skills and experience. Your goal is to evaluate actual hands-on experience for each skill, not just match keywords.
+
+Instructions:
+
+Extract the candidate's primary and secondary skills.
+
+For each skill, determine:
+
+Relevant experience (in years or months) based on projects or work history.
+
+Weight/score reflecting practical expertise (higher for more project experience).
+
+Capture project-based evidence for each skill, e.g., "Used Python for 3 years in data analysis projects."
+
+Provide total experience.
+
+Output the data in JSON format as shown below.
+
+Example JSON Output:
+
+{
+  "candidate_name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone": "+1234567890",
+  "total_experience": 5.5,
+  "primary_skills": [
+    {"skill": "Python", "experience": 4, "weight": 0.9},
+    {"skill": "Django", "experience": 3, "weight": 0.8}
+  ],
+  "secondary_skills": [
+    {"skill": "React.js", "experience": 2, "weight": 0.5},
+    {"skill": "SQL", "experience": 3, "weight": 0.7}
+  ],
+  "project_details": [
+    {"project": "E-commerce Web App", "skills_used": ["Python", "Django", "SQL"], "duration_years": 2},
+    {"project": "Dashboard Frontend", "skills_used": ["React.js"], "duration_years": 1}
+  ]
+}
+
+Notes for AI:
+
+Prioritize hands-on experience over simple keyword mentions.
+
+Assign higher weight to skills used in multiple or complex projects.
+
+Ensure output is clean and structured.
+
+Resume Text:
+{resume_text}
+"""
     
     # Common skills database (expandable)
     TECHNICAL_SKILLS = {
@@ -53,10 +113,12 @@ class ResumeParser:
         'phd', 'doctorate', 'diploma', 'associate'
     }
     
-    def __init__(self, nlp_model: str = 'en_core_web_sm'):
-        """Initialize parser with NLP model."""
+    def __init__(self, nlp_model: str = 'en_core_web_sm', use_ai_extraction: bool = True):
+        """Initialize parser with NLP model and AI capabilities."""
         self.nlp = None
         self.matcher = None
+        self.use_ai_extraction = use_ai_extraction
+        self.ai_client = None
         
         try:
             self.nlp = spacy.load(nlp_model)
@@ -65,6 +127,37 @@ class ResumeParser:
             logger.info(f"Loaded spaCy model: {nlp_model}")
         except Exception as e:
             logger.warning(f"Could not load spaCy model: {e}. Using regex-based parsing.")
+        
+        # Initialize AI client if AI extraction is enabled
+        if self.use_ai_extraction:
+            self._initialize_ai_client()
+    
+    def _initialize_ai_client(self):
+        """Initialize OpenAI or Azure OpenAI client."""
+        try:
+            from ats_config import ATSConfig
+            
+            # Try Azure OpenAI first
+            if ATSConfig.AZURE_OPENAI_ENDPOINT and ATSConfig.AZURE_OPENAI_API_KEY:
+                self.ai_client = AzureOpenAI(
+                    api_key=ATSConfig.AZURE_OPENAI_API_KEY,
+                    api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
+                    azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
+                )
+                self.ai_model = ATSConfig.AZURE_OPENAI_DEPLOYMENT_NAME
+                logger.info("Initialized Azure OpenAI client for skill extraction")
+            # Fallback to OpenAI
+            elif ATSConfig.OPENAI_API_KEY:
+                self.ai_client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
+                self.ai_model = ATSConfig.OPENAI_MODEL
+                logger.info("Initialized OpenAI client for skill extraction")
+            else:
+                logger.warning("No OpenAI API key found. AI extraction disabled.")
+                self.use_ai_extraction = False
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize AI client: {e}")
+            self.use_ai_extraction = False
     
     def _setup_patterns(self):
         """Setup spaCy patterns for entity extraction."""
@@ -154,6 +247,56 @@ class ResumeParser:
             if matches:
                 return matches[0]
         return None
+    
+    def extract_skills_with_ai(self, text: str) -> Dict[str, Any]:
+        """Extract skills using AI-powered analysis."""
+        if not self.use_ai_extraction or not self.ai_client:
+            logger.warning("AI extraction not available, falling back to regex-based extraction")
+            return self.extract_skills(text)
+        
+        try:
+            # Prepare the prompt with resume text
+            prompt = self.AI_SKILL_EXTRACTION_PROMPT.format(resume_text=text[:8000])  # Limit text length
+            
+            # Call AI API
+            response = self.ai_client.chat.completions.create(
+                model=self.ai_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,  # Low temperature for consistent results
+                max_tokens=2000
+            )
+            
+            # Parse JSON response
+            ai_result = json.loads(response.choices[0].message.content)
+            
+            # Convert AI result to our format
+            structured_skills = {
+                'primary_skills': [skill['skill'] for skill in ai_result.get('primary_skills', [])],
+                'secondary_skills': [skill['skill'] for skill in ai_result.get('secondary_skills', [])],
+                'all_skills': [skill['skill'] for skill in ai_result.get('primary_skills', [])] + 
+                             [skill['skill'] for skill in ai_result.get('secondary_skills', [])],
+                'ai_analysis': {
+                    'primary_skills_detailed': ai_result.get('primary_skills', []),
+                    'secondary_skills_detailed': ai_result.get('secondary_skills', []),
+                    'project_details': ai_result.get('project_details', []),
+                    'total_experience': ai_result.get('total_experience', 0),
+                    'candidate_name': ai_result.get('candidate_name', ''),
+                    'email': ai_result.get('email', ''),
+                    'phone': ai_result.get('phone', '')
+                }
+            }
+            
+            logger.info(f"AI extraction completed for {ai_result.get('candidate_name', 'Unknown')}")
+            return structured_skills
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI response as JSON: {e}")
+            logger.debug(f"AI response: {response.choices[0].message.content}")
+            return self.extract_skills(text)  # Fallback to regex
+            
+        except Exception as e:
+            logger.error(f"AI skill extraction failed: {e}")
+            return self.extract_skills(text)  # Fallback to regex
     
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
         """Extract technical and soft skills."""
@@ -329,8 +472,17 @@ class ResumeParser:
             name = self.extract_name(resume_text)
             email = self.extract_email(resume_text)
             phone = self.extract_phone(resume_text)
-            skills = self.extract_skills(resume_text)
-            experience = self.extract_experience(resume_text)
+            
+            # Use AI-powered skill extraction if available
+            if self.use_ai_extraction:
+                skills = self.extract_skills_with_ai(resume_text)
+                # Use AI-extracted experience if available
+                ai_experience = skills.get('ai_analysis', {}).get('total_experience', 0)
+                experience = ai_experience if ai_experience > 0 else self.extract_experience(resume_text)
+            else:
+                skills = self.extract_skills(resume_text)
+                experience = self.extract_experience(resume_text)
+            
             domain = self.extract_domain(resume_text)
             education_info = self.extract_education(resume_text)
             location = self.extract_location(resume_text)
@@ -338,6 +490,7 @@ class ResumeParser:
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
             
+            # Prepare parsed data with AI analysis if available
             parsed_data = {
                 'name': name,
                 'email': email,
@@ -355,6 +508,18 @@ class ResumeParser:
                 'file_type': file_type,
                 'file_size_kb': int(file_size_kb)
             }
+            
+            # Add AI analysis if available
+            if self.use_ai_extraction and 'ai_analysis' in skills:
+                ai_analysis = skills['ai_analysis']
+                parsed_data.update({
+                    'ai_primary_skills': json.dumps(ai_analysis.get('primary_skills_detailed', [])),
+                    'ai_secondary_skills': json.dumps(ai_analysis.get('secondary_skills_detailed', [])),
+                    'ai_project_details': json.dumps(ai_analysis.get('project_details', [])),
+                    'ai_extraction_used': True
+                })
+            else:
+                parsed_data['ai_extraction_used'] = False
             
             logger.info(f"Successfully parsed resume for: {name}")
             return parsed_data

@@ -747,7 +747,7 @@ def comprehensive_profile_ranking():
         
         # Extract job requirements
         job_requirements = data.get('job_requirements', {})
-        profiles_dir = data.get('profiles_directory', 'D:\\profiles')
+        profiles_dir = data.get('profiles_directory', os.path.join(os.getcwd(), 'profiles'))
         top_k = data.get('top_k', 10)
         
         # Validate job requirements
@@ -839,7 +839,11 @@ def read_profiles_from_directory(profiles_dir: str) -> List[Dict]:
         return profiles
     
     try:
-        for filename in os.listdir(profiles_dir):
+        logger.info(f"Scanning directory: {profiles_dir}")
+        files = os.listdir(profiles_dir)
+        logger.info(f"Found {len(files)} files in directory: {files}")
+        
+        for filename in files:
             if filename.lower().endswith(('.pdf', '.docx', '.doc', '.txt')):
                 file_path = os.path.join(profiles_dir, filename)
                 
@@ -852,9 +856,10 @@ def read_profiles_from_directory(profiles_dir: str) -> List[Dict]:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
                     else:
-                        # For PDF/DOCX files, you would need additional libraries
-                        # For now, create a placeholder
-                        content = f"Profile content for candidate {candidate_id}"
+                        # For PDF/DOCX files, try to extract text using available libraries
+                        content = extract_text_from_file(file_path)
+                        if not content:
+                            content = f"Profile content for candidate {candidate_id} - PDF file detected but text extraction failed"
                     
                     profile = {
                         'candidate_id': candidate_id,
@@ -868,15 +873,204 @@ def read_profiles_from_directory(profiles_dir: str) -> List[Dict]:
                     }
                     
                     profiles.append(profile)
-                    logger.info(f"Loaded profile: {filename}")
+                    logger.info(f"Loaded profile: {filename} (content length: {len(content)} chars)")
                     
                 except Exception as e:
                     logger.error(f"Error reading file {filename}: {e}")
+                    # Still add the profile with placeholder content
+                    profile = {
+                        'candidate_id': candidate_id,
+                        'filename': filename,
+                        'content': f"Error reading file {filename}: {str(e)}",
+                        'name': f"Candidate {candidate_id}",
+                        'email': f"candidate{candidate_id}@example.com",
+                        'phone': '',
+                        'domain': '',
+                        'education': ''
+                    }
+                    profiles.append(profile)
     
     except Exception as e:
         logger.error(f"Error reading profiles directory: {e}")
     
+    logger.info(f"Successfully loaded {len(profiles)} profiles")
     return profiles
+
+
+def extract_text_from_file(file_path: str) -> str:
+    """Extract text from PDF/DOCX files"""
+    try:
+        if file_path.lower().endswith('.pdf'):
+            # Try PyPDF2 first
+            try:
+                import PyPDF2
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text.strip()
+            except ImportError:
+                logger.warning("PyPDF2 not available, trying pdfplumber")
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(file_path) as pdf:
+                        text = ""
+                        for page in pdf.pages:
+                            text += page.extract_text() or ""
+                        return text.strip()
+                except ImportError:
+                    logger.warning("pdfplumber not available, trying pymupdf")
+                    try:
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(file_path)
+                        text = ""
+                        for page in doc:
+                            text += page.get_text()
+                        doc.close()
+                        return text.strip()
+                    except ImportError:
+                        logger.warning("PyMuPDF not available, using placeholder text")
+                        return f"PDF file content for {os.path.basename(file_path)} - text extraction libraries not available"
+        
+        elif file_path.lower().endswith(('.docx', '.doc')):
+            try:
+                from docx import Document
+                doc = Document(file_path)
+                text = ""
+                for paragraph in doc.paragraphs:
+                    text += paragraph.text + "\n"
+                return text.strip()
+            except ImportError:
+                logger.warning("python-docx not available")
+                return f"DOCX file content for {os.path.basename(file_path)} - text extraction library not available"
+        
+        return ""
+        
+    except Exception as e:
+        logger.error(f"Error extracting text from {file_path}: {e}")
+        return f"Error extracting text from {os.path.basename(file_path)}: {str(e)}"
+
+
+@app.route('/api/debug-profiles-directory', methods=['POST'])
+def debug_profiles_directory():
+    """Debug endpoint to check directory access and file listing"""
+    try:
+        data = request.get_json() or {}
+        profiles_dir = data.get('profiles_directory', 'D:\\profiles')
+        
+        debug_info = {
+            'profiles_directory': profiles_dir,
+            'directory_exists': os.path.exists(profiles_dir),
+            'is_directory': os.path.isdir(profiles_dir) if os.path.exists(profiles_dir) else False,
+            'current_working_directory': os.getcwd(),
+            'files_in_directory': [],
+            'error': None
+        }
+        
+        if os.path.exists(profiles_dir):
+            try:
+                files = os.listdir(profiles_dir)
+                debug_info['files_in_directory'] = files
+                debug_info['total_files'] = len(files)
+                debug_info['pdf_files'] = [f for f in files if f.lower().endswith('.pdf')]
+                debug_info['txt_files'] = [f for f in files if f.lower().endswith('.txt')]
+                debug_info['docx_files'] = [f for f in files if f.lower().endswith('.docx')]
+                
+                # Test reading one file
+                if files:
+                    test_file = files[0]
+                    test_path = os.path.join(profiles_dir, test_file)
+                    debug_info['test_file'] = test_file
+                    debug_info['test_file_path'] = test_path
+                    debug_info['test_file_exists'] = os.path.exists(test_path)
+                    debug_info['test_file_size'] = os.path.getsize(test_path) if os.path.exists(test_path) else 0
+                    
+            except Exception as e:
+                debug_info['error'] = f"Error listing directory: {str(e)}"
+        else:
+            debug_info['error'] = f"Directory {profiles_dir} does not exist"
+        
+        return jsonify(debug_info), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/upload-profile', methods=['POST'])
+def upload_profile():
+    """Upload a profile file to the server"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Create profiles directory if it doesn't exist
+        profiles_dir = os.path.join(os.getcwd(), 'profiles')
+        os.makedirs(profiles_dir, exist_ok=True)
+        
+        # Save file
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(profiles_dir, filename)
+        file.save(file_path)
+        
+        logger.info(f"Profile uploaded: {filename} to {file_path}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Profile uploaded successfully',
+            'filename': filename,
+            'file_path': file_path,
+            'profiles_directory': profiles_dir
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error uploading profile: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/list-uploaded-profiles', methods=['GET'])
+def list_uploaded_profiles():
+    """List all uploaded profiles"""
+    try:
+        profiles_dir = os.path.join(os.getcwd(), 'profiles')
+        
+        if not os.path.exists(profiles_dir):
+            return jsonify({
+                'status': 'success',
+                'profiles_directory': profiles_dir,
+                'profiles': [],
+                'total_profiles': 0,
+                'message': 'Profiles directory does not exist'
+            }), 200
+        
+        files = os.listdir(profiles_dir)
+        profile_files = [f for f in files if f.lower().endswith(('.pdf', '.docx', '.doc', '.txt'))]
+        
+        profiles = []
+        for filename in profile_files:
+            file_path = os.path.join(profiles_dir, filename)
+            file_size = os.path.getsize(file_path)
+            profiles.append({
+                'filename': filename,
+                'candidate_id': os.path.splitext(filename)[0],
+                'file_size': file_size,
+                'file_path': file_path
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'profiles_directory': profiles_dir,
+            'profiles': profiles,
+            'total_profiles': len(profiles)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing profiles: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/candidate/<int:candidate_id>', methods=['GET'])

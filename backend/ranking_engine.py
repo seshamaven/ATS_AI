@@ -407,7 +407,10 @@ class ProfileRankingEngine:
         if top_k:
             ranked_candidates = ranked_candidates[:top_k]
         
-        logger.info(f"Ranking complete. Top candidate score: {ranked_candidates[0]['total_score']:.2f}")
+        if ranked_candidates:
+            logger.info(f"Ranking complete. Top candidate score: {ranked_candidates[0]['total_score']:.2f}")
+        else:
+            logger.info("Ranking complete. No candidates ranked.")
         
         return ranked_candidates
 

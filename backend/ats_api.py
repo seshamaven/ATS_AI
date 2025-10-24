@@ -780,27 +780,54 @@ def comprehensive_profile_ranking():
         # Convert profiles to the format expected by ranking engine
         candidates = []
         for profile in profiles:
-            # Extract skills and experience from content
-            from resume_parser import extract_skills_from_text, extract_experience_from_text
-            
-            content = profile.get('content', '')
-            extracted_skills = extract_skills_from_text(content)
-            extracted_experience = extract_experience_from_text(content)
-            
-            candidate = {
-                'candidate_id': profile.get('candidate_id'),
-                'name': profile.get('name', 'Unknown'),
-                'email': profile.get('email', ''),
-                'phone': profile.get('phone', ''),
-                'primary_skills': ', '.join(extracted_skills[:10]),  # Top 10 skills as primary
-                'secondary_skills': ', '.join(extracted_skills[10:]),  # Rest as secondary
-                'total_experience': extracted_experience,
-                'domain': profile.get('domain', ''),
-                'education': profile.get('education', ''),
-                'resume_text': content,
-                'status': 'active'
-            }
-            candidates.append(candidate)
+            try:
+                # Extract skills and experience from content
+                from resume_parser import extract_skills_from_text, extract_experience_from_text
+                
+                content = profile.get('content', '')
+                logger.info(f"Processing profile {profile.get('candidate_id')} with content length: {len(content)}")
+                
+                extracted_skills = extract_skills_from_text(content)
+                extracted_experience = extract_experience_from_text(content)
+                
+                logger.info(f"Extracted {len(extracted_skills)} skills and {extracted_experience} years experience")
+                
+                # Safely handle skills list slicing
+                primary_skills = extracted_skills[:10] if len(extracted_skills) >= 10 else extracted_skills
+                secondary_skills = extracted_skills[10:] if len(extracted_skills) > 10 else []
+                
+                candidate = {
+                    'candidate_id': profile.get('candidate_id'),
+                    'name': profile.get('name', 'Unknown'),
+                    'email': profile.get('email', ''),
+                    'phone': profile.get('phone', ''),
+                    'primary_skills': ', '.join(primary_skills),
+                    'secondary_skills': ', '.join(secondary_skills),
+                    'total_experience': extracted_experience,
+                    'domain': profile.get('domain', ''),
+                    'education': profile.get('education', ''),
+                    'resume_text': content,
+                    'status': 'active'
+                }
+                candidates.append(candidate)
+                
+            except Exception as e:
+                logger.error(f"Error processing profile {profile.get('candidate_id')}: {e}")
+                # Create a minimal candidate entry to avoid breaking the ranking
+                candidate = {
+                    'candidate_id': profile.get('candidate_id'),
+                    'name': profile.get('name', 'Unknown'),
+                    'email': profile.get('email', ''),
+                    'phone': profile.get('phone', ''),
+                    'primary_skills': '',
+                    'secondary_skills': '',
+                    'total_experience': 0,
+                    'domain': profile.get('domain', ''),
+                    'education': profile.get('education', ''),
+                    'resume_text': profile.get('content', ''),
+                    'status': 'active'
+                }
+                candidates.append(candidate)
         
         # Rank candidates using existing ranking engine
         ranked_profiles = ranking_engine.rank_candidates(

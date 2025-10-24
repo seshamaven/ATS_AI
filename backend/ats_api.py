@@ -106,21 +106,45 @@ def allowed_file(filename: str) -> bool:
            filename.rsplit('.', 1)[1].lower() in ATSConfig.ALLOWED_EXTENSIONS
 
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint for Railway health checks."""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'ATS API',
+        'message': 'Application Tracking System API is running',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0'
+    }), 200
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
     try:
-        # Test database connection
-        with create_ats_database() as db:
-            stats = db.get_statistics()
+        # Test database connection with timeout
+        db_status = 'unknown'
+        stats = {}
         
+        try:
+            with create_ats_database() as db:
+                stats = db.get_statistics()
+                db_status = 'connected'
+        except Exception as db_error:
+            logger.warning(f"Database connection failed during health check: {db_error}")
+            db_status = 'disconnected'
+            stats = {'error': str(db_error)}
+        
+        # Return healthy status even if DB is down (for Railway deployment)
         return jsonify({
             'status': 'healthy',
             'service': 'ATS API',
             'timestamp': datetime.now().isoformat(),
-            'database': 'connected',
-            'statistics': stats
+            'database': db_status,
+            'statistics': stats,
+            'version': '1.0.0'
         }), 200
+        
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({

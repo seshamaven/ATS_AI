@@ -14,12 +14,12 @@ load_dotenv()
 class Config:
     """Application configuration class."""
     
-    # Database Configuration
-    MYSQL_HOST = os.getenv('MYSQL_HOST', 'localhost')
-    MYSQL_USER = os.getenv('MYSQL_USER', 'root')
-    MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'root')
-    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'reglib')
-    MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3306'))
+    # Database Configuration - Support both Railway and local formats
+    MYSQL_HOST = os.getenv('MYSQLHOST', os.getenv('MYSQL_HOST', 'localhost'))
+    MYSQL_USER = os.getenv('MYSQLUSER', os.getenv('MYSQL_USER', 'root'))
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'root'))
+    MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('MYSQL_DATABASE', 'reglib'))
+    MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('MYSQL_PORT', '3306')))
     
     # Azure OpenAI Configuration (Preferred)
     AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))

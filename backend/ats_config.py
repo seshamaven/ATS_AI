@@ -8,24 +8,18 @@ from dotenv import load_dotenv
 from typing import Dict, Any
 
 # Load environment variables from .env file
-# Try to load from current directory first, then from backend directory
 load_dotenv()
-if not os.path.exists('.env'):
-    # If .env not found in current directory, try backend directory
-    backend_env_path = os.path.join(os.path.dirname(__file__), '.env')
-    if os.path.exists(backend_env_path):
-        load_dotenv(backend_env_path)
 
 
 class ATSConfig:
     """ATS-specific configuration class."""
     
-    # Database Configuration
-    MYSQL_HOST = os.getenv('ATS_MYSQL_HOST', 'localhost')
-    MYSQL_USER = os.getenv('ATS_MYSQL_USER', 'root')
-    MYSQL_PASSWORD = os.getenv('ATS_MYSQL_PASSWORD', 'root')
-    MYSQL_DATABASE = os.getenv('ATS_MYSQL_DATABASE', 'ats_db')
-    MYSQL_PORT = int(os.getenv('ATS_MYSQL_PORT', '3306'))
+    # Database Configuration - Support both Railway and local formats
+    MYSQL_HOST = os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))
+    MYSQL_USER = os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))
+    MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))
+    MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306')))
     
     # Azure OpenAI Configuration
     AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
@@ -49,7 +43,8 @@ class ATSConfig:
     # Flask Configuration
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
-    ATS_API_PORT = int(os.getenv('ATS_API_PORT', '5002'))
+    # Railway uses PORT environment variable, fallback to ATS_API_PORT
+    ATS_API_PORT = int(os.getenv('PORT', os.getenv('ATS_API_PORT', '5002')))
     
     # File Upload Configuration
     MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '10'))
@@ -113,14 +108,6 @@ class ATSConfig:
     @classmethod
     def validate_config(cls) -> bool:
         """Validate that all required configuration is present."""
-        # Debug: Print environment variables for troubleshooting
-        print("=== DEBUG: Environment Variables ===")
-        print(f"OPENAI_API_KEY: {'SET' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
-        print(f"AZURE_OPENAI_API_KEY: {'SET' if os.getenv('AZURE_OPENAI_API_KEY') else 'NOT SET'}")
-        print(f"AZURE_OPENAI_ENDPOINT: {'SET' if os.getenv('AZURE_OPENAI_ENDPOINT') else 'NOT SET'}")
-        print(f"All env vars: {list(os.environ.keys())}")
-        print("=====================================")
-        
         required_vars = [
             'MYSQL_HOST',
             'MYSQL_USER',
@@ -131,9 +118,6 @@ class ATSConfig:
         # Check for either Azure OpenAI or regular OpenAI
         has_azure = cls.AZURE_OPENAI_API_KEY and cls.AZURE_OPENAI_ENDPOINT
         has_openai = cls.OPENAI_API_KEY
-        
-        print(f"has_azure: {has_azure} (key: {bool(cls.AZURE_OPENAI_API_KEY)}, endpoint: {bool(cls.AZURE_OPENAI_ENDPOINT)})")
-        print(f"has_openai: {has_openai} (key: {bool(cls.OPENAI_API_KEY)})")
         
         if not (has_azure or has_openai):
             print("Missing OpenAI configuration: Need either AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY")

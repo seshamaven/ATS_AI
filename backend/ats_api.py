@@ -484,10 +484,15 @@ def search_resumes():
 
 @app.route('/api/profileRankingByJD', methods=['POST'])
 def profile_ranking_by_jd():
-    # Rank candidate profiles against a Job Description.
-    # 
-    # Input: JSON with job_id and job_description
-    # Returns: Ranked list of candidates with scores
+    """
+    Rank candidate profiles against a Job Description.
+    
+    Input: JSON with job_description (required) and optional job_id
+    Returns: Ranked list of candidates with scores
+    
+    Supports both structured input and general job descriptions.
+    Automatically extracts skills, experience, and requirements from JD text.
+    """
     try:
         # Validate request
         if not request.is_json:
@@ -495,41 +500,114 @@ def profile_ranking_by_jd():
         
         data = request.get_json()
         
-        # Validate required fields
-        if 'job_id' not in data:
-            return jsonify({'error': 'Missing required field: job_id'}), 400
+        # Validate required fields - job_description is required, job_id is optional
         if 'job_description' not in data:
             return jsonify({'error': 'Missing required field: job_description'}), 400
         
-        job_id = data['job_id']
         job_description = data['job_description'].strip()
-        
         if not job_description:
             return jsonify({'error': 'job_description cannot be empty'}), 400
         
-        logger.info(f"Processing ranking request for job_id: {job_id}")
+        # Generate job_id if not provided
+        job_id = data.get('job_id', f"JD_{int(time.time())}")
         
-        # Extract job requirements from data or JD text
+        logger.info(f"Processing ranking request for job_id: {job_id}")
+        logger.info(f"Job description length: {len(job_description)} characters")
+        
+        # Import extraction functions
+        from resume_parser import extract_skills_from_text, extract_experience_from_text
+        
+        # Extract all requirements from job description text
+        logger.info("Extracting requirements from job description...")
+        extracted_skills = extract_skills_from_text(job_description)
+        extracted_experience = extract_experience_from_text(job_description)
+        
+        # Extract additional information using regex patterns
+        import re
+        
+        # Extract education requirements
+        education_patterns = [
+            r'(?:Bachelor|Master|PhD|B\.?S\.?|M\.?S\.?|Ph\.?D\.?)\s*(?:in|of)?\s*([A-Za-z\s]+)',
+            r'(?:degree|diploma)\s*(?:in|of)?\s*([A-Za-z\s]+)',
+            r'(?:Graduate|Postgraduate)\s*(?:in|of)?\s*([A-Za-z\s]+)'
+        ]
+        
+        education_required = ''
+        for pattern in education_patterns:
+            match = re.search(pattern, job_description, re.IGNORECASE)
+            if match:
+                education_required = match.group(1).strip()
+                break
+        
+        # Extract domain/industry
+        domain_patterns = [
+            r'(?:in|for)\s+([A-Za-z\s]+(?:engineering|technology|finance|healthcare|education|marketing|sales))',
+            r'(?:industry|sector|field)\s*:?\s*([A-Za-z\s]+)',
+            r'(?:experience\s+in|background\s+in)\s+([A-Za-z\s]+)'
+        ]
+        
+        domain = ''
+        for pattern in domain_patterns:
+            match = re.search(pattern, job_description, re.IGNORECASE)
+            if match:
+                domain = match.group(1).strip()
+                break
+        
+        # Extract years of experience range
+        experience_range_patterns = [
+            r'(\d+)\s*[-–]\s*(\d+)\s*years?',
+            r'(\d+)\s*to\s*(\d+)\s*years?',
+            r'(\d+)\s*-\s*(\d+)\s*years?'
+        ]
+        
+        min_experience = extracted_experience
+        max_experience = None
+        
+        for pattern in experience_range_patterns:
+            match = re.search(pattern, job_description, re.IGNORECASE)
+            if match:
+                min_experience = int(match.group(1))
+                max_experience = int(match.group(2))
+                break
+        
+        # Separate required vs preferred skills based on context
+        required_skills = []
+        preferred_skills = []
+        
+        # Look for "Must Have", "Required", "Essential" sections
+        must_have_section = re.search(r'(?:must\s+have|required|essential|mandatory)[\s\S]*?(?=\n\n|\n[A-Z]|$)', job_description, re.IGNORECASE)
+        if must_have_section:
+            must_have_text = must_have_section.group(0)
+            required_skills = extract_skills_from_text(must_have_text)
+        
+        # Look for "Preferred", "Nice to Have", "Bonus" sections
+        preferred_section = re.search(r'(?:preferred|nice\s+to\s+have|bonus|advantage)[\s\S]*?(?=\n\n|\n[A-Z]|$)', job_description, re.IGNORECASE)
+        if preferred_section:
+            preferred_text = preferred_section.group(0)
+            preferred_skills = extract_skills_from_text(preferred_text)
+        
+        # If no specific sections found, use all extracted skills as required
+        if not required_skills and not preferred_skills:
+            required_skills = extracted_skills[:15]  # Top 15 skills as required
+            preferred_skills = extracted_skills[15:]  # Rest as preferred
+        
+        # Build job requirements
         job_requirements = {
             'job_id': job_id,
             'job_description': job_description,
-            'required_skills': data.get('required_skills', ''),
-            'preferred_skills': data.get('preferred_skills', ''),
-            'min_experience': data.get('min_experience', 0),
-            'max_experience': data.get('max_experience'),
-            'domain': data.get('domain', ''),
-            'education_required': data.get('education_required', '')
+            'required_skills': ', '.join(required_skills) if required_skills else '',
+            'preferred_skills': ', '.join(preferred_skills) if preferred_skills else '',
+            'min_experience': min_experience,
+            'max_experience': max_experience,
+            'domain': domain,
+            'education_required': education_required
         }
         
-        # If skills not explicitly provided, extract from JD
-        if not job_requirements['required_skills']:
-            from resume_parser import extract_skills_from_text, extract_experience_from_text
-            
-            extracted_skills = extract_skills_from_text(job_description)
-            job_requirements['required_skills'] = ', '.join(extracted_skills[:15])  # Top 15 skills
-            
-            if not job_requirements['min_experience']:
-                job_requirements['min_experience'] = extract_experience_from_text(job_description)
+        # Log extracted information
+        logger.info(f"Extracted skills: {len(required_skills)} required, {len(preferred_skills)} preferred")
+        logger.info(f"Extracted experience: {min_experience}-{max_experience} years")
+        logger.info(f"Extracted domain: {domain}")
+        logger.info(f"Extracted education: {education_required}")
         
         # Generate JD embedding
         logger.info("Generating embedding for job description...")
@@ -567,6 +645,15 @@ def profile_ranking_by_jd():
                 'job_id': job_id,
                 'ranked_profiles': [],
                 'total_candidates_evaluated': 0,
+                'extracted_job_requirements': {
+                    'required_skills': required_skills,
+                    'preferred_skills': preferred_skills,
+                    'min_experience': min_experience,
+                    'max_experience': max_experience,
+                    'domain': domain,
+                    'education_required': education_required,
+                    'all_extracted_skills': extracted_skills
+                },
                 'timestamp': datetime.now().isoformat()
             }), 200
         
@@ -613,6 +700,15 @@ def profile_ranking_by_jd():
             'ranked_profiles': ranked_profiles,
             'total_candidates_evaluated': len(candidates),
             'top_candidates_returned': len(ranked_profiles),
+            'extracted_job_requirements': {
+                'required_skills': required_skills,
+                'preferred_skills': preferred_skills,
+                'min_experience': min_experience,
+                'max_experience': max_experience,
+                'domain': domain,
+                'education_required': education_required,
+                'all_extracted_skills': extracted_skills
+            },
             'ranking_criteria': {
                 'weights': ATSConfig.RANKING_WEIGHTS,
                 'semantic_similarity': 'enabled'

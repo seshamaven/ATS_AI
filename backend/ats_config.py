@@ -31,6 +31,7 @@ class ATSConfig:
     
     # Alternative: Use OpenAI directly if not using Azure
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
     OPENAI_EMBEDDING_MODEL = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-ada-002')
     
     # Pinecone Configuration (Optional - for vector search at scale)

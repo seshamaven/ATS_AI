@@ -47,10 +47,10 @@ os.makedirs(ATSConfig.UPLOAD_FOLDER, exist_ok=True)
 
 
 class EmbeddingService:
-    """Service to generate embeddings using Azure OpenAI or OpenAI."""
+    # Service to generate embeddings using Azure OpenAI or OpenAI
     
     def __init__(self):
-        """Initialize embedding service based on configuration."""
+        # Initialize embedding service based on configuration
         self.use_azure = bool(ATSConfig.AZURE_OPENAI_ENDPOINT)
         
         if self.use_azure:
@@ -101,14 +101,14 @@ resume_parser = ResumeParser()
 
 
 def allowed_file(filename: str) -> bool:
-    """Check if file extension is allowed."""
+    # Check if file extension is allowed
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ATSConfig.ALLOWED_EXTENSIONS
 
 
 @app.route('/', methods=['GET'])
 def root():
-    """Root endpoint for Railway health checks."""
+    # Root endpoint for Railway health checks
     return jsonify({
         'status': 'healthy',
         'service': 'ATS API',
@@ -120,7 +120,7 @@ def root():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint."""
+    # Health check endpoint
     try:
         # Test database connection with timeout
         db_status = 'unknown'
@@ -380,11 +380,10 @@ def search_resumes():
     """
 @app.route('/api/profileRankingByJD', methods=['POST'])
 def profile_ranking_by_jd():
-    Rank candidate profiles against a Job Description.
-    
-    Input: JSON with job_id and job_description
-    Returns: Ranked list of candidates with scores
-    """
+    # Rank candidate profiles against a Job Description.
+    # 
+    # Input: JSON with job_id and job_description
+    # Returns: Ranked list of candidates with scores
     try:
         # Validate request
         if not request.is_json:
@@ -533,7 +532,7 @@ def profile_ranking_by_jd():
 
 @app.route('/api/candidate/<int:candidate_id>', methods=['GET'])
 def get_candidate(candidate_id):
-    """Get candidate details by ID."""
+    # Get candidate details by ID
     try:
         with create_ats_database() as db:
             candidate = db.get_resume_by_id(candidate_id)
@@ -559,7 +558,7 @@ def get_candidate(candidate_id):
 
 @app.route('/api/job/<job_id>/rankings', methods=['GET'])
 def get_job_rankings(job_id):
-    """Get ranking history for a specific job."""
+    # Get ranking history for a specific job
     try:
         limit = request.args.get('limit', 50, type=int)
         
@@ -580,7 +579,7 @@ def get_job_rankings(job_id):
 
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
-    """Get ATS system statistics."""
+    # Get ATS system statistics
     try:
         with create_ats_database() as db:
             stats = db.get_statistics()
@@ -597,7 +596,7 @@ def get_statistics():
 
 @app.route('/api/database/status', methods=['GET'])
 def database_status():
-    """Detailed database connection status endpoint."""
+    # Detailed database connection status endpoint
     try:
         db_status = {
             'connected': False,
@@ -648,7 +647,7 @@ def database_status():
 
 @app.route('/api/database/test', methods=['POST'])
 def test_database_connection():
-    """Test database connection with detailed output."""
+    # Test database connection with detailed output
     try:
         test_results = {
             'environment_check': {},
@@ -721,16 +720,16 @@ def test_database_connection():
 
 @app.errorhandler(413)
 def file_too_large(e):
-    """Handle file too large error."""
+    # Handle file too large error
     return jsonify({
-        'error': f'File too large. Maximum size is {ATSConfig.MAX_FILE_SIZE_MB}MB'
+        'error': 'File too large. Maximum size is ' + str(ATSConfig.MAX_FILE_SIZE_MB) + 'MB'
     }), 413
 
 
 @app.errorhandler(500)
 def internal_error(e):
-    """Handle internal server errors."""
-    logger.error(f"Internal server error: {e}")
+    # Handle internal server errors
+    logger.error("Internal server error: " + str(e))
     return jsonify({
         'error': 'Internal server error',
         'timestamp': datetime.now().isoformat()
@@ -738,7 +737,7 @@ def internal_error(e):
 
 
 if __name__ == '__main__':
-    logger.info(f"Starting ATS API on port {ATSConfig.ATS_API_PORT}")
+    logger.info("Starting ATS API on port " + str(ATSConfig.ATS_API_PORT))
     app.run(
         host='0.0.0.0',
         port=ATSConfig.ATS_API_PORT,

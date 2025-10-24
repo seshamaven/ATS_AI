@@ -386,6 +386,101 @@ def search_resumes():
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores
     """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if 'query' not in data:
+            return jsonify({'error': 'Missing query field'}), 400
+        
+        user_query = data['query'].strip()
+        if not user_query:
+            return jsonify({'error': 'Query cannot be empty'}), 400
+        
+        # Optional parameters
+        filters = data.get('filters', {})
+        top_k = data.get('top_k', 10)
+        
+        logger.info(f"Processing resume search query: {user_query}")
+        logger.info(f"Applied filters: {filters}")
+        
+        # Start timing for performance monitoring
+        start_time = time.time()
+        
+        # Check if Pinecone is enabled
+        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
+            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        
+        # Initialize Pinecone manager
+        from enhanced_pinecone_manager import EnhancedPineconeManager
+        pinecone_manager = EnhancedPineconeManager(
+            api_key=ATSConfig.PINECONE_API_KEY,
+            index_name=ATSConfig.PINECONE_INDEX_NAME,
+            dimension=ATSConfig.EMBEDDING_DIMENSION
+        )
+        pinecone_manager.get_or_create_index()
+        
+        # Generate embedding for query
+        query_embedding = embeddings.embed_query(user_query)
+        
+        # Perform vector search in Pinecone
+        search_results = pinecone_manager.query_vectors(
+            query_vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filters if filters else None
+        )
+        
+        if not search_results.matches:
+            return jsonify({
+                'message': 'No matching resumes found',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # Process search results
+        candidates = []
+        for match in search_results.matches:
+            candidate_info = {
+                'candidate_id': match.metadata.get('candidate_id'),
+                'name': match.metadata.get('name'),
+                'email': match.metadata.get('email'),
+                'match_score': match.score,
+                'primary_skills': match.metadata.get('primary_skills'),
+                'total_experience': match.metadata.get('total_experience'),
+                'domain': match.metadata.get('domain'),
+                'education': match.metadata.get('education'),
+                'file_type': match.metadata.get('file_type'),
+                'current_location': match.metadata.get('current_location'),
+                'current_company': match.metadata.get('current_company'),
+                'resume_summary': match.metadata.get('resume_summary'),
+                'pinecone_score': match.score,
+                'metadata': match.metadata
+            }
+            candidates.append(candidate_info)
+        
+        # Calculate processing time
+        processing_time = int((time.time() - start_time) * 1000)
+        
+        return jsonify({
+            'message': 'Resume search completed',
+            'query': user_query,
+            'search_results': candidates,
+            'total_matches': len(candidates),
+            'processing_time_ms': processing_time,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in resume search: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/profileRankingByJD', methods=['POST'])
 def profile_ranking_by_jd():
     # Rank candidate profiles against a Job Description.

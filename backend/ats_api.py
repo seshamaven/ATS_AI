@@ -458,6 +458,130 @@ def get_statistics():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/database/status', methods=['GET'])
+def database_status():
+    """Detailed database connection status endpoint."""
+    try:
+        db_status = {
+            'connected': False,
+            'error': None,
+            'database_info': {},
+            'environment_variables': {},
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Check environment variables
+        env_vars = {
+            'MYSQLHOST': os.getenv('MYSQLHOST'),
+            'MYSQLUSER': os.getenv('MYSQLUSER'),
+            'MYSQLPASSWORD': '***' if os.getenv('MYSQLPASSWORD') else None,
+            'MYSQLDATABASE': os.getenv('MYSQLDATABASE'),
+            'MYSQLPORT': os.getenv('MYSQLPORT')
+        }
+        db_status['environment_variables'] = env_vars
+        
+        # Test database connection
+        try:
+            with create_ats_database() as db:
+                # Get database statistics
+                stats = db.get_statistics()
+                db_status['connected'] = True
+                db_status['database_info'] = {
+                    'database_name': ATSConfig.MYSQL_DATABASE,
+                    'host': ATSConfig.MYSQL_HOST,
+                    'port': ATSConfig.MYSQL_PORT,
+                    'user': ATSConfig.MYSQL_USER,
+                    'statistics': stats
+                }
+                
+        except Exception as db_error:
+            db_status['error'] = str(db_error)
+            db_status['connected'] = False
+        
+        return jsonify(db_status), 200
+        
+    except Exception as e:
+        logger.error(f"Database status check failed: {e}")
+        return jsonify({
+            'connected': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/api/database/test', methods=['POST'])
+def test_database_connection():
+    """Test database connection with detailed output."""
+    try:
+        test_results = {
+            'environment_check': {},
+            'connection_test': {},
+            'database_operations': {},
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Test 1: Environment Variables
+        required_vars = ['MYSQLHOST', 'MYSQLUSER', 'MYSQLPASSWORD', 'MYSQLDATABASE', 'MYSQLPORT']
+        env_status = {}
+        
+        for var in required_vars:
+            value = os.getenv(var)
+            env_status[var] = {
+                'present': bool(value),
+                'value': '***' if 'PASSWORD' in var and value else value
+            }
+        
+        test_results['environment_check'] = env_status
+        
+        # Test 2: Database Connection
+        try:
+            with create_ats_database() as db:
+                connection_info = {
+                    'status': 'success',
+                    'host': ATSConfig.MYSQL_HOST,
+                    'database': ATSConfig.MYSQL_DATABASE,
+                    'port': ATSConfig.MYSQL_PORT,
+                    'user': ATSConfig.MYSQL_USER
+                }
+                
+                # Test 3: Database Operations
+                try:
+                    stats = db.get_statistics()
+                    operations_info = {
+                        'status': 'success',
+                        'statistics': stats,
+                        'operations_tested': ['connection', 'query_execution', 'data_retrieval']
+                    }
+                except Exception as op_error:
+                    operations_info = {
+                        'status': 'partial_success',
+                        'error': str(op_error),
+                        'note': 'Connection successful but some operations failed'
+                    }
+                
+                test_results['connection_test'] = connection_info
+                test_results['database_operations'] = operations_info
+                
+        except Exception as conn_error:
+            test_results['connection_test'] = {
+                'status': 'failed',
+                'error': str(conn_error)
+            }
+            test_results['database_operations'] = {
+                'status': 'not_tested',
+                'reason': 'Connection failed'
+            }
+        
+        return jsonify(test_results), 200
+        
+    except Exception as e:
+        logger.error(f"Database test failed: {e}")
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
 @app.errorhandler(413)
 def file_too_large(e):
     """Handle file too large error."""

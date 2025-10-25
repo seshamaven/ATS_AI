@@ -299,8 +299,26 @@ class ProfileRankingEngine:
             Dictionary with scores and ranking details
         """
         # Calculate individual scores
+        # Handle skills as either strings or lists
+        primary_skills = candidate.get('primary_skills', '')
+        secondary_skills = candidate.get('secondary_skills', '')
+        
+        # Convert lists to strings if needed
+        if isinstance(primary_skills, list):
+            primary_skills = ', '.join(primary_skills)
+        if isinstance(secondary_skills, list):
+            secondary_skills = ', '.join(secondary_skills)
+        
+        # Combine skills
+        all_skills = primary_skills
+        if secondary_skills:
+            if all_skills:
+                all_skills += ', ' + secondary_skills
+            else:
+                all_skills = secondary_skills
+        
         skills_score, matched_skills, missing_skills = self.calculate_skills_score(
-            candidate.get('primary_skills', '') + ', ' + candidate.get('secondary_skills', ''),
+            all_skills,
             job_requirements.get('required_skills', ''),
             job_requirements.get('preferred_skills', '')
         )

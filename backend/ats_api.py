@@ -716,7 +716,10 @@ def profile_ranking_by_jd():
             'timestamp': datetime.now().isoformat()
         }
         
-        logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        if ranked_profiles:
+            logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        else:
+            logger.info("Ranking completed. No candidates were ranked.")
         
         return jsonify(response_data), 200
         
@@ -858,7 +861,10 @@ def comprehensive_profile_ranking():
             'timestamp': datetime.now().isoformat()
         }
         
-        logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        if ranked_profiles:
+            logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        else:
+            logger.info("Ranking completed. No candidates were ranked.")
         
         return jsonify(response_data), 200
         

@@ -797,6 +797,7 @@ Resume Text:
         try:
             # Extract text
             resume_text = self.extract_text_from_file(file_path, file_type)
+            print(resume_text)
             
             if not resume_text or len(resume_text) < 100:
                 raise ValueError("Resume text is too short or empty")

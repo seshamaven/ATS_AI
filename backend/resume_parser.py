@@ -65,7 +65,7 @@ EXTRACTION GUIDELINES:
    - Descriptive sentences, bullet points, or text with periods, commas, or verbs like "maintaining", "completed", "achieved"
 
    A NAME IS:
-   - A person’s actual name (e.g., "Daniel Mindlin", "John Smith")
+   - A person's actual name (e.g., "Daniel Mindlin", "John Smith")
    - Appears visually or logically at the top of the document (header or first few lines)
    - Does NOT contain punctuation or descriptive text
    - Consists of capitalized words typical of a human name
@@ -104,8 +104,9 @@ QUALITY & VALIDATION RULES:
   * Job titles: "Software Engineer", "Data Analyst", "Manager"
   * Organization names: "Microsoft", "Google", "Company Name"
 - A name is typically 2-3 words (first name + last name), NOT a description of education or experience
-- IMPORTANT: The name is usually at the TOP of the resume, before any "Education" or "Experience" section headers
+- IMPORTANT: The name is usually at the TOP of the resume, often in the header section or the first few lines, before any "Education" or "Experience" section headers
 - If a word or phrase appears as a section header (like "Education", "Skills"), it's NOT the candidate's name
+- Pay special attention to names in the document header - headers often contain the candidate's name in larger or bolder formatting
 - Email must always be fetched if present
 - Experience must be logically derived from career history
 - Skills extraction must be exhaustive - no key technology should be missed

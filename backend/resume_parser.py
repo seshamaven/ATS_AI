@@ -817,23 +817,32 @@ Resume Text:
                 degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree']
                 
                 if not name or name.lower() in ['unknown', 'education', 'experience']:
+                    logger.warning(f"AI name extraction failed or returned invalid: '{name}', trying regex fallback...")
                     # Try regex extraction
                     name = self.extract_name(resume_text)
+                    logger.info(f"Regex fallback returned: {name}")
                     
                     # If still not found, try a simple heuristic: first line that looks like a name
                     if not name or name == 'Unknown':
+                        logger.warning(f"Regex also failed, trying heuristic approach...")
                         lines = resume_text.split('\n')
-                        for line in lines[:5]:
+                        # Check first 10 lines thoroughly
+                        for idx, line in enumerate(lines[:10]):
                             line = line.strip()
-                            # Look for lines that are Title Case, 2-3 words, no special chars
-                            if line and 2 <= len(line.split()) <= 3 and line[0].isupper():
-                                # Check if it's all alphabetic (plus spaces)
-                                if all(word.replace('-', '').replace("'", '').isalpha() for word in line.split()):
+                            # Look for lines that are Title Case, 2-4 words, no special chars
+                            # Allow up to 4 words for names like "VARRE DHANA LAKSHMI DURGA"
+                            if line and 2 <= len(line.split()) <= 4 and len(line) < 70 and line[0].isalpha():
+                                # Check if it's all alphabetic (plus spaces, hyphens, periods)
+                                words = line.split()
+                                if all(word.replace('-', '').replace("'", '').replace('.', '').isalpha() for word in words):
                                     # Skip if it's a section header
-                                    if line.lower() not in invalid_names and not any(keyword in line.lower() for keyword in degree_keywords):
-                                        name = line
-                                        logger.info(f"Found name via heuristic: {name}")
-                                        break
+                                    line_lower = line.lower()
+                                    if line_lower not in invalid_names and not any(keyword in line_lower for keyword in degree_keywords):
+                                        # Skip if it's an email
+                                        if '@' not in line:
+                                            name = line
+                                            logger.info(f"Found name via heuristic (line {idx+1}): {name}")
+                                            break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
                 experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
@@ -865,6 +874,19 @@ Resume Text:
                 skills_section = self.extract_skills_section(resume_text)
                 skills_section_text = skills_section.lower() if skills_section else ""
                 
+                # If AI extracted no skills or very few, try regex fallback
+                if not ai_technical_skills or len(ai_technical_skills) < 2:
+                    logger.warning(f"AI extracted only {len(ai_technical_skills)} skills, trying regex fallback...")
+                    regex_skills = self.extract_skills(resume_text)
+                    all_extracted_skills = regex_skills.get('all_skills', [])
+                    
+                    for skill in all_extracted_skills:
+                        skill_lower = skill.lower().strip()
+                        if skill_lower in self.TECHNICAL_SKILLS:
+                            if skill_lower not in technical_skills_lower:
+                                technical_skills.append(skill)
+                                technical_skills_lower.add(skill_lower)
+                
                 for skill in ai_technical_skills:
                     skill_lower = skill.lower().strip()
                     
@@ -875,8 +897,9 @@ Resume Text:
                     
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
-                        # CRITICAL: Verify skill is actually in the Skills section
-                        # Use flexible matching: skill can appear as standalone word OR part of a larger word (e.g., "C#" in "C#.NET")
+                        # CRITICAL: Try to verify skill is in Skills section, but don't be too strict
+                        # If Skills section found AND skill not in it, warn but don't necessarily skip
+                        skill_found_in_section = False
                         if skills_section_text:
                             # Try exact word boundary match first
                             exact_pattern = r'\b' + re.escape(skill_lower) + r'\b'
@@ -887,11 +910,15 @@ Resume Text:
                             substring_match = re.search(substring_pattern, skills_section_text, re.IGNORECASE)
                             
                             # Special handling for skills with special characters (#, ., etc.)
-                            if not exact_match and not substring_match:
-                                # Try case-insensitive contains
-                                if skill_lower not in skills_section_text:
-                                    logger.warning(f"Skill '{skill}' not found in Skills section, skipping")
-                                    continue
+                            if exact_match or substring_match:
+                                skill_found_in_section = True
+                            elif skill_lower in skills_section_text:
+                                skill_found_in_section = True
+                        
+                        # If skill not found in Skills section, include anyway but warn
+                        # (Because Skills section might be incomplete or use different formatting)
+                        if skills_section_text and not skill_found_in_section:
+                            logger.info(f"Skill '{skill}' not found in Skills section, but including anyway (TECHNICAL_SKILLS match)")
                         
                         if skill_lower not in technical_skills_lower:
                             technical_skills.append(skill)
@@ -901,18 +928,20 @@ Resume Text:
                         # Try to find match in TECHNICAL_SKILLS
                         for tech_skill in self.TECHNICAL_SKILLS:
                             if skill_lower in tech_skill or tech_skill in skill_lower:
-                                # CRITICAL: Verify skill is actually in the Skills section
+                                # CRITICAL: Try to verify skill is in Skills section, but be lenient
+                                skill_found_in_section = False
                                 if skills_section_text:
-                                    # Try both exact and substring matching
                                     exact_pattern = r'\b' + re.escape(tech_skill) + r'\b'
                                     substring_pattern = re.escape(tech_skill)
                                     
-                                    if not re.search(exact_pattern, skills_section_text, re.IGNORECASE) and \
-                                       not re.search(substring_pattern, skills_section_text, re.IGNORECASE):
-                                        # Final check: case-insensitive contains
-                                        if tech_skill not in skills_section_text:
-                                            logger.warning(f"Skill '{tech_skill}' not found in Skills section, skipping")
-                                            continue
+                                    if re.search(exact_pattern, skills_section_text, re.IGNORECASE) or \
+                                       re.search(substring_pattern, skills_section_text, re.IGNORECASE) or \
+                                       tech_skill in skills_section_text:
+                                        skill_found_in_section = True
+                                
+                                # Include the skill even if not in Skills section (advisory check)
+                                if skills_section_text and not skill_found_in_section:
+                                    logger.info(f"Partial match '{tech_skill}' not found in Skills section, but including anyway")
                                 
                                 if tech_skill not in technical_skills_lower:
                                     technical_skills.append(tech_skill)

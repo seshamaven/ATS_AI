@@ -59,6 +59,21 @@ EXTRACTION GUIDELINES:
    - The name should be a person's name, NOT a label or description
    - Common resume structure: NAME is first, then contact info, then "Education" section
    - If you see "Education" or "Experience" first, the name might be above it or you might need to look more carefully
+   
+   WHAT IS NOT A NAME:
+   - Sentence fragments like "full course load.", "while maintaining", "in order to"
+   - Academic text like "Completed in 2019", "while maintaining"
+   - Phrases ending with periods or commas
+   - Bullet point content that continues sentences
+   - Any text that sounds like a description or activity
+   - Text containing words like "while", "maintaining", "completed", "full course"
+   
+   A NAME IS:
+   - A person's actual name (e.g., "Daniel Mindlin", "John Smith")
+   - Typically the first substantive content at the top
+   - Does NOT end with a period or comma
+   - Does NOT contain descriptive phrases
+   - Is a proper noun (person's name)
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -290,10 +305,19 @@ Resume Text:
             
             # For first 3 lines only: be more lenient - might be the actual name
             if idx < 3:
+                # Reject sentence fragments (ending with comma, period, or containing common phrases)
+                if line.endswith(',') or line.endswith('.'):
+                    continue
+                # Reject common bullet point phrases
+                if any(phrase in line_lower for phrase in ['while maintaining', 'while working', 'while attending', 
+                                                           'while completing', 'full course', 'as part of', 
+                                                           'in order to', 'for the', 'that']):
+                    continue
+                
                 # Accept if it looks like a name (2-3 words, Title Case or all caps)
                 if line and 2 <= len(line.split()) <= 4 and len(line) < 60:
                     words = line.split()
-                    # Check if mostly alphabetic
+                    # Check if mostly alphabetic and NOT a sentence fragment
                     if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
                         # Accept even if ALL CAPS (some resumes have names in all caps)
                         return line
@@ -304,6 +328,15 @@ Resume Text:
                 words = line.split()
                 # Allow hyphenated names (e.g., "Mary-Jane"), apostrophes, and periods
                 if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                    # Additional checks: reject sentence fragments and bullet point content
+                    # Reject if ends with comma or period
+                    if line.endswith(',') or line.endswith('.'):
+                        continue
+                    # Reject common bullet point patterns
+                    if any(phrase in line_lower for phrase in ['while maintaining', 'while working', 
+                                                                'full course', 'as part of', 
+                                                                'in order to', 'that', 'the']):
+                        continue
                     # Additional check: name should not be in ALL CAPS (likely a section header)
                     # But allow Title Case
                     if not line.isupper():
@@ -398,8 +431,20 @@ Resume Text:
                 if not is_invalid and any(keyword in full_name.lower() for keyword in ['in ', 'degree', 'major', 'minor']):
                     is_invalid = True
                 
+                # Check if it's a sentence fragment from bullet points (e.g., "full course load.")
+                if not is_invalid:
+                    sentence_fragment_keywords = ['while maintaining', 'while working', 'while attending', 
+                                                  'while completing', 'full course', 'as part of', 
+                                                  'in order to', 'for the', 'that', 'load.', 'completed in']
+                    if any(phrase in full_name.lower() for phrase in sentence_fragment_keywords):
+                        is_invalid = True
+                
+                # Check if it ends with a period or comma (likely a sentence fragment)
+                if not is_invalid and (full_name.endswith('.') or full_name.endswith(',')):
+                    is_invalid = True
+                
                 if is_invalid:
-                    logger.warning(f"AI extracted invalid name '{full_name}', likely a section header or academic degree. Trying regex fallback...")
+                    logger.warning(f"AI extracted invalid name '{full_name}' (sentence fragment/section header/academic degree). Trying regex fallback...")
                     # Use regex-based extraction as fallback
                     fallback_name = self.extract_name(text)
                     if fallback_name and fallback_name != 'Unknown':

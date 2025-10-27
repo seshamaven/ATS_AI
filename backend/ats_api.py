@@ -322,9 +322,31 @@ def index_existing_resumes():
                 # Since resume_text is not stored in DB, we'll skip indexing
                 logger.warning(f"Resume {resume['candidate_id']} cannot be indexed - no resume_text available in database")
                 failed_count += 1
-                # Note: Since resume_text and embedding are no longer stored in database,
-                # we cannot re-index existing resumes. Only newly uploaded resumes will be indexed in Pinecone.
                 continue
+                
+                # Prepare metadata for Pinecone with NULL value handling
+                pinecone_metadata = {
+                    'candidate_id': resume['candidate_id'],
+                    'name': resume.get('name') or 'Unknown',
+                    'email': resume.get('email') or 'No email',
+                    'domain': resume.get('domain') or 'Unknown',
+                    'primary_skills': resume.get('primary_skills') or 'No skills',
+                    'total_experience': resume.get('total_experience', 0),
+                    'education': resume.get('education') or 'Unknown',
+                    'file_type': resume.get('file_type') or 'Unknown',
+                    'source': 'batch_indexing',
+                    'created_at': resume.get('created_at', datetime.now().isoformat())
+                }
+                
+                # Create vector for Pinecone
+                vector_data = {
+                    'id': f'resume_{resume["candidate_id"]}',
+                    'values': embedding,
+                    'metadata': pinecone_metadata
+                }
+                
+                vectors_to_upsert.append(vector_data)
+                indexed_count += 1
                 
                 # Batch upsert every 100 vectors
                 if len(vectors_to_upsert) >= 100:

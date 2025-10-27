@@ -36,54 +36,65 @@ logger = logging.getLogger(__name__)
 class ResumeParser:
     """Intelligent resume parser with NLP and AI capabilities."""
     
-    # AI-powered skill extraction prompt
-    AI_SKILL_EXTRACTION_PROMPT = """
-You are an AI recruiter tasked with analyzing candidate resumes and extracting structured metadata about their skills and experience. Your goal is to evaluate actual hands-on experience for each skill, not just match keywords.
+    # AI-powered comprehensive extraction prompt
+    AI_COMPREHENSIVE_EXTRACTION_PROMPT = """
+You are an expert resume parser trained to extract complete and accurate professional metadata from resumes.
+Analyze the provided resume text carefully and return a structured JSON with well-validated information.
 
-Instructions:
+EXTRACTION GUIDELINES:
 
-Extract the candidate's primary and secondary skills.
+1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Suresh Kavili"), NOT job titles like "Technical Director" or organization names.
 
-For each skill, determine:
+2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
-Relevant experience (in years or months) based on projects or work history.
+3. phone_number – Include complete phone number if found.
 
-Weight/score reflecting practical expertise (higher for more project experience).
+4. total_experience – Calculate accurately based on career timeline and roles. Cross-check start and end dates to avoid inflated values (e.g., 32 should be 23 if that's the correct calculation).
 
-Capture project-based evidence for each skill, e.g., "Used Python for 3 years in data analysis projects."
+5. current_company – Capture the current/most recent employer's name.
 
-Provide total experience.
+6. current_designation – Extract the most recent role or job title.
 
-Output the data in JSON format as shown below.
+7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed anywhere in the resume. Include EVERY skill mentioned.
 
-Example JSON Output:
+8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 
+9. all_skills – Combine technical and secondary skills to form complete skill set.
+
+10. domain – Determine ALL relevant domains based on candidate's experience. List multiple domains if applicable (e.g., ["Banking", "Finance", "Insurance"]).
+
+11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
+
+12. certifications – Capture all professional or vendor-specific certifications if mentioned.
+
+13. summary – Provide a concise 2-3 line professional summary describing overall experience, domain focus, and key strengths.
+
+QUALITY & VALIDATION RULES:
+- Ensure name reflects actual candidate, not organization or designation
+- Email must always be fetched if present
+- Experience must be logically derived from career history
+- Skills extraction must be exhaustive - no key technology should be missed
+- Domain classification should be comprehensive (multi-domain where applicable)
+- Education details must not be omitted
+- If data is not available, return field as null (do not guess)
+- Output strictly valid JSON ready for database insertion
+
+OUTPUT FORMAT:
 {
-  "candidate_name": "John Doe",
-  "email": "john.doe@example.com",
-  "phone": "+1234567890",
-  "total_experience": 5.5,
-  "primary_skills": [
-    {"skill": "Python", "experience": 4, "weight": 0.9},
-    {"skill": "Django", "experience": 3, "weight": 0.8}
-  ],
-  "secondary_skills": [
-    {"skill": "React.js", "experience": 2, "weight": 0.5},
-    {"skill": "SQL", "experience": 3, "weight": 0.7}
-  ],
-  "project_details": [
-    {"project": "E-commerce Web App", "skills_used": ["Python", "Django", "SQL"], "duration_years": 2},
-    {"project": "Dashboard Frontend", "skills_used": ["React.js"], "duration_years": 1}
-  ]
+  "full_name": "Candidate's Actual Name",
+  "email": "email@example.com",
+  "phone_number": "phone_number_or_null",
+  "total_experience": <numeric_value>,
+  "current_company": "Company Name or null",
+  "current_designation": "Job Title or null",
+  "technical_skills": ["skill1", "skill2", ...],
+  "secondary_skills": ["skill1", "skill2", ...],
+  "all_skills": ["skill1", "skill2", ...],
+  "domain": ["domain1", "domain2", ...],
+  "education_details": ["Degree details"],
+  "certifications": ["cert1", "cert2"] or null,
+  "summary": "Professional summary here"
 }
-
-Notes for AI:
-
-Prioritize hands-on experience over simple keyword mentions.
-
-Assign higher weight to skills used in multiple or complex projects.
-
-Ensure output is clean and structured.
 
 Resume Text:
 {resume_text}
@@ -248,55 +259,62 @@ Resume Text:
                 return matches[0]
         return None
     
-    def extract_skills_with_ai(self, text: str) -> Dict[str, Any]:
-        """Extract skills using AI-powered analysis."""
+    def extract_comprehensive_data_with_ai(self, text: str) -> Dict[str, Any]:
+        """Extract comprehensive resume data using AI-powered analysis."""
         if not self.use_ai_extraction or not self.ai_client:
             logger.warning("AI extraction not available, falling back to regex-based extraction")
-            return self.extract_skills(text)
+            return None
         
         try:
-            # Prepare the prompt with resume text
-            prompt = self.AI_SKILL_EXTRACTION_PROMPT.format(resume_text=text[:8000])  # Limit text length
+            # Prepare the prompt with resume text (increase limit for comprehensive extraction)
+            prompt = self.AI_COMPREHENSIVE_EXTRACTION_PROMPT.format(resume_text=text[:16000])
             
             # Call AI API
             response = self.ai_client.chat.completions.create(
                 model=self.ai_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Low temperature for consistent results
-                max_tokens=2000
+                max_tokens=3000,   # Increased for comprehensive response
+                response_format={"type": "json_object"}  # Ensure JSON output
             )
             
             # Parse JSON response
             ai_result = json.loads(response.choices[0].message.content)
             
-            # Convert AI result to our format
-            structured_skills = {
-                'primary_skills': [skill['skill'] for skill in ai_result.get('primary_skills', [])],
-                'secondary_skills': [skill['skill'] for skill in ai_result.get('secondary_skills', [])],
-                'all_skills': [skill['skill'] for skill in ai_result.get('primary_skills', [])] + 
-                             [skill['skill'] for skill in ai_result.get('secondary_skills', [])],
-                'ai_analysis': {
-                    'primary_skills_detailed': ai_result.get('primary_skills', []),
-                    'secondary_skills_detailed': ai_result.get('secondary_skills', []),
-                    'project_details': ai_result.get('project_details', []),
-                    'total_experience': ai_result.get('total_experience', 0),
-                    'candidate_name': ai_result.get('candidate_name', ''),
-                    'email': ai_result.get('email', ''),
-                    'phone': ai_result.get('phone', '')
-                }
-            }
-            
-            logger.info(f"AI extraction completed for {ai_result.get('candidate_name', 'Unknown')}")
-            return structured_skills
+            logger.info(f"AI extraction completed for {ai_result.get('full_name', 'Unknown')}")
+            return ai_result
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse AI response as JSON: {e}")
             logger.debug(f"AI response: {response.choices[0].message.content}")
-            return self.extract_skills(text)  # Fallback to regex
+            return None
             
         except Exception as e:
-            logger.error(f"AI skill extraction failed: {e}")
-            return self.extract_skills(text)  # Fallback to regex
+            logger.error(f"AI comprehensive extraction failed: {e}")
+            return None
+    
+    def extract_skills_with_ai(self, text: str) -> Dict[str, Any]:
+        """Legacy method for AI skill extraction - now calls comprehensive extraction."""
+        ai_data = self.extract_comprehensive_data_with_ai(text)
+        
+        if ai_data:
+            technical_skills = ai_data.get('technical_skills', [])
+            secondary_skills = ai_data.get('secondary_skills', [])
+            all_skills_list = ai_data.get('all_skills', [])
+            
+            return {
+                'primary_skills': technical_skills[:15],
+                'secondary_skills': secondary_skills + technical_skills[15:],
+                'all_skills': all_skills_list,
+                'ai_analysis': {
+                    'total_experience': ai_data.get('total_experience', 0),
+                    'candidate_name': ai_data.get('full_name', ''),
+                    'email': ai_data.get('email', ''),
+                    'phone': ai_data.get('phone_number', '')
+                }
+            }
+        
+        return self.extract_skills(text)
     
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
         """Extract technical and soft skills."""
@@ -468,58 +486,110 @@ Resume Text:
             if not resume_text or len(resume_text) < 100:
                 raise ValueError("Resume text is too short or empty")
             
-            # Extract all information
-            name = self.extract_name(resume_text)
-            email = self.extract_email(resume_text)
-            phone = self.extract_phone(resume_text)
-            
-            # Use AI-powered skill extraction if available
+            # Try comprehensive AI extraction first
+            ai_data = None
             if self.use_ai_extraction:
-                skills = self.extract_skills_with_ai(resume_text)
-                # Use AI-extracted experience if available
-                ai_experience = skills.get('ai_analysis', {}).get('total_experience', 0)
-                experience = ai_experience if ai_experience > 0 else self.extract_experience(resume_text)
-            else:
-                skills = self.extract_skills(resume_text)
-                experience = self.extract_experience(resume_text)
+                ai_data = self.extract_comprehensive_data_with_ai(resume_text)
             
-            domain = self.extract_domain(resume_text)
-            education_info = self.extract_education(resume_text)
-            location = self.extract_location(resume_text)
+            # Use AI data if available, otherwise fallback to regex-based extraction
+            if ai_data:
+                # Use AI-extracted comprehensive data
+                name = ai_data.get('full_name') or self.extract_name(resume_text)
+                email = ai_data.get('email') or self.extract_email(resume_text)
+                phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
+                experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
+                
+                # Get skills
+                technical_skills = ai_data.get('technical_skills', [])
+                secondary_skills = ai_data.get('secondary_skills', [])
+                all_skills_list = ai_data.get('all_skills', [])
+                
+                # Format skills
+                primary_skills = ', '.join(technical_skills[:15])  # Top 15 technical skills
+                secondary_skills_str = ', '.join(secondary_skills) + ', ' + ', '.join(technical_skills[15:]) if len(technical_skills) > 15 else ', '.join(secondary_skills)
+                all_skills_str = ', '.join(all_skills_list)
+                
+                # Get domains (handle both single and multiple)
+                domain_list = ai_data.get('domain', [])
+                if isinstance(domain_list, list):
+                    domain = ', '.join(domain_list)
+                else:
+                    domain = domain_list or self.extract_domain(resume_text)
+                
+                # Get education
+                education_list = ai_data.get('education_details', [])
+                if isinstance(education_list, list):
+                    education_details = '\n'.join(education_list)
+                    # Extract highest degree
+                    highest_degree = education_list[0] if education_list else None
+                else:
+                    education_details = education_list or ''
+                    highest_degree = education_details.split('\n')[0] if education_details else None
+                
+                # Get certifications
+                certifications = ai_data.get('certifications', [])
+                certifications_str = ', '.join(certifications) if isinstance(certifications, list) else certifications or ''
+                
+                # Get current company and designation
+                current_company = ai_data.get('current_company') or ''
+                current_designation = ai_data.get('current_designation') or ''
+                
+                # Summary
+                summary = ai_data.get('summary') or ''
+                
+                # Get additional data
+                location = self.extract_location(resume_text)
+                
+            else:
+                # Fallback to regex-based extraction
+                name = self.extract_name(resume_text)
+                email = self.extract_email(resume_text)
+                phone = self.extract_phone(resume_text)
+                experience = self.extract_experience(resume_text)
+                
+                skills = self.extract_skills(resume_text)
+                primary_skills = ', '.join(skills['primary_skills'])
+                secondary_skills_str = ', '.join(skills['secondary_skills'])
+                all_skills_str = ', '.join(skills['all_skills'])
+                
+                domain = self.extract_domain(resume_text)
+                education_info = self.extract_education(resume_text)
+                highest_degree = education_info['highest_degree']
+                education_details = '\n'.join(education_info['education_details'])
+                
+                # Extract current company and designation using regex
+                current_company = self._extract_current_company(resume_text)
+                current_designation = self._extract_current_designation(resume_text)
+                certifications_str = ''
+                summary = ''
+                location = self.extract_location(resume_text)
             
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
             
-            # Prepare parsed data with AI analysis if available
+            # Prepare parsed data
             parsed_data = {
                 'name': name,
                 'email': email,
                 'phone': phone,
                 'total_experience': experience,
-                'primary_skills': ', '.join(skills['primary_skills']),
-                'secondary_skills': ', '.join(skills['secondary_skills']),
-                'all_skills': ', '.join(skills['all_skills']),
+                'primary_skills': primary_skills,
+                'secondary_skills': secondary_skills_str,
+                'all_skills': all_skills_str,
                 'domain': domain,
-                'education': education_info['highest_degree'],
-                'education_details': '\n'.join(education_info['education_details']),
+                'education': highest_degree,
+                'education_details': education_details,
                 'current_location': location,
+                'current_company': current_company,
+                'current_designation': current_designation,
+                'certifications': certifications_str,
+                'resume_summary': summary,
                 'resume_text': resume_text,
                 'file_name': os.path.basename(file_path),
                 'file_type': file_type,
-                'file_size_kb': int(file_size_kb)
+                'file_size_kb': int(file_size_kb),
+                'ai_extraction_used': ai_data is not None
             }
-            
-            # Add AI analysis if available
-            if self.use_ai_extraction and 'ai_analysis' in skills:
-                ai_analysis = skills['ai_analysis']
-                parsed_data.update({
-                    'ai_primary_skills': json.dumps(ai_analysis.get('primary_skills_detailed', [])),
-                    'ai_secondary_skills': json.dumps(ai_analysis.get('secondary_skills_detailed', [])),
-                    'ai_project_details': json.dumps(ai_analysis.get('project_details', [])),
-                    'ai_extraction_used': True
-                })
-            else:
-                parsed_data['ai_extraction_used'] = False
             
             logger.info(f"Successfully parsed resume for: {name}")
             return parsed_data
@@ -527,6 +597,58 @@ Resume Text:
         except Exception as e:
             logger.error(f"Error parsing resume: {e}")
             raise
+    
+    def _extract_current_company(self, text: str) -> Optional[str]:
+        """Extract current/most recent company name."""
+        # Look for company in work history (first/last company mentioned)
+        patterns = [
+            r'(?i)(?:company|employer|organization)[:\s]+([A-Za-z0-9\s&.,]+)',
+            r'(?i)(?:worked at|employed at|currently at)[:\s]+([A-Za-z0-9\s&.,]+)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                return matches[0].strip()
+        
+        # Try to find first company in experience section
+        exp_section_pattern = r'(?i)(?:experience|work history|employment)(.*?)(?=\n\n[A-Z]|education|skills|$)'
+        exp_match = re.search(exp_section_pattern, text, re.DOTALL)
+        if exp_match:
+            exp_text = exp_match.group(1)
+            # Extract first company name
+            company_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Inc|LLC|Ltd|Corp|Pvt))?)'
+            companies = re.findall(company_pattern, exp_text[:500])
+            if companies:
+                return companies[0].strip()
+        
+        return None
+    
+    def _extract_current_designation(self, text: str) -> Optional[str]:
+        """Extract current/most recent job designation."""
+        # Look for designation patterns
+        patterns = [
+            r'(?i)(?:position|role|title|designation)[:\s]+([A-Za-z\s]+)',
+            r'(?i)(?:currently|presently).*?(?:as|working as|role of)[:\s]+([A-Za-z\s]+)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                return matches[0].strip()
+        
+        # Extract first role from experience section
+        exp_section_pattern = r'(?i)(?:experience|work history)(.*?)(?=\n\n[A-Z]|education|skills|$)'
+        exp_match = re.search(exp_section_pattern, text, re.DOTALL)
+        if exp_match:
+            exp_text = exp_match.group(1)
+            # Common role patterns
+            role_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Engineer|Manager|Director|Lead|Developer|Architect|Analyst|Consultant|Specialist)))'
+            roles = re.findall(role_pattern, exp_text[:300])
+            if roles:
+                return roles[0].strip()
+        
+        return None
 
 
 def extract_skills_from_text(text: str) -> List[str]:

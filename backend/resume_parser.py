@@ -81,7 +81,35 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Identify ALL recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) from the resume. Only include actual technical skills (e.g., "Python", "SQL", "AWS", "Docker", "React", "Kubernetes", "PostgreSQL", "Git", "Machine Learning", etc.). DO NOT include phrases, sentence fragments, or non-technical content. Common categories: Programming (Python, Java, JavaScript, etc.), Databases (SQL, MySQL, MongoDB, etc.), Cloud (AWS, Azure, GCP, etc.), Frameworks (React, Django, Spring, etc.), DevOps (Docker, Kubernetes, Jenkins, etc.), AI/ML (TensorFlow, PyTorch, etc.), Testing (pytest, Selenium, etc.).
+7. technical_skills – Extract ONLY recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) that appear in the Skills/Skill Profile section of the resume. 
+
+   CRITICAL RULES:
+   - ONLY extract skills that are explicitly listed in a "Skills", "Technical Skills", "Skill Profile", "Core Competencies", or similar section
+   - ONLY include actual technology names (e.g., "Python", "SQL", "Azure", "JavaScript", "HTML5", "ASP.NET", "Docker", "React")
+   - DO NOT extract from job descriptions or responsibilities (e.g., "implemented unit testing" → do NOT extract "unit testing")
+   - DO NOT extract action phrases (e.g., "developed applications" → do NOT extract "developed applications")
+   - DO NOT extract generic terms (e.g., "go", "unit", "express" as standalone words - these must be "Go" programming language, "Unit Testing" technique, or "Express.js" framework)
+   
+   WHAT TO EXTRACT:
+   - Programming languages: Python, Java, JavaScript, C#, Go, Ruby, etc.
+   - Frameworks: React, Django, ASP.NET, Express.js, Spring, etc.
+   - Databases: MySQL, SQL Server, MongoDB, PostgreSQL, etc.
+   - Cloud platforms: AWS, Azure, GCP, etc.
+   - Tools: Visual Studio, Docker, Jenkins, Git, etc.
+   - Technologies: HTML5, CSS, JavaScript, jQuery, Bootstrap, etc.
+   
+   WHAT NOT TO EXTRACT:
+   - Verbs and actions: "developed", "implemented", "managed", "created"
+   - Responsibilities: "performed unit testing", "wrote documentation"
+   - Generic phrases: "unit testing" (unless it's specifically a skill in the skills section)
+   - Full sentences or descriptions
+   
+   EXAMPLES:
+   ✅ CORRECT: ["Python", "JavaScript", "SQL", "Azure", "ASP.NET", "HTML5", "CSS"]
+   ❌ WRONG: ["unit testing", "go", "express"] (when these are from responsibilities, not skills)
+   ✅ CORRECT: ["Go"] (as programming language), ["Express.js"] (as framework)
+   
+   Look ONLY in the Skills section - do NOT extract from job descriptions, experience sections, or achievements.
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 
@@ -765,12 +793,25 @@ Resume Text:
                 if isinstance(ai_secondary_skills, str):
                     ai_secondary_skills = [s.strip() for s in ai_secondary_skills.split(',') if s.strip()] if ai_secondary_skills else []
                 
+                # Common responsibility phrases that should be rejected
+                responsibility_phrases = [
+                    'unit testing', 'integration testing', 'system testing', 'end to end testing',
+                    'test driven development', 'tdd', 'bdd', 'behavior driven development',
+                    'agile methodology', 'scrum methodology', 'waterfall methodology'
+                ]
+                
                 # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
                 technical_skills = []
                 technical_skills_lower = set()  # For deduplication
                 
                 for skill in ai_technical_skills:
                     skill_lower = skill.lower().strip()
+                    
+                    # Reject responsibility-like phrases unless they're explicitly in TECHNICAL_SKILLS
+                    if skill_lower in responsibility_phrases and skill_lower not in self.TECHNICAL_SKILLS:
+                        logger.warning(f"Rejected responsibility phrase as skill: '{skill}'")
+                        continue
+                    
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
                         if skill_lower not in technical_skills_lower:
@@ -843,6 +884,13 @@ Resume Text:
                 # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
                 all_extracted_skills = skills['all_skills']
                 
+                # Common responsibility phrases that should be rejected
+                responsibility_phrases = [
+                    'unit testing', 'integration testing', 'system testing', 'end to end testing',
+                    'test driven development', 'tdd', 'bdd', 'behavior driven development',
+                    'agile methodology', 'scrum methodology', 'waterfall methodology'
+                ]
+                
                 # Separate into technical (in our list) and non-technical
                 technical_skills_list = []
                 secondary_skills_list = []
@@ -850,6 +898,12 @@ Resume Text:
                 
                 for skill in all_extracted_skills:
                     skill_lower = skill.lower().strip()
+                    
+                    # Reject responsibility-like phrases unless they're explicitly in TECHNICAL_SKILLS
+                    if skill_lower in responsibility_phrases and skill_lower not in self.TECHNICAL_SKILLS:
+                        logger.warning(f"Rejected responsibility phrase as skill: '{skill}'")
+                        continue
+                    
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
                         if skill_lower not in technical_skills_set:

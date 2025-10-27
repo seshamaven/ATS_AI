@@ -45,12 +45,20 @@ EXTRACTION GUIDELINES:
 
 1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith"). 
    CRITICAL RULES:
-   - Do NOT confuse section headers (like "Education", "Experience", "Skills") with the person's name
-   - Do NOT confuse academic degrees (like "B.A. in History", "M.S. in Computer Science") with the person's name
-   - Do NOT use job titles, organization names, or section headings
-   - The candidate's name is a person's actual name (first + last name), typically at the top of the resume
-   - If you see patterns like "B.A.", "M.S.", "in History", "in Computer Science" - that is NOT a name, it's a degree
-   - If the first prominent text is "Education" or "Experience" - that is NOT the name, look elsewhere for the actual person's name
+   - The candidate's name is typically at the VERY TOP of the resume (first line or two)
+   - Names follow specific patterns: 2-3 capitalized words (first name + last name)
+   - Section headers like "Education", "Experience", "Skills", "Contact" appear later in the document
+   - Academic degrees like "B.A. in History", "M.S. in Computer Science" are NOT names (contain "in", "degree", etc.)
+   - Job titles like "Software Engineer" are NOT names
+   - Organization names like "Microsoft Corporation" are NOT names
+   
+   IDENTIFICATION STRATEGY:
+   - Look at the first 2-5 lines of text
+   - Find the first line that contains 2-3 capitalized words (first + last name)
+   - This is typically before any section headers or content sections
+   - The name should be a person's name, NOT a label or description
+   - Common resume structure: NAME is first, then contact info, then "Education" section
+   - If you see "Education" or "Experience" first, the name might be above it or you might need to look more carefully
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -82,7 +90,11 @@ QUALITY & VALIDATION RULES:
   * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
   * Academic degrees: "B.A. in History", "M.S. in Computer Science", "PhD", "MBA"
   * Degree patterns: anything containing "B.A.", "M.S.", "in [Subject]", "degree", "major", "minor"
+  * Job titles: "Software Engineer", "Data Analyst", "Manager"
+  * Organization names: "Microsoft", "Google", "Company Name"
 - A name is typically 2-3 words (first name + last name), NOT a description of education or experience
+- IMPORTANT: The name is usually at the TOP of the resume, before any "Education" or "Experience" section headers
+- If a word or phrase appears as a section header (like "Education", "Skills"), it's NOT the candidate's name
 - Email must always be fetched if present
 - Experience must be logically derived from career history
 - Skills extraction must be exhaustive - no key technology should be missed
@@ -231,7 +243,7 @@ Resume Text:
     
     def extract_name(self, text: str) -> Optional[str]:
         """Extract candidate name from resume text."""
-        # Common section headers and academic degree patterns to exclude
+        # Common section headers to exclude (but NOT in first 3 lines - those might be the actual name!)
         invalid_names = {'education', 'experience', 'skills', 'contact', 'objective', 
                         'summary', 'qualifications', 'work history', 'professional summary',
                         'references', 'certifications', 'projects', 'achievements'}
@@ -240,9 +252,9 @@ Resume Text:
         degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree', 
                           'in ', 'major', 'minor', 'diploma', 'certificate']
         
-        # First 20 lines usually contain name (expanded from 10)
+        # First 20 lines usually contain name
         lines = text.split('\n')
-        for line in lines[:20]:
+        for idx, line in enumerate(lines[:20]):
             # Strip and normalize whitespace
             line = ' '.join(line.split())  # Normalize multiple spaces to single space
             line = line.strip()
@@ -250,9 +262,9 @@ Resume Text:
             # Skip empty lines
             if not line:
                 continue
-                
-            # Skip section headers
-            if line.lower() in invalid_names:
+            
+            # Skip section headers (but check if NOT in first 3 lines where actual name might be)
+            if idx > 2 and line.lower() in invalid_names:
                 continue
             
             # Skip lines with academic degree patterns
@@ -275,7 +287,18 @@ Resume Text:
             # Skip addresses (they often contain numbers and "Drive", "Street", etc.)
             if any(addr_word in line_lower for addr_word in ['drive', 'street', 'avenue', 'road', 'blvd', 'city']):
                 continue
-                
+            
+            # For first 3 lines only: be more lenient - might be the actual name
+            if idx < 3:
+                # Accept if it looks like a name (2-3 words, Title Case or all caps)
+                if line and 2 <= len(line.split()) <= 4 and len(line) < 60:
+                    words = line.split()
+                    # Check if mostly alphabetic
+                    if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                        # Accept even if ALL CAPS (some resumes have names in all caps)
+                        return line
+            
+            # For lines beyond first 3: more strict validation
             # Name is typically 2-4 words, mostly alphabetic, not too long
             if line and 2 <= len(line.split()) <= 4 and len(line) < 50:
                 words = line.split()

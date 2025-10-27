@@ -63,8 +63,13 @@ EXTRACTION GUIDELINES:
 6. current_designation – Extract the most recent role or job title.
 
 7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed anywhere in the resume. Include EVERY skill mentioned.
+   CRITICAL: Skills should be single words or short phrases (2-3 words max). Examples: "Python", "AWS", "React", "Machine Learning", "PostgreSQL".
+   DO NOT extract phrases like "in a best possible way" or "in the company" - these are NOT skills.
+   Skills are specific technologies, tools, or competencies that can be listed as keywords.
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
+   CRITICAL: Extract only skill keywords. Examples: "leadership", "team management", "communication".
+   DO NOT extract sentence fragments or phrases - only extract actual skill keywords.
 
 9. all_skills – Combine technical and secondary skills to form complete skill set.
 
@@ -86,6 +91,9 @@ QUALITY & VALIDATION RULES:
 - Email must always be fetched if present
 - Experience must be logically derived from career history
 - Skills extraction must be exhaustive - no key technology should be missed
+- Skills should be keywords (1-3 words), NOT sentence fragments or phrases
+- Examples of VALID skills: "Python", "AWS", "React", "Machine Learning"
+- Examples of INVALID: "in a best possible way", "in the company", "for the team"
 - Domain classification should be comprehensive (multi-domain where applicable)
 - Education details must not be omitted
 - If data is not available, return field as null (do not guess)
@@ -397,6 +405,10 @@ Resume Text:
                             logger.warning(f"Final fallback resulted in invalid name, setting to Unknown")
             
             logger.info(f"AI extraction completed for {ai_result.get('full_name', 'Unknown')}")
+            
+            # Validate and clean skills after AI extraction
+            ai_result = self._validate_and_clean_skills(ai_result)
+            
             return ai_result
             
         except json.JSONDecodeError as e:
@@ -407,6 +419,62 @@ Resume Text:
         except Exception as e:
             logger.error(f"AI comprehensive extraction failed: {e}")
             return None
+    
+    def _validate_and_clean_skills(self, ai_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and clean extracted skills - remove invalid entries like phrases."""
+        # Words/phrases that should NOT be skills
+        invalid_skill_indicators = [
+            ' in ', ' and ', ' or ', ' the ', ' a ', ' an ', ' of ', ' to ', ' from ',
+            ' for ', ' with ', ' at ', ' by ', ' as ', ' be ', ' is ', ' are ', ' was ',
+            ' were ', ' been ', ' have ', ' has ', ' had ', ' do ', ' does ', ' did ',
+            ' way ', ' possible ', ' best ', ' good ', ' well ', ' very ', ' more ',
+            ' most ', ' much ', ' many ', ' will ', ' would ', ' should ', ' could '
+        ]
+        
+        def is_valid_skill(skill: str) -> bool:
+            """Check if a skill string is valid."""
+            if not skill or len(skill) < 2:
+                return False
+            
+            skill_lower = skill.lower().strip()
+            
+            # Skip if it's too long (likely a phrase, not a skill)
+            if len(skill_lower) > 50:
+                return False
+            
+            # Skip if it contains invalid indicators (likely a phrase)
+            if any(indicator in skill_lower for indicator in invalid_skill_indicators):
+                return False
+            
+            # Skip if it starts with common prepositions/articles
+            if skill_lower.split()[0] in ['in', 'a', 'an', 'the', 'at', 'on', 'for', 'to', 'from', 'with', 'by']:
+                return False
+            
+            return True
+        
+        # Clean technical skills
+        if 'technical_skills' in ai_result:
+            technical_skills = ai_result.get('technical_skills', [])
+            if isinstance(technical_skills, list):
+                ai_result['technical_skills'] = [s for s in technical_skills if is_valid_skill(s)]
+        
+        # Clean secondary skills
+        if 'secondary_skills' in ai_result:
+            secondary_skills = ai_result.get('secondary_skills', [])
+            if isinstance(secondary_skills, list):
+                ai_result['secondary_skills'] = [s for s in secondary_skills if is_valid_skill(s)]
+        
+        # Clean all skills
+        if 'all_skills' in ai_result:
+            all_skills = ai_result.get('all_skills', [])
+            if isinstance(all_skills, list):
+                ai_result['all_skills'] = [s for s in all_skills if is_valid_skill(s)]
+        
+        # Log if any skills were filtered
+        if any(isinstance(v, list) and len(v) == 0 for k, v in ai_result.items() if k.endswith('_skills')):
+            logger.warning("Some skills were filtered out as invalid phrases")
+        
+        return ai_result
     
     def extract_skills_with_ai(self, text: str) -> Dict[str, Any]:
         """Legacy method for AI skill extraction - now calls comprehensive extraction."""
@@ -638,15 +706,30 @@ Resume Text:
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
                 experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
                 
-                # Get skills
+                # Get skills - ensure they are lists
                 technical_skills = ai_data.get('technical_skills', [])
                 secondary_skills = ai_data.get('secondary_skills', [])
                 all_skills_list = ai_data.get('all_skills', [])
+                
+                # Ensure we have lists (sometimes AI returns strings)
+                if isinstance(technical_skills, str):
+                    technical_skills = [s.strip() for s in technical_skills.split(',') if s.strip()] if technical_skills else []
+                if isinstance(secondary_skills, str):
+                    secondary_skills = [s.strip() for s in secondary_skills.split(',') if s.strip()] if secondary_skills else []
+                if isinstance(all_skills_list, str):
+                    all_skills_list = [s.strip() for s in all_skills_list.split(',') if s.strip()] if all_skills_list else []
+                
+                # Filter out any remaining invalid skills
+                technical_skills = [s for s in technical_skills if s and len(s) > 2 and len(s) < 50]
+                secondary_skills = [s for s in secondary_skills if s and len(s) > 2 and len(s) < 50]
+                all_skills_list = [s for s in all_skills_list if s and len(s) > 2 and len(s) < 50]
                 
                 # Format skills
                 primary_skills = ', '.join(technical_skills[:15])  # Top 15 technical skills
                 secondary_skills_str = ', '.join(secondary_skills) + ', ' + ', '.join(technical_skills[15:]) if len(technical_skills) > 15 else ', '.join(secondary_skills)
                 all_skills_str = ', '.join(all_skills_list)
+                
+                logger.info(f"Extracted {len(technical_skills)} technical skills, {len(secondary_skills)} secondary skills")
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])

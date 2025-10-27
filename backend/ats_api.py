@@ -445,14 +445,15 @@ def search_resumes():
         top_k = data.get('top_k', 10)
         min_similarity_score = data.get('min_similarity_score', 0.3)  # Default threshold
         
-        # Validate query is meaningful (not just a single character or number)
-        if len(user_query) <= 1 and not user_query.isalpha():
+        # Validate query is meaningful
+        # Reject queries that are 1 or 2 characters (too short to be meaningful)
+        if len(user_query) <= 2:
             return jsonify({
-                'message': 'Query is too short or not meaningful. Please provide a more detailed search query.',
+                'message': 'Query is too short. Please provide a search query with at least 3 characters (e.g., "Python", "finance", "developer")',
                 'query': user_query,
                 'search_results': [],
                 'total_matches': 0,
-                'suggestion': 'Try searching for skills, domains, or keywords (e.g., "Python developer", "finance", "data analyst")',
+                'suggestion': 'Try searching for skills, job titles, or domains (e.g., "Python developer", "finance analyst", "data science")',
                 'timestamp': datetime.now().isoformat()
             }), 200
         

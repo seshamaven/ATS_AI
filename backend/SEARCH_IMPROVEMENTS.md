@@ -8,14 +8,14 @@ When querying with meaningless search terms like "t" or "2", the API was returni
 
 ### 1. Query Validation
 
-Added validation to reject queries that are too short or meaningless:
+Added validation to reject queries that are too short (less than 3 characters):
 
 ```python
-# Validate query is meaningful (not just a single character or number)
-if len(user_query) <= 1 and not user_query.isalpha():
+# Reject queries that are 1 or 2 characters (too short to be meaningful)
+if len(user_query) <= 2:
     return jsonify({
-        'message': 'Query is too short or not meaningful. Please provide a more detailed search query.',
-        'suggestion': 'Try searching for skills, domains, or keywords...'
+        'message': 'Query is too short. Please provide a search query with at least 3 characters (e.g., "Python", "finance", "developer")',
+        'suggestion': 'Try searching for skills, job titles, or domains...'
     }), 200
 ```
 
@@ -94,14 +94,17 @@ You can set a custom minimum similarity score:
 Test the improvements with these queries:
 
 ### Should return "query too short" message:
-- Query: "t" → Returns error message
-- Query: "2" → Returns error message
+- Query: "t" → Returns error message (1 character)
+- Query: "2" → Returns error message (1 character)
+- Query: "ab" → Returns error message (2 characters)
+- Query: "hi" → Returns error message (2 characters)
 
 ### Should filter out low-relevance results:
 - Query: "xyz123random" → Returns "no results with sufficient relevance"
 - Query: "qqqqqq" → Returns "no results with sufficient relevance"
 
 ### Should work normally:
-- Query: "Python developer" → Returns relevant candidates (if they exist)
+- Query: "Python" → Returns relevant candidates (if they exist)
 - Query: "data analyst" → Returns relevant candidates (if they exist)
+- Query: "Java" → Returns relevant candidates (if they exist)
 

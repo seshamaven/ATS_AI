@@ -85,7 +85,7 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed anywhere in the resume. Include EVERY skill mentioned.
+7. technical_skills – Identify ALL recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) from the resume. Only include actual technical skills (e.g., "Python", "SQL", "AWS", "Docker", "React", "Kubernetes", "PostgreSQL", "Git", "Machine Learning", etc.). DO NOT include phrases, sentence fragments, or non-technical content. Common categories: Programming (Python, Java, JavaScript, etc.), Databases (SQL, MySQL, MongoDB, etc.), Cloud (AWS, Azure, GCP, etc.), Frameworks (React, Django, Spring, etc.), DevOps (Docker, Kubernetes, Jenkins, etc.), AI/ML (TensorFlow, PyTorch, etc.), Testing (pytest, Selenium, etc.).
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 
@@ -139,16 +139,67 @@ Resume Text:
 {resume_text}
 """
     
-    # Common skills database (expandable)
+    # Comprehensive technical skills database - ONLY these should appear in primary_skills
     TECHNICAL_SKILLS = {
-        'python', 'java', 'javascript', 'typescript', 'c++', 'c#', 'ruby', 'php', 'go', 'rust',
-        'sql', 'nosql', 'mysql', 'postgresql', 'mongodb', 'redis', 'elasticsearch',
-        'react', 'angular', 'vue', 'node.js', 'express', 'django', 'flask', 'fastapi', 'spring',
-        'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'jenkins', 'git', 'ci/cd',
-        'machine learning', 'deep learning', 'nlp', 'computer vision', 'tensorflow', 'pytorch',
-        'data science', 'data analysis', 'pandas', 'numpy', 'scikit-learn',
-        'rest api', 'graphql', 'microservices', 'kafka', 'rabbitmq',
-        'agile', 'scrum', 'jira', 'linux', 'bash', 'powershell'
+        # === Programming Languages ===
+        'python', 'java', 'javascript', 'typescript', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
+        'swift', 'kotlin', 'scala', 'r', 'perl', 'bash', 'shell scripting', 'objective-c', 'dart',
+        'lua', 'matlab', 'assembly', 'fortran', 'sas', 'haskell', 'clojure', 'visual basic', 'vb.net', 'abap',
+        
+        # === Frameworks / Libraries ===
+        'django', 'flask', 'spring', 'react', 'angular', 'vue', 'node.js', 'fastapi', 'express', 'express.js',
+        'next.js', 'nestjs', 'laravel', 'symfony', 'flutter', 'react native', 'svelte', 'pytorch', 'tensorflow',
+        'struts', 'play framework', 'koa', 'meteor', 'ember.js', 'backbone.js', 'codeigniter', 'cakephp', 'yii',
+        'nuxt.js', 'gatsby', 'blazor', 'qt',
+        
+        # === Databases / Data Tools ===
+        'sql', 'mysql', 'postgresql', 'mongodb', 'redis', 'nosql', 'oracle', 'sqlite', 'elasticsearch', 'snowflake',
+        'firebase', 'dynamodb', 'cassandra', 'neo4j', 'bigquery', 'redshift', 'clickhouse', 'couchdb', 'hbase',
+        'influxdb', 'memcached', 'realm', 'timescaledb', 'duckdb', 'cosmos db',
+        
+        # === Cloud / DevOps ===
+        'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'jenkins', 'terraform', 'ansible', 'prometheus', 'grafana',
+        'circleci', 'github actions', 'bitbucket pipelines', 'openstack', 'cloudformation', 'helm', 'istio',
+        'argo cd', 'vault', 'consul', 'packer', 'airflow', 'data pipeline', 'mlops', 'cloud run', 'lambda',
+        'ecs', 'eks', 'cloudwatch',
+        
+        # === Security / Authentication ===
+        'oauth', 'oauth2', 'jwt', 'ssl', 'tls', 'saml', 'openid connect', 'mfa', 'iam', 'cybersecurity',
+        'network security', 'firewall', 'penetration testing', 'encryption', 'hashing',
+        
+        # === AI / ML / Data Science ===
+        'machine learning', 'ai', 'data science', 'analytics', 'nlp', 'computer vision', 'deep learning', 'pandas',
+        'numpy', 'scikit-learn', 'matplotlib', 'huggingface', 'openai api', 'llm', 'generative ai', 'langchain',
+        'autogen', 'rasa', 'spacy', 'transformers', 'text classification', 'sentiment analysis', 'data visualization',
+        'tableau', 'power bi', 'big data', 'hadoop', 'spark', 'pyspark', 'databricks',
+        
+        # === APIs, Architecture, Monitoring ===
+        'rest api', 'graphql', 'graphql api', 'restful api', 'restful services', 'soap', 'rpc', 'grpc', 'openapi',
+        'swagger', 'swagger ui', 'api testing', 'load testing', 'jmeter', 'new relic', 'datadog', 'sentry',
+        'application monitoring', 'performance tuning', 'microservices', 'websockets', 'api gateway',
+        'message queues', 'rabbitmq', 'kafka', 'celery', 'redis streams', 'event-driven architecture',
+        'service mesh', 'load balancer',
+        
+        # === CI/CD & Testing ===
+        'git', 'github', 'gitlab', 'agile', 'scrum', 'devops', 'tdd', 'bdd', 'unit testing', 'pytest', 'jest',
+        'mocha', 'cypress', 'postman', 'swagger', 'jira', 'confluence', 'maven', 'gradle', 'ant', 'sonarqube',
+        'selenium', 'playwright', 'testng', 'junit', 'mockito', 'karma', 'chai', 'enzyme',
+        
+        # === Frontend / UI / UX ===
+        'html', 'css', 'bootstrap', 'jquery', 'tailwind', 'chakra ui', 'material ui', 'redux', 'zustand',
+        'framer motion', 'figma', 'ux design', 'responsive design', 'pwa', 'webpack', 'vite', 'babel',
+        
+        # === Mobile / Cross-Platform ===
+        'android', 'ios', 'xcode', 'swiftui', 'jetpack compose', 'ionic', 'capacitor', 'cordova',
+        'unity', 'unreal engine',
+        
+        # === ERP / CRM / Low-Code ===
+        'sap', 'sap abap', 'sap hana', 'salesforce', 'salesforce apex', 'salesforce lightning',
+        'power apps', 'power automate', 'microsoft dynamics 365', 'business central', 'navision',
+        
+        # === Other / Emerging Tech ===
+        'blockchain', 'solidity', 'smart contracts', 'web3', 'nft', 'metaverse', 'edge computing',
+        'quantum computing', 'robotics', 'iot', 'raspberry pi', 'arduino', 'automation'
     }
     
     DOMAINS = {
@@ -706,15 +757,51 @@ Resume Text:
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
                 experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
                 
-                # Get skills
-                technical_skills = ai_data.get('technical_skills', [])
-                secondary_skills = ai_data.get('secondary_skills', [])
+                # Get skills from AI
+                ai_technical_skills = ai_data.get('technical_skills', [])
+                ai_secondary_skills = ai_data.get('secondary_skills', [])
                 all_skills_list = ai_data.get('all_skills', [])
                 
-                # Format skills
+                # Ensure we have lists
+                if isinstance(ai_technical_skills, str):
+                    ai_technical_skills = [s.strip() for s in ai_technical_skills.split(',') if s.strip()] if ai_technical_skills else []
+                if isinstance(ai_secondary_skills, str):
+                    ai_secondary_skills = [s.strip() for s in ai_secondary_skills.split(',') if s.strip()] if ai_secondary_skills else []
+                
+                # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
+                technical_skills = []
+                technical_skills_lower = set()  # For deduplication
+                
+                for skill in ai_technical_skills:
+                    skill_lower = skill.lower().strip()
+                    # Check if this skill is in our TECHNICAL_SKILLS list
+                    if skill_lower in self.TECHNICAL_SKILLS:
+                        if skill_lower not in technical_skills_lower:
+                            technical_skills.append(skill)
+                            technical_skills_lower.add(skill_lower)
+                    # Also check for partial matches (e.g., "Python programming" should match "python")
+                    else:
+                        # Try to find match in TECHNICAL_SKILLS
+                        for tech_skill in self.TECHNICAL_SKILLS:
+                            if skill_lower in tech_skill or tech_skill in skill_lower:
+                                if tech_skill not in technical_skills_lower:
+                                    technical_skills.append(tech_skill)
+                                    technical_skills_lower.add(tech_skill)
+                                break
+                
+                # Secondary skills: everything that's NOT in TECHNICAL_SKILLS
+                secondary_skills = []
+                for skill in ai_secondary_skills:
+                    skill_lower = skill.lower().strip()
+                    if skill_lower not in self.TECHNICAL_SKILLS:
+                        secondary_skills.append(skill)
+                
+                # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills[:15])  # Top 15 technical skills
-                secondary_skills_str = ', '.join(secondary_skills) + ', ' + ', '.join(technical_skills[15:]) if len(technical_skills) > 15 else ', '.join(secondary_skills)
+                secondary_skills_str = ', '.join(secondary_skills)  # Non-technical skills
                 all_skills_str = ', '.join(all_skills_list)
+                
+                logger.info(f"Filtered to {len(technical_skills)} technical skills from {len(ai_technical_skills)} AI-extracted skills")
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
@@ -755,9 +842,40 @@ Resume Text:
                 experience = self.extract_experience(resume_text)
                 
                 skills = self.extract_skills(resume_text)
-                primary_skills = ', '.join(skills['primary_skills'])
-                secondary_skills_str = ', '.join(skills['secondary_skills'])
-                all_skills_str = ', '.join(skills['all_skills'])
+                
+                # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
+                all_extracted_skills = skills['all_skills']
+                
+                # Separate into technical (in our list) and non-technical
+                technical_skills_list = []
+                secondary_skills_list = []
+                technical_skills_set = set()  # For deduplication
+                
+                for skill in all_extracted_skills:
+                    skill_lower = skill.lower().strip()
+                    # Check if this skill is in our TECHNICAL_SKILLS list
+                    if skill_lower in self.TECHNICAL_SKILLS:
+                        if skill_lower not in technical_skills_set:
+                            technical_skills_list.append(skill)
+                            technical_skills_set.add(skill_lower)
+                    else:
+                        # Try partial match
+                        found_match = False
+                        for tech_skill in self.TECHNICAL_SKILLS:
+                            if skill_lower in tech_skill or tech_skill in skill_lower:
+                                if tech_skill not in technical_skills_set:
+                                    technical_skills_list.append(tech_skill)
+                                    technical_skills_set.add(tech_skill)
+                                    found_match = True
+                                    break
+                        if not found_match:
+                            secondary_skills_list.append(skill)
+                
+                primary_skills = ', '.join(technical_skills_list[:15])  # Top 15 technical skills
+                secondary_skills_str = ', '.join(secondary_skills_list)  # Non-technical skills
+                all_skills_str = ', '.join(all_extracted_skills)
+                
+                logger.info(f"Filtered to {len(technical_skills_list)} technical skills from {len(all_extracted_skills)} extracted skills")
                 
                 domain = self.extract_domain(resume_text)
                 education_info = self.extract_education(resume_text)

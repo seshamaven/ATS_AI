@@ -43,33 +43,43 @@ Analyze the provided resume text carefully and return a structured JSON with wel
 
 EXTRACTION GUIDELINES:
 
-1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith").
+1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith", "VARRE DHANA LAKSHMI DURGA").
 
-   CRITICAL RULES:
-   - The candidate's name is typically at the VERY TOP of the resume, often in the HEADER section or the first few lines of extracted text.
-   - Names usually consist of 2–3 capitalized words (first name + last name), sometimes including a middle name or initial.
-   - The name may appear in the document header, before any main sections like "Education", "Experience", "Summary", or "Skills".
-   - If your text extraction tool separates header/footer text from body text, check both areas for a possible name match.
+   CRITICAL RULES FOR PDF HEADER EXTRACTION:
+   - The name is USUALLY AT THE VERY TOP of the resume — often in the PDF header, page margin, or metadata
+   - Check the first 2–5 lines of extracted text thoroughly
+   - Also inspect PDF metadata, title area, and header region if available
+   - The name typically consists of 2–3 capitalized words (first name + last name), sometimes with middle names or initials
+   - Look for names that appear BEFORE any section headers like "Education", "Experience", "Contact"
+   - In many resumes, the candidate name appears as the first or second line in the document
 
    IDENTIFICATION STRATEGY:
-   - Examine the HEADER, TITLE, and the first 5–7 lines of extracted text.
-   - Look for the first phrase containing 2–3 capitalized words that follow the pattern of a human name (e.g., "John Smith", "Sarah L. Johnson").
-   - If no name is found in the main text, inspect the header area (topmost extracted content) for a similar pattern.
-   - Ensure the detected text is not a section title, company, or job role.
+   - Extract text from TOP 2–5 LINES of the resume body first
+   - Check HEADER REGION and page margins if available
+   - Check PDF METADATA TITLE if available
+   - Find the FIRST LINE containing 2–3 capitalized words that look like a person's name
+   - Ensure the name does NOT end with punctuation (periods, commas) or contain descriptive verbs
+   - If multiple candidates exist, prefer the one CLOSEST TO THE TOP MARGIN
+   - Common structure: NAME appears first, then contact info (email, phone), then sections
 
-   WHAT IS NOT A NAME:
-   - Section headers like "Education", "Experience", "Skills", "Contact"
-   - Academic degrees like "B.A. in History", "M.S. in Computer Science"
-   - Job titles like "Software Engineer", "Project Manager"
-   - Organization names like "Microsoft Corporation", "Google LLC"
-   - Descriptive sentences, bullet points, or text with periods, commas, or verbs like "maintaining", "completed", "achieved"
+   WHAT IS NOT A NAME (CRITICAL EXCLUSIONS):
+   - Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
+   - Academic degrees: "B.A. in History", "M.S. in Computer Science", "B.Tech", "PhD"
+   - Degree-related text containing: "degree", "in [Subject]", "completed", "while", "maintaining"
+   - Job titles: "Software Engineer", "Project Manager", "Data Analyst"
+   - Organization names: "Google LLC", "Infosys Limited", "Microsoft Corporation"
+   - Sentences or bullet points: "full course load.", "while maintaining", "in order to"
+   - Text ending with: periods (.), commas (,), or descriptive verbs ("maintaining", "completed", "achieved")
+   - Descriptive fragments: "while working", "for the", "as part of", "in a best"
 
    A NAME IS:
-   - A person's actual name (e.g., "Daniel Mindlin", "John Smith")
-   - Appears visually or logically at the top of the document (header or first few lines)
-   - Does NOT contain punctuation or descriptive text
-   - Consists of capitalized words typical of a human name
-   - Is the first major identifying element before contact information or resume sections
+   - A human name like "Daniel Mindlin", "Priya Sharma", "VARRE DHANA LAKSHMI DURGA"
+   - Found in the HEADER region, first text block, or PDF title metadata
+   - Properly capitalized (Title Case or ALL CAPS)
+   - Clean with no extra punctuation at the end (no trailing commas or periods)
+   - Typically 2–3 words (4 words maximum for names with middle names)
+   - Contains only alphabetic characters, hyphens, or periods (for middle initials like "John M. Smith")
+   - Is the FIRST MAJOR identifying element before contact information or resume sections
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -123,21 +133,28 @@ EXTRACTION GUIDELINES:
 
 13. summary – Provide a concise 2-3 line professional summary describing overall experience, domain focus, and key strengths.
 
-QUALITY & VALIDATION RULES:
-- Ensure name reflects actual candidate, not organization names, job titles, section headers, or academic degrees
+QUALITY & VALIDATION RULES FOR NAME EXTRACTION:
+- The name MUST reflect the actual candidate's personal name
 - The name field should NEVER contain:
-  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
-  * Academic degrees: "B.A. in History", "M.S. in Computer Science", "PhD", "MBA"
-  * Degree patterns: anything containing "B.A.", "M.S.", "in [Subject]", "degree", "major", "minor"
-  * Job titles: "Software Engineer", "Data Analyst", "Manager"
-  * Organization names: "Microsoft", "Google", "Company Name"
-- A name is typically 2-3 words (first name + last name), NOT a description of education or experience
-- IMPORTANT: The name is usually at the TOP of the resume, often in the header section or the first few lines, before any "Education" or "Experience" section headers
-- If a word or phrase appears as a section header (like "Education", "Skills"), it's NOT the candidate's name
-- Pay special attention to names in the document header - headers often contain the candidate's name in larger or bolder formatting
-- Email must always be fetched if present
+  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary", "Qualifications"
+  * Academic degrees: "B.A. in History", "M.S. in Computer Science", "B.Tech", "PhD", "MBA", "M.Tech"
+  * Degree patterns: anything containing "in [Subject]", "degree", "major", "minor", "completed"
+  * Job titles: "Software Engineer", "Data Analyst", "Manager", "Developer"
+  * Organization names: "Microsoft", "Google", "Infosys", "Company Name"
+  * Descriptive fragments: "while maintaining", "full course load", "as part of"
+  * Text ending with periods or commas
+- A name is typically 2-4 words (first name + last name, sometimes with middle name)
+- IMPORTANT: The name is USUALLY AT THE VERY TOP of the resume — in the PDF header, page margin, or first 2–5 lines
+- Check PDF metadata, title area, and header region — names often appear in larger/bolder formatting
+- The name appears BEFORE any "Education", "Experience", or section headers
+- If a line appears as a section header (like "Education", "Skills"), it's NOT the candidate's name
+- Names can be in Title Case (e.g., "John Smith") or ALL CAPS (e.g., "VARRE DHANA LAKSHMI DURGA")
+- Names contain only alphabetic characters, hyphens, or periods (for middle initials)
+
+QUALITY & VALIDATION RULES FOR ALL FIELDS:
+- Email must always be fetched if present in resume
 - Experience must be logically derived from career history
-- Skills extraction must be exhaustive - no key technology should be missed
+- Skills extraction must be from the Skills/Tech Skills section only - DO NOT extract from responsibilities
 - Domain classification should be comprehensive (multi-domain where applicable)
 - Education details must not be omitted
 - If data is not available, return field as null (do not guess)
@@ -339,19 +356,24 @@ Resume Text:
             raise ValueError(f"Unsupported file type: {file_type}")
     
     def extract_name(self, text: str) -> Optional[str]:
-        """Extract candidate name from resume text."""
+        """Extract candidate name from resume text with PDF header handling."""
         # Common section headers to exclude (but NOT in first 3 lines - those might be the actual name!)
         invalid_names = {'education', 'experience', 'skills', 'contact', 'objective', 
                         'summary', 'qualifications', 'work history', 'professional summary',
                         'references', 'certifications', 'projects', 'achievements'}
         
         # Academic degree patterns
-        degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree', 
+        degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'b.tech', 'm.tech', 'degree', 
                           'in ', 'major', 'minor', 'diploma', 'certificate']
         
-        # First 20 lines usually contain name
+        # CRITICAL: PDF header area is usually the first 5 lines
+        # Prioritize the TOP 2-5 lines as per the prompt guidelines
         lines = text.split('\n')
-        for idx, line in enumerate(lines[:20]):
+        
+        logger.info("Checking PDF header area (top 5 lines) for candidate name...")
+        
+        # First, check top 5 lines thoroughly for the name (PDF header area)
+        for idx, line in enumerate(lines[:5]):
             # Strip and normalize whitespace
             line = ' '.join(line.split())  # Normalize multiple spaces to single space
             line = line.strip()
@@ -396,12 +418,14 @@ Resume Text:
                                                            'in order to', 'for the', 'that']):
                     continue
                 
-                # Accept if it looks like a name (2-3 words, Title Case or all caps)
-                if line and 2 <= len(line.split()) <= 4 and len(line) < 60:
+                # Accept if it looks like a name (2-4 words, Title Case or ALL CAPS)
+                # CRITICAL: Allow ALL CAPS names in PDF headers (e.g., "VARRE DHANA LAKSHMI DURGA")
+                if line and 2 <= len(line.split()) <= 4 and len(line) < 70:
                     words = line.split()
                     # Check if mostly alphabetic and NOT a sentence fragment
                     if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
-                        # Accept even if ALL CAPS (some resumes have names in all caps)
+                        # Accept even if ALL CAPS (common in PDF headers)
+                        logger.info(f"Found candidate name in PDF header area: {line}")
                         return line
             
             # For lines beyond first 3: more strict validation

@@ -44,9 +44,13 @@ Analyze the provided resume text carefully and return a structured JSON with wel
 EXTRACTION GUIDELINES:
 
 1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith"). 
-   CRITICAL: Do NOT confuse section headers or labels (like "Education", "Experience", "Skills", "Contact Information") with the person's name.
-   The candidate's name is typically at the top of the resume, often centered or on the left.
-   It is NEVER a section header. If the first prominent text is a section header, look for the actual name below or above it.
+   CRITICAL RULES:
+   - Do NOT confuse section headers (like "Education", "Experience", "Skills") with the person's name
+   - Do NOT confuse academic degrees (like "B.A. in History", "M.S. in Computer Science") with the person's name
+   - Do NOT use job titles, organization names, or section headings
+   - The candidate's name is a person's actual name (first + last name), typically at the top of the resume
+   - If you see patterns like "B.A.", "M.S.", "in History", "in Computer Science" - that is NOT a name, it's a degree
+   - If the first prominent text is "Education" or "Experience" - that is NOT the name, look elsewhere for the actual person's name
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -73,8 +77,12 @@ EXTRACTION GUIDELINES:
 13. summary – Provide a concise 2-3 line professional summary describing overall experience, domain focus, and key strengths.
 
 QUALITY & VALIDATION RULES:
-- Ensure name reflects actual candidate, not organization names, job titles, OR section headers
-- The name field should NEVER contain words like "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
+- Ensure name reflects actual candidate, not organization names, job titles, section headers, or academic degrees
+- The name field should NEVER contain:
+  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
+  * Academic degrees: "B.A. in History", "M.S. in Computer Science", "PhD", "MBA"
+  * Degree patterns: anything containing "B.A.", "M.S.", "in [Subject]", "degree", "major", "minor"
+- A name is typically 2-3 words (first name + last name), NOT a description of education or experience
 - Email must always be fetched if present
 - Experience must be logically derived from career history
 - Skills extraction must be exhaustive - no key technology should be missed
@@ -223,17 +231,35 @@ Resume Text:
     
     def extract_name(self, text: str) -> Optional[str]:
         """Extract candidate name from resume text."""
-        # Common section headers to exclude
+        # Common section headers and academic degree patterns to exclude
         invalid_names = {'education', 'experience', 'skills', 'contact', 'objective', 
                         'summary', 'qualifications', 'work history', 'professional summary',
                         'references', 'certifications', 'projects', 'achievements'}
         
+        # Academic degree patterns
+        degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree', 
+                          'in ', 'major', 'minor', 'diploma', 'certificate']
+        
         # First few lines usually contain name
         lines = text.split('\n')
-        for line in lines[:10]:  # Check first 10 lines (was 5)
+        for line in lines[:10]:  # Check first 10 lines
             line = line.strip()
-            # Skip empty lines and section headers
-            if not line or line.lower() in invalid_names:
+            
+            # Skip empty lines
+            if not line:
+                continue
+                
+            # Skip section headers
+            if line.lower() in invalid_names:
+                continue
+            
+            # Skip lines with academic degree patterns
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in degree_keywords):
+                continue
+            
+            # Skip lines with degree abbreviations (B.A., M.S., etc.)
+            if re.search(r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b', line, re.IGNORECASE):
                 continue
                 
             # Name is typically 2-4 words, mostly alphabetic, not too long
@@ -249,9 +275,12 @@ Resume Text:
             doc = self.nlp(text[:500])
             for ent in doc.ents:
                 if ent.label_ == "PERSON":
-                    # Validate NLP result too
-                    if ent.text.lower() not in invalid_names:
-                        return ent.text
+                    # Validate NLP result - check for degrees and invalid names
+                    ent_text_lower = ent.text.lower()
+                    if ent_text_lower not in invalid_names:
+                        # Check for degree patterns
+                        if not any(keyword in ent_text_lower for keyword in degree_keywords):
+                            return ent.text
         
         return "Unknown"
     
@@ -298,16 +327,40 @@ Resume Text:
             # Parse JSON response
             ai_result = json.loads(response.choices[0].message.content)
             
-            # Validate extracted name - reject section headers
+            # Validate extracted name - reject section headers and academic degrees
             full_name = ai_result.get('full_name', '')
             if full_name:
-                # Common section headers that should NEVER be names
+                # Common section headers and academic degrees that should NEVER be names
                 invalid_names = ['education', 'experience', 'skills', 'contact', 'objective', 
                                'summary', 'qualifications', 'work history', 'professional summary',
                                'references', 'certifications', 'projects', 'achievements']
                 
+                # Check for academic degree patterns (B.A., M.S., PhD, etc.)
+                degree_patterns = [
+                    r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b',
+                    r'\bin\s+[A-Z][a-z]+',
+                    r'degree|diploma|certificate'
+                ]
+                
+                is_invalid = False
+                
+                # Check if it's in invalid names list
                 if full_name.lower() in invalid_names:
-                    logger.warning(f"AI extracted invalid name '{full_name}', likely a section header. Trying regex fallback...")
+                    is_invalid = True
+                
+                # Check if it contains academic degree patterns
+                if not is_invalid:
+                    for pattern in degree_patterns:
+                        if re.search(pattern, full_name, re.IGNORECASE):
+                            is_invalid = True
+                            break
+                
+                # Check if it looks like an academic degree format (e.g., "B.A. in History")
+                if not is_invalid and any(keyword in full_name.lower() for keyword in ['in ', 'degree', 'major', 'minor']):
+                    is_invalid = True
+                
+                if is_invalid:
+                    logger.warning(f"AI extracted invalid name '{full_name}', likely a section header or academic degree. Trying regex fallback...")
                     # Use regex-based extraction as fallback
                     ai_result['full_name'] = self.extract_name(text) or 'Unknown'
                     logger.info(f"Replaced with: {ai_result['full_name']}")

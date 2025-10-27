@@ -2,15 +2,20 @@
 
 ## Problem Identified
 
-The resume parser was incorrectly extracting section headers (like "Education", "Experience") as candidate names instead of the actual person's name.
+The resume parser was incorrectly extracting section headers and academic degrees as candidate names instead of the actual person's name.
 
-**Example:**
+**Examples:**
 - Actual candidate name: "Daniel Mindlin"
-- Extracted name: "Education" ❌
+- Extracted name: "Education" ❌ (Section header)
+- Extracted name: "B.A. in History" ❌ (Academic degree)
 
 ## Root Cause
 
-The AI extraction prompt was not explicit enough about avoiding section headers. Common resume section headers like "Education", "Experience", "Skills", etc. were being confused with the candidate's name.
+The AI extraction prompt was not explicit enough about avoiding section headers and academic degrees. The parser was confusing:
+1. **Section headers** like "Education", "Experience", "Skills"
+2. **Academic degrees** like "B.A. in History", "M.S. in Computer Science"
+
+These were being extracted as candidate names instead of the actual person's name.
 
 ## Solution Implemented
 
@@ -25,17 +30,32 @@ Updated the AI extraction prompt to be more explicit:
 ```
 
 ### 2. Post-Extraction Validation
-Added validation to reject section headers after AI extraction:
+Added validation to reject section headers AND academic degrees after AI extraction:
 
 ```python
-# Validate extracted name - reject section headers
+# Validate extracted name - reject section headers and academic degrees
 full_name = ai_result.get('full_name', '')
 if full_name:
-    invalid_names = ['education', 'experience', 'skills', 'contact', 'objective', 
-                   'summary', 'qualifications', 'work history', 'professional summary',
-                   'references', 'certifications', 'projects', 'achievements']
+    invalid_names = ['education', 'experience', 'skills', 'contact', 'objective', ...]
     
+    # Check for academic degree patterns
+    degree_patterns = [
+        r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b',
+        r'\bin\s+[A-Z][a-z]+',
+        r'degree|diploma|certificate'
+    ]
+    
+    is_invalid = False
     if full_name.lower() in invalid_names:
+        is_invalid = True
+    
+    # Check for degree patterns
+    for pattern in degree_patterns:
+        if re.search(pattern, full_name, re.IGNORECASE):
+            is_invalid = True
+            break
+    
+    if is_invalid:
         logger.warning(f"AI extracted invalid name '{full_name}', trying regex fallback...")
         ai_result['full_name'] = self.extract_name(text) or 'Unknown'
 ```
@@ -76,21 +96,22 @@ Added explicit rule in the prompt:
 
 ## Invalid Names Blacklist
 
-The system now explicitly rejects these common section headers:
+The system now explicitly rejects these common section headers and academic degrees:
 
-- education
-- experience
-- skills
-- contact
-- objective
-- summary
-- qualifications
-- work history
-- professional summary
-- references
-- certifications
-- projects
-- achievements
+**Section Headers:**
+- education, experience, skills, contact, objective
+- summary, qualifications, work history, professional summary
+- references, certifications, projects, achievements
+
+**Academic Degree Patterns:**
+- B.A., M.S., B.S., M.A., MBA, PhD, MD, JD
+- "in History", "in Computer Science", "in Business"
+- "degree", "major", "minor", "diploma", "certificate"
+
+**Validation Checks:**
+1. Exact match with section headers
+2. Regex match for degree patterns (B.A., M.S., etc.)
+3. Keywords like "in", "degree", "major" in the text
 
 ## How It Works Now
 

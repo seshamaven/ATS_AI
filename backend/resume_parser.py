@@ -240,9 +240,11 @@ Resume Text:
         degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree', 
                           'in ', 'major', 'minor', 'diploma', 'certificate']
         
-        # First few lines usually contain name
+        # First 20 lines usually contain name (expanded from 10)
         lines = text.split('\n')
-        for line in lines[:10]:  # Check first 10 lines
+        for line in lines[:20]:
+            # Strip and normalize whitespace
+            line = ' '.join(line.split())  # Normalize multiple spaces to single space
             line = line.strip()
             
             # Skip empty lines
@@ -261,18 +263,32 @@ Resume Text:
             # Skip lines with degree abbreviations (B.A., M.S., etc.)
             if re.search(r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b', line, re.IGNORECASE):
                 continue
+            
+            # Skip email addresses (they shouldn't be names)
+            if '@' in line:
+                continue
+            
+            # Skip phone numbers
+            if re.search(r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', line):
+                continue
+            
+            # Skip addresses (they often contain numbers and "Drive", "Street", etc.)
+            if any(addr_word in line_lower for addr_word in ['drive', 'street', 'avenue', 'road', 'blvd', 'city']):
+                continue
                 
             # Name is typically 2-4 words, mostly alphabetic, not too long
-            if line and len(line.split()) <= 4 and len(line) < 50:
+            if line and 2 <= len(line.split()) <= 4 and len(line) < 50:
                 words = line.split()
-                if all(word.replace('.', '').replace(',', '').replace("'", '').isalpha() for word in words):
+                # Allow hyphenated names (e.g., "Mary-Jane"), apostrophes, and periods
+                if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
                     # Additional check: name should not be in ALL CAPS (likely a section header)
+                    # But allow Title Case
                     if not line.isupper():
                         return line
         
         # Fallback: use NLP if available
         if self.nlp:
-            doc = self.nlp(text[:500])
+            doc = self.nlp(text[:1000])  # Increased from 500 to 1000 for better coverage
             for ent in doc.ents:
                 if ent.label_ == "PERSON":
                     # Validate NLP result - check for degrees and invalid names
@@ -362,8 +378,23 @@ Resume Text:
                 if is_invalid:
                     logger.warning(f"AI extracted invalid name '{full_name}', likely a section header or academic degree. Trying regex fallback...")
                     # Use regex-based extraction as fallback
-                    ai_result['full_name'] = self.extract_name(text) or 'Unknown'
-                    logger.info(f"Replaced with: {ai_result['full_name']}")
+                    fallback_name = self.extract_name(text)
+                    if fallback_name and fallback_name != 'Unknown':
+                        ai_result['full_name'] = fallback_name
+                        logger.info(f"Replaced with: {fallback_name}")
+                    else:
+                        # Last resort: try to extract from first PERSON entity in first 500 chars
+                        logger.warning(f"Regex fallback also failed. Trying NLP...")
+                        if self.nlp:
+                            doc = self.nlp(text[:500])
+                            for ent in doc.ents:
+                                if ent.label_ == "PERSON" and len(ent.text.split()) <= 4:
+                                    logger.info(f"Found name via NLP: {ent.text}")
+                                    ai_result['full_name'] = ent.text
+                                    break
+                        if ai_result.get('full_name', '').lower() in ['education', 'experience', 'skills']:
+                            ai_result['full_name'] = 'Unknown'
+                            logger.warning(f"Final fallback resulted in invalid name, setting to Unknown")
             
             logger.info(f"AI extraction completed for {ai_result.get('full_name', 'Unknown')}")
             return ai_result
@@ -578,7 +609,31 @@ Resume Text:
             # Use AI data if available, otherwise fallback to regex-based extraction
             if ai_data:
                 # Use AI-extracted comprehensive data
-                name = ai_data.get('full_name') or self.extract_name(resume_text)
+                # First try AI extracted name
+                name = ai_data.get('full_name') or ''
+                
+                # If name is invalid or missing, extract from text
+                invalid_names = {'education', 'experience', 'skills', 'contact', 'objective'}
+                degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree']
+                
+                if not name or name.lower() in ['unknown', 'education', 'experience']:
+                    # Try regex extraction
+                    name = self.extract_name(resume_text)
+                    
+                    # If still not found, try a simple heuristic: first line that looks like a name
+                    if not name or name == 'Unknown':
+                        lines = resume_text.split('\n')
+                        for line in lines[:5]:
+                            line = line.strip()
+                            # Look for lines that are Title Case, 2-3 words, no special chars
+                            if line and 2 <= len(line.split()) <= 3 and line[0].isupper():
+                                # Check if it's all alphabetic (plus spaces)
+                                if all(word.replace('-', '').replace("'", '').isalpha() for word in line.split()):
+                                    # Skip if it's a section header
+                                    if line.lower() not in invalid_names and not any(keyword in line.lower() for keyword in degree_keywords):
+                                        name = line
+                                        logger.info(f"Found name via heuristic: {name}")
+                                        break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
                 experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)

@@ -575,31 +575,57 @@ Resume Text:
         
         return self.extract_skills(text)
     
+    def extract_skills_section(self, text: str) -> Optional[str]:
+        """Extract the Skills section content."""
+        # Look for Skills section with various patterns
+        patterns = [
+            r'(?i)(?:skill profile|technical skills|skills|core competencies?)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:proficiencies?|competencies?)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                skills_text = match.group(1).strip()
+                if len(skills_text) > 10:  # Make sure it's substantial
+                    return skills_text
+        
+        return None
+    
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
         """Extract technical and soft skills."""
         text_lower = text.lower()
         
         found_skills = set()
         
-        # Extract technical skills
-        for skill in self.TECHNICAL_SKILLS:
-            # Look for whole word matches
-            pattern = r'\b' + re.escape(skill) + r'\b'
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                found_skills.add(skill)
+        # CRITICAL: Only look for skills in the Skills section
+        skills_section = self.extract_skills_section(text)
         
-        # Extract from Skills section if present
-        skills_section_pattern = r'(?i)(?:skills?|technical skills?|core competencies?)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)'
-        skills_match = re.search(skills_section_pattern, text, re.DOTALL)
-        
-        if skills_match:
-            skills_text = skills_match.group(1)
-            # Split by common delimiters
-            potential_skills = re.split(r'[,;•\n]', skills_text)
+        if skills_section:
+            # Only extract skills that appear in the Skills section
+            skills_section_lower = skills_section.lower()
+            
+            # Extract technical skills that are in TECHNICAL_SKILLS AND in the Skills section
+            for skill in self.TECHNICAL_SKILLS:
+                pattern = r'\b' + re.escape(skill) + r'\b'
+                if re.search(pattern, skills_section_lower, re.IGNORECASE):
+                    found_skills.add(skill)
+            
+            # Extract all potential skills from the Skills section
+            potential_skills = re.split(r'[,;•\n•]', skills_section)
             for skill in potential_skills:
                 skill = skill.strip()
                 if skill and len(skill) < 50:
-                    found_skills.add(skill.lower())
+                    skill_lower = skill.lower()
+                    # Only keep if it's in TECHNICAL_SKILLS
+                    if skill_lower in self.TECHNICAL_SKILLS:
+                        found_skills.add(skill_lower)
+        else:
+            # Fallback: extract from entire text if no Skills section found
+            for skill in self.TECHNICAL_SKILLS:
+                pattern = r'\b' + re.escape(skill) + r'\b'
+                if re.search(pattern, text_lower, re.IGNORECASE):
+                    found_skills.add(skill)
         
         # Categorize as primary/secondary (simple heuristic)
         all_skills = list(found_skills)
@@ -805,6 +831,10 @@ Resume Text:
                 technical_skills = []
                 technical_skills_lower = set()  # For deduplication
                 
+                # CRITICAL: Get the Skills section to verify skills are actually listed there
+                skills_section = self.extract_skills_section(resume_text)
+                skills_section_text = skills_section.lower() if skills_section else ""
+                
                 for skill in ai_technical_skills:
                     skill_lower = skill.lower().strip()
                     
@@ -815,6 +845,14 @@ Resume Text:
                     
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
+                        # CRITICAL: Verify skill is actually in the Skills section (as a word, not just a substring)
+                        if skills_section_text:
+                            # Use word boundary pattern to ensure it's a standalone skill word
+                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            if not re.search(pattern, skills_section_text, re.IGNORECASE):
+                                logger.warning(f"Skill '{skill}' not found as standalone word in Skills section, skipping")
+                                continue
+                        
                         if skill_lower not in technical_skills_lower:
                             technical_skills.append(skill)
                             technical_skills_lower.add(skill_lower)
@@ -823,6 +861,13 @@ Resume Text:
                         # Try to find match in TECHNICAL_SKILLS
                         for tech_skill in self.TECHNICAL_SKILLS:
                             if skill_lower in tech_skill or tech_skill in skill_lower:
+                                # CRITICAL: Verify skill is actually in the Skills section (as a word)
+                                if skills_section_text:
+                                    pattern = r'\b' + re.escape(tech_skill) + r'\b'
+                                    if not re.search(pattern, skills_section_text, re.IGNORECASE):
+                                        logger.warning(f"Skill '{tech_skill}' not found as standalone word in Skills section, skipping")
+                                        continue
+                                
                                 if tech_skill not in technical_skills_lower:
                                     technical_skills.append(tech_skill)
                                     technical_skills_lower.add(tech_skill)

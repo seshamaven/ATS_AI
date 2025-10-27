@@ -177,8 +177,11 @@ Resume Text:
         'struts', 'play framework', 'koa', 'meteor', 'ember.js', 'backbone.js', 'codeigniter', 'cakephp', 'yii',
         'nuxt.js', 'gatsby', 'blazor', 'qt',
         
+        # === .NET Framework ===
+        '.net', '.net core', '.net framework', 'asp.net', 'asp.net mvc', 'asp.net core', 'ado.net', 'entity framework', 'linq',
+        
         # === Databases / Data Tools ===
-        'sql', 'mysql', 'postgresql', 'mongodb', 'redis', 'nosql', 'oracle', 'sqlite', 'elasticsearch', 'snowflake',
+        'sql', 'sql server', 'mysql', 'postgresql', 'mongodb', 'redis', 'nosql', 'oracle', 'sqlite', 'elasticsearch', 'snowflake',
         'firebase', 'dynamodb', 'cassandra', 'neo4j', 'bigquery', 'redshift', 'clickhouse', 'couchdb', 'hbase',
         'influxdb', 'memcached', 'realm', 'timescaledb', 'duckdb', 'cosmos db',
         
@@ -211,7 +214,7 @@ Resume Text:
         'selenium', 'playwright', 'testng', 'junit', 'mockito', 'karma', 'chai', 'enzyme',
         
         # === Frontend / UI / UX ===
-        'html', 'css', 'bootstrap', 'jquery', 'tailwind', 'chakra ui', 'material ui', 'redux', 'zustand',
+        'html', 'html5', 'css', 'css3', 'bootstrap', 'jquery', 'tailwind', 'chakra ui', 'material ui', 'redux', 'zustand',
         'framer motion', 'figma', 'ux design', 'responsive design', 'pwa', 'webpack', 'vite', 'babel',
         
         # === Mobile / Cross-Platform ===
@@ -224,7 +227,10 @@ Resume Text:
         
         # === Other / Emerging Tech ===
         'blockchain', 'solidity', 'smart contracts', 'web3', 'nft', 'metaverse', 'edge computing',
-        'quantum computing', 'robotics', 'iot', 'raspberry pi', 'arduino', 'automation'
+        'quantum computing', 'robotics', 'iot', 'raspberry pi', 'arduino', 'automation',
+        
+        # === IDE / Development Tools ===
+        'visual studio', 'visual studio code', 'eclipse', 'intellij idea', 'netbeans', 'xcode', 'android studio'
     }
     
     DOMAINS = {
@@ -845,13 +851,23 @@ Resume Text:
                     
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
-                        # CRITICAL: Verify skill is actually in the Skills section (as a word, not just a substring)
+                        # CRITICAL: Verify skill is actually in the Skills section
+                        # Use flexible matching: skill can appear as standalone word OR part of a larger word (e.g., "C#" in "C#.NET")
                         if skills_section_text:
-                            # Use word boundary pattern to ensure it's a standalone skill word
-                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
-                            if not re.search(pattern, skills_section_text, re.IGNORECASE):
-                                logger.warning(f"Skill '{skill}' not found as standalone word in Skills section, skipping")
-                                continue
+                            # Try exact word boundary match first
+                            exact_pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            # Try substring match (for cases like "c#" in "c#.net")
+                            substring_pattern = re.escape(skill_lower)
+                            
+                            exact_match = re.search(exact_pattern, skills_section_text, re.IGNORECASE)
+                            substring_match = re.search(substring_pattern, skills_section_text, re.IGNORECASE)
+                            
+                            # Special handling for skills with special characters (#, ., etc.)
+                            if not exact_match and not substring_match:
+                                # Try case-insensitive contains
+                                if skill_lower not in skills_section_text:
+                                    logger.warning(f"Skill '{skill}' not found in Skills section, skipping")
+                                    continue
                         
                         if skill_lower not in technical_skills_lower:
                             technical_skills.append(skill)
@@ -861,12 +877,18 @@ Resume Text:
                         # Try to find match in TECHNICAL_SKILLS
                         for tech_skill in self.TECHNICAL_SKILLS:
                             if skill_lower in tech_skill or tech_skill in skill_lower:
-                                # CRITICAL: Verify skill is actually in the Skills section (as a word)
+                                # CRITICAL: Verify skill is actually in the Skills section
                                 if skills_section_text:
-                                    pattern = r'\b' + re.escape(tech_skill) + r'\b'
-                                    if not re.search(pattern, skills_section_text, re.IGNORECASE):
-                                        logger.warning(f"Skill '{tech_skill}' not found as standalone word in Skills section, skipping")
-                                        continue
+                                    # Try both exact and substring matching
+                                    exact_pattern = r'\b' + re.escape(tech_skill) + r'\b'
+                                    substring_pattern = re.escape(tech_skill)
+                                    
+                                    if not re.search(exact_pattern, skills_section_text, re.IGNORECASE) and \
+                                       not re.search(substring_pattern, skills_section_text, re.IGNORECASE):
+                                        # Final check: case-insensitive contains
+                                        if tech_skill not in skills_section_text:
+                                            logger.warning(f"Skill '{tech_skill}' not found in Skills section, skipping")
+                                            continue
                                 
                                 if tech_skill not in technical_skills_lower:
                                     technical_skills.append(tech_skill)

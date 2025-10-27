@@ -43,37 +43,33 @@ Analyze the provided resume text carefully and return a structured JSON with wel
 
 EXTRACTION GUIDELINES:
 
-1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith"). 
+1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith").
+
    CRITICAL RULES:
-   - The candidate's name is typically at the VERY TOP of the resume (first line or two)
-   - Names follow specific patterns: 2-3 capitalized words (first name + last name)
-   - Section headers like "Education", "Experience", "Skills", "Contact" appear later in the document
-   - Academic degrees like "B.A. in History", "M.S. in Computer Science" are NOT names (contain "in", "degree", etc.)
-   - Job titles like "Software Engineer" are NOT names
-   - Organization names like "Microsoft Corporation" are NOT names
-   
+   - The candidate's name is typically at the VERY TOP of the resume, often in the HEADER section or the first few lines of extracted text.
+   - Names usually consist of 2–3 capitalized words (first name + last name), sometimes including a middle name or initial.
+   - The name may appear in the document header, before any main sections like "Education", "Experience", "Summary", or "Skills".
+   - If your text extraction tool separates header/footer text from body text, check both areas for a possible name match.
+
    IDENTIFICATION STRATEGY:
-   - Look at the first 2-5 lines of text
-   - Find the first line that contains 2-3 capitalized words (first + last name)
-   - This is typically before any section headers or content sections
-   - The name should be a person's name, NOT a label or description
-   - Common resume structure: NAME is first, then contact info, then "Education" section
-   - If you see "Education" or "Experience" first, the name might be above it or you might need to look more carefully
-   
+   - Examine the HEADER, TITLE, and the first 5–7 lines of extracted text.
+   - Look for the first phrase containing 2–3 capitalized words that follow the pattern of a human name (e.g., "John Smith", "Sarah L. Johnson").
+   - If no name is found in the main text, inspect the header area (topmost extracted content) for a similar pattern.
+   - Ensure the detected text is not a section title, company, or job role.
+
    WHAT IS NOT A NAME:
-   - Sentence fragments like "full course load.", "while maintaining", "in order to"
-   - Academic text like "Completed in 2019", "while maintaining"
-   - Phrases ending with periods or commas
-   - Bullet point content that continues sentences
-   - Any text that sounds like a description or activity
-   - Text containing words like "while", "maintaining", "completed", "full course"
-   
+   - Section headers like "Education", "Experience", "Skills", "Contact"
+   - Academic degrees like "B.A. in History", "M.S. in Computer Science"
+   - Job titles like "Software Engineer", "Project Manager"
+   - Organization names like "Microsoft Corporation", "Google LLC"
+   - Descriptive sentences, bullet points, or text with periods, commas, or verbs like "maintaining", "completed", "achieved"
+
    A NAME IS:
-   - A person's actual name (e.g., "Daniel Mindlin", "John Smith")
-   - Typically the first substantive content at the top
-   - Does NOT end with a period or comma
-   - Does NOT contain descriptive phrases
-   - Is a proper noun (person's name)
+   - A person’s actual name (e.g., "Daniel Mindlin", "John Smith")
+   - Appears visually or logically at the top of the document (header or first few lines)
+   - Does NOT contain punctuation or descriptive text
+   - Consists of capitalized words typical of a human name
+   - Is the first major identifying element before contact information or resume sections
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 

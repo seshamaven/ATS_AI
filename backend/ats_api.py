@@ -413,9 +413,19 @@ def search_resumes():
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores
     
+    Parameters:
+        - query (required): Search query string
+        - top_k (optional): Number of results to return (default: 10)
+        - min_similarity_score (optional): Minimum similarity threshold (default: 0.3)
+        - filters (optional): Metadata filters
+    
     STATELESS GUARANTEE: Each search query is processed independently.
     A fresh embedding is generated for the search query, and results are
     retrieved from the vector database without any state from previous searches.
+    
+    FILTERING: Results below the similarity threshold are filtered out.
+    For meaningless queries (like single characters), the API returns a proper
+    "no results" message instead of random data.
     """
     try:
         # Validate request
@@ -433,9 +443,22 @@ def search_resumes():
         # Optional parameters
         filters = data.get('filters', {})
         top_k = data.get('top_k', 10)
+        min_similarity_score = data.get('min_similarity_score', 0.3)  # Default threshold
+        
+        # Validate query is meaningful (not just a single character or number)
+        if len(user_query) <= 1 and not user_query.isalpha():
+            return jsonify({
+                'message': 'Query is too short or not meaningful. Please provide a more detailed search query.',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'suggestion': 'Try searching for skills, domains, or keywords (e.g., "Python developer", "finance", "data analyst")',
+                'timestamp': datetime.now().isoformat()
+            }), 200
         
         logger.info(f"Processing resume search query: {user_query}")
         logger.info(f"Applied filters: {filters}")
+        logger.info(f"Minimum similarity score threshold: {min_similarity_score}")
         
         # Start timing for performance monitoring
         start_time = time.time()
@@ -466,7 +489,7 @@ def search_resumes():
         
         if not search_results.matches:
             return jsonify({
-                'message': 'No matching resumes found',
+                'message': 'No matching resumes found for your query',
                 'query': user_query,
                 'search_results': [],
                 'total_matches': 0,
@@ -474,9 +497,14 @@ def search_resumes():
                 'timestamp': datetime.now().isoformat()
             }), 200
         
-        # Process search results
+        # Process search results and filter by similarity score
         candidates = []
         for match in search_results.matches:
+            # Filter out low-relevance results based on similarity score
+            if match.score < min_similarity_score:
+                logger.debug(f"Filtered out candidate {match.metadata.get('candidate_id')} with score {match.score:.3f} (threshold: {min_similarity_score})")
+                continue
+                
             candidate_info = {
                 'candidate_id': match.metadata.get('candidate_id'),
                 'name': match.metadata.get('name'),
@@ -494,6 +522,20 @@ def search_resumes():
                 'metadata': match.metadata
             }
             candidates.append(candidate_info)
+        
+        # If no candidates passed the similarity threshold
+        if not candidates:
+            return jsonify({
+                'message': f'No resumes match your query with sufficient relevance (similarity threshold: {min_similarity_score}). Try refining your search terms.',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'total_before_filtering': len(search_results.matches),
+                'similarity_threshold': min_similarity_score,
+                'suggestion': 'Try searching for specific skills, job titles, or domains (e.g., "Python developer", "finance analyst", "data science")',
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
         
         # Calculate processing time
         processing_time = int((time.time() - start_time) * 1000)

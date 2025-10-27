@@ -1,6 +1,21 @@
 """
 Flask API for ATS (Application Tracking System).
 Provides endpoints for resume processing and candidate ranking.
+
+STATELESS ARCHITECTURE:
+This API is designed to be completely stateless. Each request is processed
+independently with no data or state from one request influencing another.
+
+Key Design Principles:
+1. Database connections are fresh per request using context managers
+2. Ranking engine creates new instances per request  
+3. Embedding generation is independent per request
+4. Resume parsing is independent per request
+5. No global state stores request data
+6. Thread-safe components (OpenAI clients, NLP models)
+
+This ensures complete isolation between users' requests - no skill data, resume
+interpretation, or ranking results from one user influence another user's query.
 """
 
 import os
@@ -48,10 +63,18 @@ os.makedirs(ATSConfig.UPLOAD_FOLDER, exist_ok=True)
 
 
 class EmbeddingService:
-    # Service to generate embeddings using Azure OpenAI or OpenAI
+    """
+    Service to generate embeddings using Azure OpenAI or OpenAI.
+    
+    STATELESS DESIGN: This class is stateless and thread-safe.
+    It holds only immutable configuration (API keys, model names).
+    Each generate_embedding() call is independent and doesn't cache results.
+    Safe to use as a global singleton across concurrent requests.
+    """
     
     def __init__(self):
         # Initialize embedding service based on configuration
+        # NOTE: Only immutable configuration stored here (safe for global instance)
         self.use_azure = bool(ATSConfig.AZURE_OPENAI_ENDPOINT)
         
         if self.use_azure:
@@ -96,7 +119,9 @@ class EmbeddingService:
             raise
 
 
-# Initialize services
+# Initialize services as global singletons
+# SAFETY: These are stateless - they only hold configuration and thread-safe clients.
+# No request data is stored in these instances, ensuring complete request isolation.
 embedding_service = EmbeddingService()
 resume_parser = ResumeParser()
 
@@ -162,6 +187,10 @@ def process_resume():
     
     Accepts: PDF or DOCX file
     Returns: JSON with candidate_id and status
+    
+    STATELESS GUARANTEE: This endpoint processes each resume independently.
+    No data from one user's resume influences another user's processing.
+    Each request uses a fresh database connection and generates new embeddings.
     """
     try:
                 # Validate file in request
@@ -383,6 +412,10 @@ def search_resumes():
     
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores
+    
+    STATELESS GUARANTEE: Each search query is processed independently.
+    A fresh embedding is generated for the search query, and results are
+    retrieved from the vector database without any state from previous searches.
     """
     try:
         # Validate request
@@ -489,6 +522,11 @@ def profile_ranking_by_jd():
     
     Supports both structured input and general job descriptions.
     Automatically extracts skills, experience, and requirements from JD text.
+    
+    STATELESS GUARANTEE: This endpoint creates a fresh ranking engine instance
+    and database connection for each request. Rankings are calculated independently
+    using only the current request's job description and candidate data from the database.
+    No ranking data from one request influences another.
     """
     try:
         # Validate request

@@ -43,7 +43,10 @@ Analyze the provided resume text carefully and return a structured JSON with wel
 
 EXTRACTION GUIDELINES:
 
-1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Suresh Kavili"), NOT job titles like "Technical Director" or organization names.
+1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith"). 
+   CRITICAL: Do NOT confuse section headers or labels (like "Education", "Experience", "Skills", "Contact Information") with the person's name.
+   The candidate's name is typically at the top of the resume, often centered or on the left.
+   It is NEVER a section header. If the first prominent text is a section header, look for the actual name below or above it.
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -70,7 +73,8 @@ EXTRACTION GUIDELINES:
 13. summary – Provide a concise 2-3 line professional summary describing overall experience, domain focus, and key strengths.
 
 QUALITY & VALIDATION RULES:
-- Ensure name reflects actual candidate, not organization or designation
+- Ensure name reflects actual candidate, not organization names, job titles, OR section headers
+- The name field should NEVER contain words like "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
 - Email must always be fetched if present
 - Experience must be logically derived from career history
 - Skills extraction must be exhaustive - no key technology should be missed
@@ -219,22 +223,35 @@ Resume Text:
     
     def extract_name(self, text: str) -> Optional[str]:
         """Extract candidate name from resume text."""
+        # Common section headers to exclude
+        invalid_names = {'education', 'experience', 'skills', 'contact', 'objective', 
+                        'summary', 'qualifications', 'work history', 'professional summary',
+                        'references', 'certifications', 'projects', 'achievements'}
+        
         # First few lines usually contain name
         lines = text.split('\n')
-        for line in lines[:5]:
+        for line in lines[:10]:  # Check first 10 lines (was 5)
             line = line.strip()
-            # Name is typically 2-4 words, mostly alphabetic
+            # Skip empty lines and section headers
+            if not line or line.lower() in invalid_names:
+                continue
+                
+            # Name is typically 2-4 words, mostly alphabetic, not too long
             if line and len(line.split()) <= 4 and len(line) < 50:
                 words = line.split()
-                if all(word.replace('.', '').replace(',', '').isalpha() for word in words):
-                    return line
+                if all(word.replace('.', '').replace(',', '').replace("'", '').isalpha() for word in words):
+                    # Additional check: name should not be in ALL CAPS (likely a section header)
+                    if not line.isupper():
+                        return line
         
         # Fallback: use NLP if available
         if self.nlp:
             doc = self.nlp(text[:500])
             for ent in doc.ents:
                 if ent.label_ == "PERSON":
-                    return ent.text
+                    # Validate NLP result too
+                    if ent.text.lower() not in invalid_names:
+                        return ent.text
         
         return "Unknown"
     
@@ -280,6 +297,20 @@ Resume Text:
             
             # Parse JSON response
             ai_result = json.loads(response.choices[0].message.content)
+            
+            # Validate extracted name - reject section headers
+            full_name = ai_result.get('full_name', '')
+            if full_name:
+                # Common section headers that should NEVER be names
+                invalid_names = ['education', 'experience', 'skills', 'contact', 'objective', 
+                               'summary', 'qualifications', 'work history', 'professional summary',
+                               'references', 'certifications', 'projects', 'achievements']
+                
+                if full_name.lower() in invalid_names:
+                    logger.warning(f"AI extracted invalid name '{full_name}', likely a section header. Trying regex fallback...")
+                    # Use regex-based extraction as fallback
+                    ai_result['full_name'] = self.extract_name(text) or 'Unknown'
+                    logger.info(f"Replaced with: {ai_result['full_name']}")
             
             logger.info(f"AI extraction completed for {ai_result.get('full_name', 'Unknown')}")
             return ai_result

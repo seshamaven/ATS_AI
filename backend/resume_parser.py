@@ -206,7 +206,7 @@ Resume Text:
         'service mesh', 'load balancer',
         
         # === CI/CD & Testing ===
-        'git', 'github', 'gitlab', 'agile', 'scrum', 'devops', 'tdd', 'bdd', 'unit testing', 'pytest', 'jest',
+        'git', 'github', 'gitlab', 'agile', 'scrum', 'devops', 'pytest', 'jest',
         'mocha', 'cypress', 'postman', 'swagger', 'jira', 'confluence', 'maven', 'gradle', 'ant', 'sonarqube',
         'selenium', 'playwright', 'testng', 'junit', 'mockito', 'karma', 'chai', 'enzyme',
         
@@ -797,7 +797,8 @@ Resume Text:
                 responsibility_phrases = [
                     'unit testing', 'integration testing', 'system testing', 'end to end testing',
                     'test driven development', 'tdd', 'bdd', 'behavior driven development',
-                    'agile methodology', 'scrum methodology', 'waterfall methodology'
+                    'agile methodology', 'scrum methodology', 'waterfall methodology',
+                    'performed unit testing', 'implemented unit testing', 'wrote unit tests'
                 ]
                 
                 # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
@@ -888,7 +889,8 @@ Resume Text:
                 responsibility_phrases = [
                     'unit testing', 'integration testing', 'system testing', 'end to end testing',
                     'test driven development', 'tdd', 'bdd', 'behavior driven development',
-                    'agile methodology', 'scrum methodology', 'waterfall methodology'
+                    'agile methodology', 'scrum methodology', 'waterfall methodology',
+                    'performed unit testing', 'implemented unit testing', 'wrote unit tests'
                 ]
                 
                 # Separate into technical (in our list) and non-technical

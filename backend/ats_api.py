@@ -196,9 +196,9 @@ def process_resume():
             logger.info("Generating embedding for resume...")
             resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
             
-            # Store in database
+            # Store in database (without embedding - stored in Pinecone only)
             with create_ats_database() as db:
-                candidate_id = db.insert_resume(parsed_data, resume_embedding)
+                candidate_id = db.insert_resume(parsed_data)
                 
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
@@ -260,7 +260,7 @@ def process_resume():
                 'primary_skills': parsed_data.get('primary_skills'),
                 'domain': parsed_data.get('domain'),
                 'education': parsed_data.get('education'),
-                'embedding_dimensions': len(resume_embedding),
+                'embedding_dimensions': 'stored_in_pinecone_only',
                 'pinecone_indexed': pinecone_indexed,
                 'timestamp': datetime.now().isoformat()
             }
@@ -317,39 +317,14 @@ def index_existing_resumes():
         
         for resume in resumes:
             try:
-                # Skip if no embedding exists
-                if not resume.get('embedding'):
-                    logger.warning(f"Resume {resume['candidate_id']} has no embedding, skipping")
-                    failed_count += 1
-                    continue
-                
-                # Parse embedding from JSON
-                import json
-                embedding = json.loads(resume['embedding']) if isinstance(resume['embedding'], str) else resume['embedding']
-                
-                # Prepare metadata for Pinecone with NULL value handling
-                pinecone_metadata = {
-                    'candidate_id': resume['candidate_id'],
-                    'name': resume.get('name') or 'Unknown',
-                    'email': resume.get('email') or 'No email',
-                    'domain': resume.get('domain') or 'Unknown',
-                    'primary_skills': resume.get('primary_skills') or 'No skills',
-                    'total_experience': resume.get('total_experience', 0),
-                    'education': resume.get('education') or 'Unknown',
-                    'file_type': resume.get('file_type') or 'Unknown',
-                    'source': 'batch_indexing',
-                    'created_at': resume.get('created_at', datetime.now().isoformat())
-                }
-                
-                # Create vector for Pinecone
-                vector_data = {
-                    'id': f'resume_{resume["candidate_id"]}',
-                    'values': embedding,
-                    'metadata': pinecone_metadata
-                }
-                
-                vectors_to_upsert.append(vector_data)
-                indexed_count += 1
+                # Generate embedding for each resume since we don't store it in DB anymore
+                # We need the resume text to generate embedding
+                # Since resume_text is not stored in DB, we'll skip indexing
+                logger.warning(f"Resume {resume['candidate_id']} cannot be indexed - no resume_text available in database")
+                failed_count += 1
+                # Note: Since resume_text and embedding are no longer stored in database,
+                # we cannot re-index existing resumes. Only newly uploaded resumes will be indexed in Pinecone.
+                continue
                 
                 # Batch upsert every 100 vectors
                 if len(vectors_to_upsert) >= 100:
@@ -1126,14 +1101,8 @@ def get_candidate(candidate_id):
             if not candidate:
                 return jsonify({'error': 'Candidate not found'}), 404
             
-            # Remove large fields for response
-            if 'embedding' in candidate:
-                candidate['embedding_dimensions'] = len(candidate['embedding'])
-                del candidate['embedding']
-            
-            if 'resume_text' in candidate and len(candidate['resume_text']) > 500:
-                candidate['resume_text_preview'] = candidate['resume_text'][:500] + '...'
-                del candidate['resume_text']
+            # Note: embedding and resume_text are no longer stored in database
+            # They are handled in Pinecone only
             
             return jsonify(candidate), 200
             

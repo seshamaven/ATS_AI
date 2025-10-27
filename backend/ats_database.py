@@ -56,20 +56,19 @@ class ATSDatabase:
     
     # Resume Operations
     
-    def insert_resume(self, resume_data: Dict[str, Any], embedding: List[float] = None) -> Optional[int]:
+    def insert_resume(self, resume_data: Dict[str, Any]) -> Optional[int]:
         """
-        Insert resume metadata and embedding into database.
+        Insert resume metadata into database.
+        
+        Note: Embeddings are stored in Pinecone, not in the database.
         
         Args:
             resume_data: Dictionary with resume fields
-            embedding: 1536-dimension embedding vector
         
         Returns:
             candidate_id if successful, None otherwise
         """
         try:
-            # Convert embedding to JSON string
-            embedding_json = json.dumps(embedding) if embedding else None
             
             query = """
                 INSERT INTO resume_metadata (
@@ -80,10 +79,9 @@ class ATSDatabase:
                     current_location, preferred_locations,
                     current_company, current_designation,
                     notice_period, expected_salary, current_salary,
-                    resume_text, resume_summary,
+                    resume_summary,
                     file_name, file_type, file_size_kb,
-                    embedding, embedding_model,
-                    status, source
+                    status
                 ) VALUES (
                     %(name)s, %(email)s, %(phone)s,
                     %(total_experience)s, %(primary_skills)s, %(secondary_skills)s, %(all_skills)s,
@@ -92,10 +90,9 @@ class ATSDatabase:
                     %(current_location)s, %(preferred_locations)s,
                     %(current_company)s, %(current_designation)s,
                     %(notice_period)s, %(expected_salary)s, %(current_salary)s,
-                    %(resume_text)s, %(resume_summary)s,
+                    %(resume_summary)s,
                     %(file_name)s, %(file_type)s, %(file_size_kb)s,
-                    %(embedding)s, %(embedding_model)s,
-                    %(status)s, %(source)s
+                    %(status)s
                 )
             """
             
@@ -119,15 +116,11 @@ class ATSDatabase:
                 'notice_period': resume_data.get('notice_period'),
                 'expected_salary': resume_data.get('expected_salary'),
                 'current_salary': resume_data.get('current_salary'),
-                'resume_text': resume_data.get('resume_text'),
                 'resume_summary': resume_data.get('resume_summary'),
                 'file_name': resume_data.get('file_name'),
                 'file_type': resume_data.get('file_type'),
                 'file_size_kb': resume_data.get('file_size_kb'),
-                'embedding': embedding_json,
-                'embedding_model': resume_data.get('embedding_model', 'text-embedding-ada-002'),
-                'status': resume_data.get('status', 'active'),
-                'source': resume_data.get('source', 'api')
+                'status': resume_data.get('status', 'active')
             }
             
             self.cursor.execute(query, data)
@@ -155,10 +148,9 @@ class ATSDatabase:
                     current_location, preferred_locations,
                     current_company, current_designation,
                     notice_period, expected_salary, current_salary,
-                    resume_text, resume_summary,
+                    resume_summary,
                     file_name, file_type, file_size_kb,
-                    embedding, embedding_model,
-                    status, source,
+                    status,
                     created_at, updated_at
                 FROM resume_metadata 
                 ORDER BY created_at DESC
@@ -186,10 +178,6 @@ class ATSDatabase:
             self.cursor.execute(query, (candidate_id,))
             result = self.cursor.fetchone()
             
-            if result and result.get('embedding'):
-                # Parse embedding from JSON
-                result['embedding'] = json.loads(result['embedding'])
-            
             return result
         except Error as e:
             logger.error(f"Error fetching resume: {e}")
@@ -200,18 +188,13 @@ class ATSDatabase:
         try:
             query = """
                 SELECT candidate_id, name, email, total_experience, 
-                       primary_skills, domain, education, embedding
+                       primary_skills, domain, education
                 FROM resume_metadata 
                 WHERE status = %s
                 LIMIT %s
             """
             self.cursor.execute(query, (status, limit))
             results = self.cursor.fetchall()
-            
-            # Parse embeddings
-            for result in results:
-                if result.get('embedding'):
-                    result['embedding'] = json.loads(result['embedding'])
             
             return results
         except Error as e:
@@ -248,8 +231,6 @@ class ATSDatabase:
             values = []
             
             for key, value in updates.items():
-                if key == 'embedding' and isinstance(value, list):
-                    value = json.dumps(value)
                 set_clauses.append(f"{key} = %s")
                 values.append(value)
             

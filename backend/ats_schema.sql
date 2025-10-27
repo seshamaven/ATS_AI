@@ -35,17 +35,12 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     current_salary VARCHAR(100),
     
     -- Resume Content
-    resume_text LONGTEXT COMMENT 'Full parsed resume text',
     resume_summary TEXT COMMENT 'Auto-generated summary',
     
     -- File Information
     file_name VARCHAR(500),
     file_type VARCHAR(50),
     file_size_kb INT,
-    
-    -- Embedding (Store as JSON for compatibility)
-    embedding JSON COMMENT '1536-dimension vector as JSON array',
-    embedding_model VARCHAR(100) DEFAULT 'text-embedding-ada-002',
     
     -- AI Analysis Fields
     ai_primary_skills JSON COMMENT 'AI-extracted primary skills with experience and weights',
@@ -55,7 +50,6 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     
     -- Status and Metadata
     status VARCHAR(50) DEFAULT 'active' COMMENT 'active, archived, blacklisted',
-    source VARCHAR(100) COMMENT 'Upload source',
     
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -68,8 +62,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     INDEX idx_experience (total_experience),
     INDEX idx_status (status),
     INDEX idx_created_at (created_at),
-    FULLTEXT INDEX idx_skills (primary_skills, secondary_skills, all_skills),
-    FULLTEXT INDEX idx_resume_text (resume_text)
+    FULLTEXT INDEX idx_skills (primary_skills, secondary_skills, all_skills)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Job Descriptions Table

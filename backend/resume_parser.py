@@ -920,18 +920,31 @@ Resume Text (look for name in FIRST FEW LINES):
                 skills_section = self.extract_skills_section(resume_text)
                 skills_section_text = skills_section.lower() if skills_section else ""
                 
-                # If AI extracted no skills or very few, try regex fallback
-                if not ai_technical_skills or len(ai_technical_skills) < 2:
-                    logger.warning(f"AI extracted only {len(ai_technical_skills)} skills, trying regex fallback...")
-                    regex_skills = self.extract_skills(resume_text)
-                    all_extracted_skills = regex_skills.get('all_skills', [])
+                # ALWAYS try regex fallback as additional source of skills
+                logger.info(f"AI extracted {len(ai_technical_skills)} skills. Trying regex fallback for additional skills...")
+                regex_skills = self.extract_skills(resume_text)
+                all_extracted_skills = regex_skills.get('all_skills', [])
+                logger.info(f"Regex extracted {len(all_extracted_skills)} potential skills")
+                
+                for skill in all_extracted_skills:
+                    skill_lower = skill.lower().strip()
                     
-                    for skill in all_extracted_skills:
-                        skill_lower = skill.lower().strip()
-                        if skill_lower in self.TECHNICAL_SKILLS:
-                            if skill_lower not in technical_skills_lower:
-                                technical_skills.append(skill)
-                                technical_skills_lower.add(skill_lower)
+                    # Try exact match first
+                    if skill_lower in self.TECHNICAL_SKILLS:
+                        if skill_lower not in technical_skills_lower:
+                            technical_skills.append(skill)
+                            technical_skills_lower.add(skill_lower)
+                            logger.info(f"Added skill from regex: {skill}")
+                    else:
+                        # Try fuzzy matching - check if skill is contained in any technical skill or vice versa
+                        for tech_skill in self.TECHNICAL_SKILLS:
+                            if skill_lower in tech_skill or tech_skill in skill_lower:
+                                # Don't add duplicates
+                                if tech_skill not in technical_skills_lower:
+                                    technical_skills.append(tech_skill)
+                                    technical_skills_lower.add(tech_skill)
+                                    logger.info(f"Added skill from regex (fuzzy match): {tech_skill} (matched {skill})")
+                                break
                 
                 for skill in ai_technical_skills:
                     skill_lower = skill.lower().strip()
@@ -1006,7 +1019,20 @@ Resume Text (look for name in FIRST FEW LINES):
                 secondary_skills_str = ', '.join(secondary_skills)  # Non-technical skills
                 all_skills_str = ', '.join(all_skills_list)
                 
-                logger.info(f"Filtered to {len(technical_skills)} technical skills from {len(ai_technical_skills)} AI-extracted skills")
+                logger.info(f"Filtered to {len(technical_skills)} technical skills total (AI: {len(ai_technical_skills)}, Regex: {len(all_extracted_skills)})")
+                
+                # If we still have no skills, try a very lenient approach - extract common tech terms
+                if not technical_skills:
+                    logger.warning("No skills found with strict filtering. Trying lenient extraction from entire resume text...")
+                    # Extract from entire text using a lenient approach
+                    for tech_skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
+                        if tech_skill in resume_text.lower():
+                            if tech_skill not in technical_skills_lower:
+                                technical_skills.append(tech_skill)
+                                technical_skills_lower.add(tech_skill)
+                                logger.info(f"Added skill via lenient extraction: {tech_skill}")
+                                if len(technical_skills) >= 15:  # Stop after finding 15 skills
+                                    break
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
@@ -1090,11 +1116,25 @@ Resume Text (look for name in FIRST FEW LINES):
                         if not found_match:
                             secondary_skills_list.append(skill)
                 
-                primary_skills = ', '.join(technical_skills_list[:15])  # Top 15 technical skills
                 secondary_skills_str = ', '.join(secondary_skills_list)  # Non-technical skills
                 all_skills_str = ', '.join(all_extracted_skills)
                 
                 logger.info(f"Filtered to {len(technical_skills_list)} technical skills from {len(all_extracted_skills)} extracted skills")
+                
+                # If we still have no skills, try a very lenient approach - extract common tech terms
+                if not technical_skills_list:
+                    logger.warning("No skills found with strict filtering. Trying lenient extraction from entire resume text...")
+                    for tech_skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
+                        if tech_skill in resume_text.lower():
+                            if tech_skill not in technical_skills_set:
+                                technical_skills_list.append(tech_skill)
+                                technical_skills_set.add(tech_skill)
+                                logger.info(f"Added skill via lenient extraction: {tech_skill}")
+                                if len(technical_skills_list) >= 15:  # Stop after finding 15 skills
+                                    break
+                
+                # Format primary_skills after potential lenient extraction
+                primary_skills = ', '.join(technical_skills_list[:15])  # Top 15 technical skills
                 
                 domain = self.extract_domain(resume_text)
                 education_info = self.extract_education(resume_text)

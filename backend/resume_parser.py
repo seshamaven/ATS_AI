@@ -92,7 +92,7 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Extract all recognized technical skills (programming languages, frameworks, databases, tools, cloud platforms, etc.) that appear in the skills or related sections of a resume.
+7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed ANYWHERE in the resume. Include EVERY skill mentioned.
 
    🔍 EXTRACTION LOGIC:
    
@@ -106,6 +106,11 @@ EXTRACTION GUIDELINES:
    - Look for patterns like "Python, SQL, Django, AWS" (short technology names separated by commas)
    - These are often present without a labeled header
    
+   Scan Entire Resume:
+   - Search through ALL sections of the resume (Experience, Projects, Education, Summary, etc.)
+   - Extract any recognized technical terms that appear anywhere in the resume text
+   - Match each found term against the predefined TECHNICAL_SKILLS list
+   
    ⚙️ EXTRACTION RULES:
    
    ✅ What to Extract:
@@ -116,24 +121,27 @@ EXTRACTION GUIDELINES:
    - DevOps / Tools: Docker, Jenkins, Git, Terraform, etc.
    - Visualization / Analytics: Power BI, Tableau, Pandas, NumPy, etc.
    - ERP / CRM / Low-code: SAP, Salesforce, Power Apps, Business Central, etc.
+   - Technologies: HTML5, CSS3, JavaScript, Visual Studio, SVN, etc.
    
    ❌ Do NOT Extract:
-   - Verbs or actions: "developed", "implemented", "managed", "created"
-   - Responsibilities or sentences from experience sections
+   - Verbs or actions: "developed", "implemented", "managed", "created", "tested"
+   - Phrases like "responsible for", "worked on", "experience in"
+   - General English terms not representing a tech skill
    - Generic phrases: "unit testing", "go" (if it's not "Go" language), "express" (unless "Express.js")
    - Descriptive terms: "applications", "frameworks", "technologies" (alone)
-   - Full sentences or bullet points from work experience
    
    🧠 Identification Strategy:
    - Focus first on sections near headers that mention "Skills", "Technical", or "Proficiencies"
    - If no explicit section exists, scan for comma-separated lists of short, technology-like words
+   - Search the ENTIRE resume text for any mentioned technical skills
    - Cross-check each found term against the predefined list of recognized technical_skills
+   - Use case-insensitive whole-word matching to identify skills
    - Return unique, properly capitalized skill names
    - Skills are usually 1-3 words, not full sentences
    
    EXAMPLES:
-   ✅ CORRECT: ["Python", "JavaScript", "SQL", "Azure", "ASP.NET", "HTML5", "Docker", "React", "MySQL"]
-   ❌ WRONG: ["developed", "implemented unit testing", "worked on applications", "go", "unit", "express"] 
+   ✅ CORRECT: ["Python", "C#", "ASP.NET", ".NET Core", "SQL Server", "HTML5", "CSS3", "JavaScript", "Azure", "Visual Studio", "SVN"]
+   ❌ WRONG: ["developed", "implemented", "responsible for", "worked on", "experience in", "unit testing", "applications"] 
    ✅ CORRECT: ["Go"] (as programming language), ["Express.js"] (as framework), ["Power BI"] (as visualization tool)
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
@@ -694,6 +702,26 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
+    def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: int = 15) -> List[str]:
+        """Extract skills from resume text using word-boundary matching with TECHNICAL_SKILLS."""
+        logger.warning("No skills found with strict filtering. Trying word-boundary matching from entire resume text...")
+        resume_text_lower = resume_text.lower()
+        
+        # Use case-insensitive whole-word matching for each skill in TECHNICAL_SKILLS
+        for skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
+            skill_lower = skill.lower()
+            # Match whole words only (case-insensitive) using word boundaries
+            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+            if re.search(pattern, resume_text_lower):
+                if skill_lower not in existing_skills_set:
+                    existing_skills.append(skill)
+                    existing_skills_set.add(skill_lower)
+                    logger.info(f"Added skill via word-boundary matching: {skill}")
+                    if len(existing_skills) >= max_skills:  # Stop after finding max skills
+                        break
+        
+        return existing_skills
+    
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
         """Extract technical and soft skills."""
         text_lower = text.lower()
@@ -1048,18 +1076,11 @@ Resume Text (look for name in FIRST FEW LINES):
                     if skill_lower not in self.TECHNICAL_SKILLS:
                         secondary_skills.append(skill)
                 
-                # If we still have no skills, try a very lenient approach - extract common tech terms
+                # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
                 if not technical_skills:
-                    logger.warning("No skills found with strict filtering. Trying lenient extraction from entire resume text...")
-                    # Extract from entire text using a lenient approach
-                    for tech_skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
-                        if tech_skill in resume_text.lower():
-                            if tech_skill not in technical_skills_lower:
-                                technical_skills.append(tech_skill)
-                                technical_skills_lower.add(tech_skill)
-                                logger.info(f"Added skill via lenient extraction: {tech_skill}")
-                                if len(technical_skills) >= 15:  # Stop after finding 15 skills
-                                    break
+                    technical_skills = self._extract_skills_from_text_with_word_boundaries(
+                        resume_text, technical_skills, technical_skills_lower, max_skills=15
+                    )
                 
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills[:15]) if technical_skills else ''  # Top 15 technical skills
@@ -1159,17 +1180,11 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"Filtered to {len(technical_skills_list)} technical skills from {len(all_extracted_skills)} extracted skills")
                 
-                # If we still have no skills, try a very lenient approach - extract common tech terms
+                # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
                 if not technical_skills_list:
-                    logger.warning("No skills found with strict filtering. Trying lenient extraction from entire resume text...")
-                    for tech_skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
-                        if tech_skill in resume_text.lower():
-                            if tech_skill not in technical_skills_set:
-                                technical_skills_list.append(tech_skill)
-                                technical_skills_set.add(tech_skill)
-                                logger.info(f"Added skill via lenient extraction: {tech_skill}")
-                                if len(technical_skills_list) >= 15:  # Stop after finding 15 skills
-                                    break
+                    technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
+                        resume_text, technical_skills_list, technical_skills_set, max_skills=15
+                    )
                 
                 # Format primary_skills after potential lenient extraction
                 primary_skills = ', '.join(technical_skills_list[:15]) if technical_skills_list else ''

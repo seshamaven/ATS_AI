@@ -92,35 +92,49 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Extract ONLY recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) that appear in the Skills/Skill Profile section of the resume. 
+7. technical_skills – Extract all recognized technical skills (programming languages, frameworks, databases, tools, cloud platforms, etc.) that appear in the skills or related sections of a resume.
 
-   CRITICAL RULES:
-   - ONLY extract skills that are explicitly listed in a "Skills", "Technical Skills", "Skill Profile", "Core Competencies", or similar section
-   - ONLY include actual technology names (e.g., "Python", "SQL", "Azure", "JavaScript", "HTML5", "ASP.NET", "Docker", "React")
-   - DO NOT extract from job descriptions or responsibilities (e.g., "implemented unit testing" → do NOT extract "unit testing")
-   - DO NOT extract action phrases (e.g., "developed applications" → do NOT extract "developed applications")
-   - DO NOT extract generic terms (e.g., "go", "unit", "express" as standalone words - these must be "Go" programming language, "Unit Testing" technique, or "Express.js" framework)
+   🔍 EXTRACTION LOGIC:
    
-   WHAT TO EXTRACT:
-   - Programming languages: Python, Java, JavaScript, C#, Go, Ruby, etc.
-   - Frameworks: React, Django, ASP.NET, Express.js, Spring, etc.
-   - Databases: MySQL, SQL Server, MongoDB, PostgreSQL, etc.
-   - Cloud platforms: AWS, Azure, GCP, etc.
-   - Tools: Visual Studio, Docker, Jenkins, Git, etc.
-   - Technologies: HTML5, CSS, JavaScript, jQuery, Bootstrap, etc.
+   Primary Search:
+   - Extract skills from sections with headers such as: "Skills", "Technical Skills", "Skill Set", "Technical Summary", 
+     "Technical Expertise", "Core Competencies", "Proficiencies", "Tools & Technologies"
+   - These sections typically contain lists of technology names separated by commas, semicolons, or bullets
    
-   WHAT NOT TO EXTRACT:
-   - Verbs and actions: "developed", "implemented", "managed", "created"
-   - Responsibilities: "performed unit testing", "wrote documentation"
-   - Generic phrases: "unit testing" (unless it's specifically a skill in the skills section)
-   - Full sentences or descriptions
+   Fallback Search:
+   - If no explicit skills section is found, look for skill-like lists that contain mostly short, comma-separated technology names
+   - Look for patterns like "Python, SQL, Django, AWS" (short technology names separated by commas)
+   - These are often present without a labeled header
+   
+   ⚙️ EXTRACTION RULES:
+   
+   ✅ What to Extract:
+   - Programming Languages: Python, Java, JavaScript, C#, Go, Ruby, etc.
+   - Frameworks / Libraries: React, Django, ASP.NET, Express.js, Spring, Angular, etc.
+   - Databases / Data Tools: MySQL, PostgreSQL, MongoDB, Redis, Oracle, SQL Server, etc.
+   - Cloud Platforms: AWS, Azure, GCP, etc.
+   - DevOps / Tools: Docker, Jenkins, Git, Terraform, etc.
+   - Visualization / Analytics: Power BI, Tableau, Pandas, NumPy, etc.
+   - ERP / CRM / Low-code: SAP, Salesforce, Power Apps, Business Central, etc.
+   
+   ❌ Do NOT Extract:
+   - Verbs or actions: "developed", "implemented", "managed", "created"
+   - Responsibilities or sentences from experience sections
+   - Generic phrases: "unit testing", "go" (if it's not "Go" language), "express" (unless "Express.js")
+   - Descriptive terms: "applications", "frameworks", "technologies" (alone)
+   - Full sentences or bullet points from work experience
+   
+   🧠 Identification Strategy:
+   - Focus first on sections near headers that mention "Skills", "Technical", or "Proficiencies"
+   - If no explicit section exists, scan for comma-separated lists of short, technology-like words
+   - Cross-check each found term against the predefined list of recognized technical_skills
+   - Return unique, properly capitalized skill names
+   - Skills are usually 1-3 words, not full sentences
    
    EXAMPLES:
-   ✅ CORRECT: ["Python", "JavaScript", "SQL", "Azure", "ASP.NET", "HTML5", "CSS"]
-   ❌ WRONG: ["unit testing", "go", "express"] (when these are from responsibilities, not skills)
-   ✅ CORRECT: ["Go"] (as programming language), ["Express.js"] (as framework)
-   
-   Look ONLY in the Skills section - do NOT extract from job descriptions, experience sections, or achievements.
+   ✅ CORRECT: ["Python", "JavaScript", "SQL", "Azure", "ASP.NET", "HTML5", "Docker", "React", "MySQL"]
+   ❌ WRONG: ["developed", "implemented unit testing", "worked on applications", "go", "unit", "express"] 
+   ✅ CORRECT: ["Go"] (as programming language), ["Express.js"] (as framework), ["Power BI"] (as visualization tool)
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 
@@ -645,10 +659,15 @@ Resume Text (look for name in FIRST FEW LINES):
     
     def extract_skills_section(self, text: str) -> Optional[str]:
         """Extract the Skills section content."""
-        # Look for Skills section with various patterns
+        # Look for Skills section with various patterns (Primary Search)
         patterns = [
             r'(?i)(?:skill profile|technical skills|skills|core competencies?)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
             r'(?i)(?:proficiencies?|competencies?)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:technical skills|skill set|technical summary|technical expertise|core competencies?|proficiencies|tools & technologies|tools and technologies)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:skill set)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:technical summary)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:technical expertise)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
+            r'(?i)(?:tools & technologies|tools and technologies)[:\s]+(.*?)(?=\n\n|\n[A-Z]|$)',
         ]
         
         for pattern in patterns:
@@ -656,6 +675,21 @@ Resume Text (look for name in FIRST FEW LINES):
             if match:
                 skills_text = match.group(1).strip()
                 if len(skills_text) > 10:  # Make sure it's substantial
+                    logger.info("Found skills section using primary search")
+                    return skills_text
+        
+        # Fallback Search: Look for skill-like lists (comma-separated technology names)
+        # Pattern: Short words (2-15 chars) separated by commas, often without headers
+        fallback_pattern = r'(?:^|\n)([A-Za-z0-9+#\.\-]{1,25}(?:,?\s+[A-Za-z0-9+#\.\-]{1,25}){3,20})'
+        match = re.search(fallback_pattern, text, re.MULTILINE)
+        if match:
+            skills_text = match.group(1).strip()
+            if len(skills_text) > 10:
+                # Verify it looks like a skills list (not sentences)
+                words = re.split(r'[,;•\n]', skills_text)
+                avg_word_length = sum(len(w.strip()) for w in words) / max(len(words), 1)
+                if avg_word_length < 15:  # Skills are usually short words
+                    logger.info("Found skills section using fallback search")
                     return skills_text
         
         return None
@@ -1014,13 +1048,6 @@ Resume Text (look for name in FIRST FEW LINES):
                     if skill_lower not in self.TECHNICAL_SKILLS:
                         secondary_skills.append(skill)
                 
-                # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
-                primary_skills = ', '.join(technical_skills[:15])  # Top 15 technical skills
-                secondary_skills_str = ', '.join(secondary_skills)  # Non-technical skills
-                all_skills_str = ', '.join(all_skills_list)
-                
-                logger.info(f"Filtered to {len(technical_skills)} technical skills total (AI: {len(ai_technical_skills)}, Regex: {len(all_extracted_skills)})")
-                
                 # If we still have no skills, try a very lenient approach - extract common tech terms
                 if not technical_skills:
                     logger.warning("No skills found with strict filtering. Trying lenient extraction from entire resume text...")
@@ -1033,6 +1060,17 @@ Resume Text (look for name in FIRST FEW LINES):
                                 logger.info(f"Added skill via lenient extraction: {tech_skill}")
                                 if len(technical_skills) >= 15:  # Stop after finding 15 skills
                                     break
+                
+                # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
+                primary_skills = ', '.join(technical_skills[:15]) if technical_skills else ''  # Top 15 technical skills
+                secondary_skills_str = ', '.join(secondary_skills)  # Non-technical skills
+                all_skills_str = ', '.join(all_skills_list) if all_skills_list else ''
+                
+                logger.info(f"✓ Filtered to {len(technical_skills)} technical skills total (AI: {len(ai_technical_skills)}, Regex: {len(all_extracted_skills)})")
+                if primary_skills:
+                    logger.info(f"✓ Primary skills extracted: {primary_skills[:100]}{'...' if len(primary_skills) > 100 else ''}")
+                else:
+                    logger.warning("⚠ No primary skills found!")
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
@@ -1134,7 +1172,13 @@ Resume Text (look for name in FIRST FEW LINES):
                                     break
                 
                 # Format primary_skills after potential lenient extraction
-                primary_skills = ', '.join(technical_skills_list[:15])  # Top 15 technical skills
+                primary_skills = ', '.join(technical_skills_list[:15]) if technical_skills_list else ''
+                
+                logger.info(f"✓ Filtered to {len(technical_skills_list)} technical skills total (Regex: {len(all_extracted_skills)})")
+                if primary_skills:
+                    logger.info(f"✓ Primary skills extracted: {primary_skills[:100]}{'...' if len(primary_skills) > 100 else ''}")
+                else:
+                    logger.warning("⚠ No primary skills found!")
                 
                 domain = self.extract_domain(resume_text)
                 education_info = self.extract_education(resume_text)

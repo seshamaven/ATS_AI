@@ -92,16 +92,26 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Extract all recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) mentioned in the Skills, Skill Profile, Technical Skills, Core Competencies, Technologies, or similar sections of the resume. If a clearly labeled section is not found, also extract any comma-separated technology names listed near project descriptions or summaries.
+7. technical_skills – Extract ALL technical skills listed anywhere in the resume.
 
-   ✅ Extract only actual technical terms that match known technologies (e.g., Python, C#, ASP.NET, .NET Core, SQL Server, HTML5, CSS3, JavaScript, Azure, Visual Studio, SVN)
+   CRITICAL: Search through ALL sections of the resume (Skills, Experience, Projects, Education, Summary, etc.) and extract EVERY technical skill mentioned.
    
-   ❌ Do NOT extract:
-   - Verbs or actions: developed, implemented, managed, tested
-   - Phrases like "responsible for", "worked on", "experience in"
-   - General English terms not representing a tech skill
+   What to Extract (examples):
+   - Programming Languages: Python, Java, JavaScript, C#, Go, Ruby, Swift, Kotlin, etc.
+   - Frameworks: React, Django, ASP.NET, .NET Core, Express.js, Spring, Angular, Vue, etc.
+   - Databases: MySQL, PostgreSQL, MongoDB, Redis, Oracle, SQL Server, etc.
+   - Cloud Platforms: AWS, Azure, GCP, etc.
+   - DevOps/Tools: Docker, Jenkins, Git, GitHub, Terraform, Kubernetes, etc.
+   - Technologies: HTML5, CSS3, JavaScript, jQuery, Bootstrap, Visual Studio, VS Code, etc.
+   - ERP/CRM: SAP, Salesforce, Power Apps, etc.
+   - Any other recognizable technology name
    
-   Search through ALL sections (Skills, Experience, Projects, Education, Summary) and match each found term against the predefined TECHNICAL_SKILLS list using word-boundary matching.
+   Do NOT Extract:
+   - Verbs: "developed", "implemented", "managed", "created", "tested"
+   - Phrases: "responsible for", "worked on", "experience in"
+   - Generic terms: "unit testing", "applications", "frameworks" (unless explicitly listed as skills)
+   
+   IMPORTANT: Extract skills as an ARRAY of strings, e.g., ["Python", "JavaScript", "SQL", "AWS", "Docker"]
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 
@@ -919,114 +929,60 @@ Resume Text (look for name in FIRST FEW LINES):
                 ai_secondary_skills = ai_data.get('secondary_skills', [])
                 all_skills_list = ai_data.get('all_skills', [])
                 
+                logger.info(f"AI extracted {len(ai_technical_skills)} technical skills")
+                
                 # Ensure we have lists
                 if isinstance(ai_technical_skills, str):
                     ai_technical_skills = [s.strip() for s in ai_technical_skills.split(',') if s.strip()] if ai_technical_skills else []
                 if isinstance(ai_secondary_skills, str):
                     ai_secondary_skills = [s.strip() for s in ai_secondary_skills.split(',') if s.strip()] if ai_secondary_skills else []
                 
-                # Common responsibility phrases that should be rejected
-                responsibility_phrases = [
-                    'unit testing', 'integration testing', 'system testing', 'end to end testing',
-                    'test driven development', 'tdd', 'bdd', 'behavior driven development',
-                    'agile methodology', 'scrum methodology', 'waterfall methodology',
-                    'performed unit testing', 'implemented unit testing', 'wrote unit tests'
-                ]
-                
-                # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
+                # Collect all valid technical skills
                 technical_skills = []
-                technical_skills_lower = set()  # For deduplication
+                technical_skills_lower = set()
                 
-                # CRITICAL: Get the Skills section to verify skills are actually listed there
-                skills_section = self.extract_skills_section(resume_text)
-                skills_section_text = skills_section.lower() if skills_section else ""
+                # First, process AI-extracted skills
+                for skill in ai_technical_skills:
+                    if not skill or not isinstance(skill, str):
+                        continue
+                    skill_lower = skill.lower().strip()
+                    
+                    # Check if exact match in TECHNICAL_SKILLS
+                    if skill_lower in self.TECHNICAL_SKILLS:
+                        if skill_lower not in technical_skills_lower:
+                            technical_skills.append(skill.strip())
+                            technical_skills_lower.add(skill_lower)
+                            logger.info(f"✓ Added AI skill: {skill}")
+                    else:
+                        # Try fuzzy/partial matching
+                        matched = False
+                        for tech_skill in self.TECHNICAL_SKILLS:
+                            if skill_lower in tech_skill or tech_skill in skill_lower:
+                                if tech_skill not in technical_skills_lower:
+                                    technical_skills.append(tech_skill)
+                                    technical_skills_lower.add(tech_skill)
+                                    logger.info(f"✓ Added AI skill (fuzzy): {tech_skill} (matched {skill})")
+                                    matched = True
+                                break
+                        if not matched:
+                            logger.debug(f"AI skill not matched: {skill}")
                 
-                # ALWAYS try regex fallback as additional source of skills
-                logger.info(f"AI extracted {len(ai_technical_skills)} skills. Trying regex fallback for additional skills...")
+                # Then, try regex fallback for additional skills
+                logger.info(f"Trying regex fallback for additional skills...")
                 regex_skills = self.extract_skills(resume_text)
                 all_extracted_skills = regex_skills.get('all_skills', [])
                 logger.info(f"Regex extracted {len(all_extracted_skills)} potential skills")
                 
                 for skill in all_extracted_skills:
-                    skill_lower = skill.lower().strip()
-                    
-                    # Try exact match first
-                    if skill_lower in self.TECHNICAL_SKILLS:
-                        if skill_lower not in technical_skills_lower:
-                            technical_skills.append(skill)
-                            technical_skills_lower.add(skill_lower)
-                            logger.info(f"Added skill from regex: {skill}")
-                    else:
-                        # Try fuzzy matching - check if skill is contained in any technical skill or vice versa
-                        for tech_skill in self.TECHNICAL_SKILLS:
-                            if skill_lower in tech_skill or tech_skill in skill_lower:
-                                # Don't add duplicates
-                                if tech_skill not in technical_skills_lower:
-                                    technical_skills.append(tech_skill)
-                                    technical_skills_lower.add(tech_skill)
-                                    logger.info(f"Added skill from regex (fuzzy match): {tech_skill} (matched {skill})")
-                                break
-                
-                for skill in ai_technical_skills:
-                    skill_lower = skill.lower().strip()
-                    
-                    # Reject responsibility-like phrases unless they're explicitly in TECHNICAL_SKILLS
-                    if skill_lower in responsibility_phrases and skill_lower not in self.TECHNICAL_SKILLS:
-                        logger.warning(f"Rejected responsibility phrase as skill: '{skill}'")
+                    if not skill or not isinstance(skill, str):
                         continue
+                    skill_lower = skill.lower().strip()
                     
-                    # Check if this skill is in our TECHNICAL_SKILLS list
-                    if skill_lower in self.TECHNICAL_SKILLS:
-                        # CRITICAL: Try to verify skill is in Skills section, but don't be too strict
-                        # If Skills section found AND skill not in it, warn but don't necessarily skip
-                        skill_found_in_section = False
-                        if skills_section_text:
-                            # Try exact word boundary match first
-                            exact_pattern = r'\b' + re.escape(skill_lower) + r'\b'
-                            # Try substring match (for cases like "c#" in "c#.net")
-                            substring_pattern = re.escape(skill_lower)
-                            
-                            exact_match = re.search(exact_pattern, skills_section_text, re.IGNORECASE)
-                            substring_match = re.search(substring_pattern, skills_section_text, re.IGNORECASE)
-                            
-                            # Special handling for skills with special characters (#, ., etc.)
-                            if exact_match or substring_match:
-                                skill_found_in_section = True
-                            elif skill_lower in skills_section_text:
-                                skill_found_in_section = True
-                        
-                        # If skill not found in Skills section, include anyway but warn
-                        # (Because Skills section might be incomplete or use different formatting)
-                        if skills_section_text and not skill_found_in_section:
-                            logger.info(f"Skill '{skill}' not found in Skills section, but including anyway (TECHNICAL_SKILLS match)")
-                        
-                        if skill_lower not in technical_skills_lower:
-                            technical_skills.append(skill)
-                            technical_skills_lower.add(skill_lower)
-                    # Also check for partial matches (e.g., "Python programming" should match "python")
-                    else:
-                        # Try to find match in TECHNICAL_SKILLS
-                        for tech_skill in self.TECHNICAL_SKILLS:
-                            if skill_lower in tech_skill or tech_skill in skill_lower:
-                                # CRITICAL: Try to verify skill is in Skills section, but be lenient
-                                skill_found_in_section = False
-                                if skills_section_text:
-                                    exact_pattern = r'\b' + re.escape(tech_skill) + r'\b'
-                                    substring_pattern = re.escape(tech_skill)
-                                    
-                                    if re.search(exact_pattern, skills_section_text, re.IGNORECASE) or \
-                                       re.search(substring_pattern, skills_section_text, re.IGNORECASE) or \
-                                       tech_skill in skills_section_text:
-                                        skill_found_in_section = True
-                                
-                                # Include the skill even if not in Skills section (advisory check)
-                                if skills_section_text and not skill_found_in_section:
-                                    logger.info(f"Partial match '{tech_skill}' not found in Skills section, but including anyway")
-                                
-                                if tech_skill not in technical_skills_lower:
-                                    technical_skills.append(tech_skill)
-                                    technical_skills_lower.add(tech_skill)
-                                break
+                    # Only add if not already found
+                    if skill_lower in self.TECHNICAL_SKILLS and skill_lower not in technical_skills_lower:
+                        technical_skills.append(skill.strip())
+                        technical_skills_lower.add(skill_lower)
+                        logger.info(f"✓ Added regex skill: {skill}")
                 
                 # Secondary skills: everything that's NOT in TECHNICAL_SKILLS
                 secondary_skills = []

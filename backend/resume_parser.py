@@ -92,57 +92,16 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed ANYWHERE in the resume. Include EVERY skill mentioned.
+7. technical_skills – Extract all recognized technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) mentioned in the Skills, Skill Profile, Technical Skills, Core Competencies, Technologies, or similar sections of the resume. If a clearly labeled section is not found, also extract any comma-separated technology names listed near project descriptions or summaries.
 
-   🔍 EXTRACTION LOGIC:
+   ✅ Extract only actual technical terms that match known technologies (e.g., Python, C#, ASP.NET, .NET Core, SQL Server, HTML5, CSS3, JavaScript, Azure, Visual Studio, SVN)
    
-   Primary Search:
-   - Extract skills from sections with headers such as: "Skills", "Technical Skills", "Skill Set", "Technical Summary", 
-     "Technical Expertise", "Core Competencies", "Proficiencies", "Tools & Technologies"
-   - These sections typically contain lists of technology names separated by commas, semicolons, or bullets
-   
-   Fallback Search:
-   - If no explicit skills section is found, look for skill-like lists that contain mostly short, comma-separated technology names
-   - Look for patterns like "Python, SQL, Django, AWS" (short technology names separated by commas)
-   - These are often present without a labeled header
-   
-   Scan Entire Resume:
-   - Search through ALL sections of the resume (Experience, Projects, Education, Summary, etc.)
-   - Extract any recognized technical terms that appear anywhere in the resume text
-   - Match each found term against the predefined TECHNICAL_SKILLS list
-   
-   ⚙️ EXTRACTION RULES:
-   
-   ✅ What to Extract:
-   - Programming Languages: Python, Java, JavaScript, C#, Go, Ruby, etc.
-   - Frameworks / Libraries: React, Django, ASP.NET, Express.js, Spring, Angular, etc.
-   - Databases / Data Tools: MySQL, PostgreSQL, MongoDB, Redis, Oracle, SQL Server, etc.
-   - Cloud Platforms: AWS, Azure, GCP, etc.
-   - DevOps / Tools: Docker, Jenkins, Git, Terraform, etc.
-   - Visualization / Analytics: Power BI, Tableau, Pandas, NumPy, etc.
-   - ERP / CRM / Low-code: SAP, Salesforce, Power Apps, Business Central, etc.
-   - Technologies: HTML5, CSS3, JavaScript, Visual Studio, SVN, etc.
-   
-   ❌ Do NOT Extract:
-   - Verbs or actions: "developed", "implemented", "managed", "created", "tested"
+   ❌ Do NOT extract:
+   - Verbs or actions: developed, implemented, managed, tested
    - Phrases like "responsible for", "worked on", "experience in"
    - General English terms not representing a tech skill
-   - Generic phrases: "unit testing", "go" (if it's not "Go" language), "express" (unless "Express.js")
-   - Descriptive terms: "applications", "frameworks", "technologies" (alone)
    
-   🧠 Identification Strategy:
-   - Focus first on sections near headers that mention "Skills", "Technical", or "Proficiencies"
-   - If no explicit section exists, scan for comma-separated lists of short, technology-like words
-   - Search the ENTIRE resume text for any mentioned technical skills
-   - Cross-check each found term against the predefined list of recognized technical_skills
-   - Use case-insensitive whole-word matching to identify skills
-   - Return unique, properly capitalized skill names
-   - Skills are usually 1-3 words, not full sentences
-   
-   EXAMPLES:
-   ✅ CORRECT: ["Python", "C#", "ASP.NET", ".NET Core", "SQL Server", "HTML5", "CSS3", "JavaScript", "Azure", "Visual Studio", "SVN"]
-   ❌ WRONG: ["developed", "implemented", "responsible for", "worked on", "experience in", "unit testing", "applications"] 
-   ✅ CORRECT: ["Go"] (as programming language), ["Express.js"] (as framework), ["Power BI"] (as visualization tool)
+   Search through ALL sections (Skills, Experience, Projects, Education, Summary) and match each found term against the predefined TECHNICAL_SKILLS list using word-boundary matching.
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 

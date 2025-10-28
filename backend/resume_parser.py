@@ -86,7 +86,7 @@ EXTRACTION GUIDELINES:
 
 3. phone_number – Include complete phone number if found.
 
-4. total_experience – Calculate total professional experience in full years ONLY by analyzing actual job timelines (start–end dates) from the Experience section, merging overlaps, treating "Present"/"Current" as today's date, and ignoring months or inflated summary claims.
+4. total_experience – Calculate accurately based on career timeline and roles. Cross-check start and end dates to avoid inflated values (e.g., 32 should be 23 if that's the correct calculation).
 
 5. current_company – Capture the current/most recent employer's name.
 
@@ -729,99 +729,51 @@ Resume Text (look for name in FIRST FEW LINES):
         }
     
     def extract_experience(self, text: str) -> float:
-        """Calculate total professional experience (full years) by merging job timelines.
-
-        - Parses start–end ranges, treats Present/Current as today.
-        - Merges overlapping intervals across roles/companies.
-        - Floors to integer years; ignores months and summary claims.
-        """
-        return float(self._calculate_experience_from_timelines(text))
+        """Extract total years of experience."""
+        # Look for experience statements
+        patterns = [
+            r'(?i)(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
+            r'(?i)experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)',
+            r'(?i)total\s+experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                try:
+                    return float(matches[0])
+                except ValueError:
+                    pass
+        
+        # Alternative: Calculate from work history
+        experience_years = self._calculate_experience_from_dates(text)
+        return experience_years
     
-    def _calculate_experience_from_timelines(self, text: str) -> int:
-        """Sum merged job intervals and floor to full years."""
-        experience_text = text
-        try:
-            section_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
-            if section_match and section_match.group(2):
-                experience_text = section_match.group(2)
-        except Exception:
-            pass
-
-        month_regex = r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
-        year_regex = r'(?:19|20)\d{2}'
-        mon_year = rf'(?:{month_regex}[\.\s,/-]*{year_regex}|\d{{1,2}}[\-/]{year_regex}|{year_regex})'
-        range_sep = r'(?:\-|–|—|to|\u2013|\u2014)'
-        range_pattern = re.compile(rf'\b({mon_year})\s*{range_sep}\s*(present|current|{mon_year})\b', re.IGNORECASE)
-
-        intervals: List[List[datetime]] = []
-        for match in range_pattern.finditer(experience_text):
-            start_str = match.group(1)
-            end_str = match.group(2)
-            start_dt = self._parse_date_token(start_str, is_start=True)
-            end_dt = datetime.now() if re.match(r'(?i)(present|current)', end_str or '') else self._parse_date_token(end_str, is_start=False)
-            if start_dt and end_dt and end_dt >= start_dt:
-                intervals.append([start_dt, end_dt])
-
-        if not intervals:
-            years = [int(y) for y in re.findall(year_regex, experience_text)]
-            if years:
-                min_year = min(years)
-                max_year = min(max(years), datetime.now().year)
-                return max(0, int((datetime(max_year, 12, 31) - datetime(min_year, 1, 1)).days // 365))
-            return 0
-
-        intervals.sort(key=lambda iv: iv[0])
-        merged: List[List[datetime]] = []
-        for start, end in intervals:
-            if not merged or start > merged[-1][1]:
-                merged.append([start, end])
-            else:
-                merged[-1][1] = max(merged[-1][1], end)
-
-        total_days = 0
-        for start, end in merged:
-            total_days += (end - start).days
-        return max(0, int(total_days // 365))
-
-    def _parse_date_token(self, token: str, is_start: bool) -> Optional[datetime]:
-        """Parse tokens like 'Jan 2018', '2019', '02/2020' into datetimes.
-        Defaults: start -> first day, end -> ~end of month. Months ignored in final floor.
-        """
-        if not token:
-            return None
-        t = token.strip().lower().replace('\u2013', '-').replace('\u2014', '-')
-        month_map = {
-            'jan': 1, 'january': 1,
-            'feb': 2, 'february': 2,
-            'mar': 3, 'march': 3,
-            'apr': 4, 'april': 4,
-            'may': 5,
-            'jun': 6, 'june': 6,
-            'jul': 7, 'july': 7,
-            'aug': 8, 'august': 8,
-            'sep': 9, 'sept': 9, 'september': 9,
-            'oct': 10, 'october': 10,
-            'nov': 11, 'november': 11,
-            'dec': 12, 'december': 12,
-        }
-        m = re.search(r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*[\.,/\-]*\s*((?:19|20)\d{2})', t, re.IGNORECASE)
-        if m:
-            month = month_map[m.group(1)[:3]]
-            year = int(m.group(2))
-            day = 1 if is_start else 28
-            return datetime(year, month, day)
-        m2 = re.search(r'(\d{1,2})[\-/](?:0?)(\d{1,2})?([\-/])?((?:19|20)\d{2})', t)
-        if m2:
-            month = int(m2.group(1))
-            year = int(m2.group(4))
-            day = 1 if is_start else 28
-            if 1 <= month <= 12:
-                return datetime(year, month, day)
-        y = re.search(r'((?:19|20)\d{2})', t)
-        if y:
-            year = int(y.group(1))
-            return datetime(year, 1, 1) if is_start else datetime(year, 12, 31)
-        return None
+    def _calculate_experience_from_dates(self, text: str) -> float:
+        """Calculate experience from date ranges in work history."""
+        # Look for date patterns like "Jan 2020 - Present" or "2018 - 2020"
+        date_pattern = r'(?i)(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|(?:\d{4})'
+        dates = re.findall(date_pattern, text)
+        
+        if len(dates) >= 2:
+            try:
+                # Extract years
+                years = []
+                for date_str in dates:
+                    year_match = re.search(r'\d{4}', date_str)
+                    if year_match:
+                        years.append(int(year_match.group()))
+                
+                if years:
+                    # Simple estimation: max year - min year
+                    current_year = datetime.now().year
+                    max_year = min(max(years), current_year)
+                    min_year = min(years)
+                    return max(0, max_year - min_year)
+            except Exception as e:
+                logger.warning(f"Error calculating experience from dates: {e}")
+        
+        return 0.0
     
     def extract_domain(self, text: str) -> Optional[str]:
         """Extract domain/industry."""
@@ -962,7 +914,7 @@ Resume Text (look for name in FIRST FEW LINES):
                                                 break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
-                experience = self.extract_experience(resume_text)
+                experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
                 
                 # Get skills from AI
                 ai_technical_skills = ai_data.get('technical_skills', [])

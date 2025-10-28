@@ -86,7 +86,7 @@ EXTRACTION GUIDELINES:
 
 3. phone_number – Include complete phone number if found.
 
-4. total_experience – Calculate accurately based on career timeline and roles. Cross-check start and end dates to avoid inflated values (e.g., 32 should be 23 if that's the correct calculation).
+4. total_experience – Identify total professional experience in full years from any available source: prioritize explicit mentions (e.g., "3+ Years of experience", "Over 2 years in IT", "Nearly 5 years"), otherwise calculate from job timelines (start–end dates) in the Experience section, merging overlapping periods, treating "Present/Till Date" as the current date, and ignoring months or duplicate counts.
 
 5. current_company – Capture the current/most recent employer's name.
 
@@ -729,33 +729,65 @@ Resume Text (look for name in FIRST FEW LINES):
         }
     
     def extract_experience(self, text: str) -> float:
-        """Extract total years of experience."""
-        # Look for experience statements
-        patterns = [
+        """Calculate total professional experience (full years): prioritize explicit mentions,
+        otherwise compute from job timelines.
+
+        - First tries explicit mentions like "3+ Years of experience", "Over 2 years", "Nearly 5 years"
+        - Falls back to parsing start-end dates, merging overlaps, treating Present/Till Date as today
+        - Floors to integer years
+        """
+        # Priority 1: Look for explicit experience mentions
+        explicit_patterns = [
+            r'(?i)(\d+)\s*[+]\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
             r'(?i)(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
+            r'(?i)(?:around|over|nearly|almost|about)\s+(\d+)\+?\s*(?:years?|yrs?)',
             r'(?i)experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)',
-            r'(?i)total\s+experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)'
+            r'(?i)total\s+experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)',
+            r'(?i)(?:over|nearly|almost|about)\s+(\d+)\+?\s*(?:years?|yrs?)',
+            r'(?i)(\d+)\+?\s*(?:years?|yrs?)(?:\s+in)?\s+(?:the|it|software|technology|industry)'
         ]
         
-        for pattern in patterns:
+        for pattern in explicit_patterns:
             matches = re.findall(pattern, text)
             if matches:
                 try:
-                    return float(matches[0])
-                except ValueError:
+                    value = float(matches[0])
+                    if 0 <= value <= 50:  # Reasonable bounds
+                        logger.info(f"Found explicit experience mention: {value} years")
+                        return value
+                except (ValueError, TypeError):
                     pass
         
-        # Alternative: Calculate from work history
-        experience_years = self._calculate_experience_from_dates(text)
-        return experience_years
+        # Priority 2: Calculate from timeline-based job dates
+        logger.info("No explicit mention found, calculating from job timelines...")
+        return self._calculate_experience_from_dates(text)
     
     def _calculate_experience_from_dates(self, text: str) -> float:
-        """Calculate experience from date ranges in work history."""
-        # Look for date patterns like "Jan 2020 - Present" or "2018 - 2020"
-        date_pattern = r'(?i)(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}|(?:\d{4})'
-        dates = re.findall(date_pattern, text)
+        """Calculate experience from date ranges in work history.
+        Handles "Present/Current/Till Date" as today and merges overlapping periods.
+        """
+        # Find Experience section if possible
+        experience_text = text
+        try:
+            section_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
+            if section_match and section_match.group(2):
+                experience_text = section_match.group(2)
+        except Exception:
+            pass
         
-        if len(dates) >= 2:
+        # Look for date patterns like "Jan 2020 - Present" or "2018 - 2020"
+        month_regex = r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
+        year_regex = r'(?:19|20)\d{2}'
+        date_pattern = rf'(?i){month_regex}\s+{year_regex}|{year_regex}'
+        dates = re.findall(date_pattern, experience_text)
+        
+        # Check for Present/Current/Till Date and add current date if found
+        has_present = bool(re.search(r'(?i)(present|current|till date)', experience_text))
+        if has_present:
+            current_date_str = datetime.now().strftime("%b %Y")
+            dates.append(current_date_str.lower())
+        
+        if len(dates) >= 1:
             try:
                 # Extract years
                 years = []
@@ -764,12 +796,15 @@ Resume Text (look for name in FIRST FEW LINES):
                     if year_match:
                         years.append(int(year_match.group()))
                 
-                if years:
-                    # Simple estimation: max year - min year
+                if years and len(years) >= 2:
+                    # Calculate span from earliest start to latest end
                     current_year = datetime.now().year
                     max_year = min(max(years), current_year)
                     min_year = min(years)
                     return max(0, max_year - min_year)
+                elif years and len(years) == 1 and has_present:
+                    # Single year + Present means from that year to now
+                    return max(0, current_year - years[0])
             except Exception as e:
                 logger.warning(f"Error calculating experience from dates: {e}")
         
@@ -914,7 +949,8 @@ Resume Text (look for name in FIRST FEW LINES):
                                                 break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
-                experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)
+                # Always use custom extraction to prioritize explicit mentions and properly merge timelines
+                experience = self.extract_experience(resume_text)
                 
                 # Get skills from AI
                 ai_technical_skills = ai_data.get('technical_skills', [])

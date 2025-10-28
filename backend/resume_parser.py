@@ -43,43 +43,44 @@ Analyze the provided resume text carefully and return a structured JSON with wel
 
 EXTRACTION GUIDELINES:
 
-1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John Smith", "VARRE DHANA LAKSHMI DURGA").
+1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John M. Smith", "VARRE DHANA LAKSHMI DURGA").
 
-   CRITICAL RULES FOR PDF HEADER EXTRACTION:
-   - The name is USUALLY AT THE VERY TOP of the resume — often in the PDF header, page margin, or metadata
-   - Check the first 2–5 lines of extracted text thoroughly
-   - Also inspect PDF metadata, title area, and header region if available
-   - The name typically consists of 2–3 capitalized words (first name + last name), sometimes with middle names or initials
-   - Look for names that appear BEFORE any section headers like "Education", "Experience", "Contact"
-   - In many resumes, the candidate name appears as the first or second line in the document
+   RULES FOR EXTRACTION:
+   - The name is almost always at the very top of the resume — usually line 1 or line 2
+   - The name line typically contains only 2–3 words in Title Case (e.g., Daniel Mindlin, John M. Smith, VARRE DHANA LAKSHMI DURGA)
+   - The name appears before any contact information (address, phone, email) or section headers (Education, Experience, etc.)
+   - The name should not contain punctuation like ., ,, /, or –
+   - The name should not include job titles, degrees, or descriptive text
 
-   IDENTIFICATION STRATEGY:
-   - Extract text from TOP 2–5 LINES of the resume body first
-   - Check HEADER REGION and page margins if available
-   - Check PDF METADATA TITLE if available
-   - Find the FIRST LINE containing 2–3 capitalized words that look like a person's name
-   - Ensure the name does NOT end with punctuation (periods, commas) or contain descriptive verbs
-   - If multiple candidates exist, prefer the one CLOSEST TO THE TOP MARGIN
-   - Common structure: NAME appears first, then contact info (email, phone), then sections
+   STEP-BY-STEP STRATEGY:
+   - Check Line 1: If it contains 2–4 words, all alphabetic, and written in Title Case → this is likely the name
+   - If Line 1 fails, check Line 2 or Line 3 using the same rule
+   - Stop once a valid name is found — do not scan further down the document
 
-   WHAT IS NOT A NAME (CRITICAL EXCLUSIONS):
-   - Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
-   - Academic degrees: "B.A. in History", "M.S. in Computer Science", "B.Tech", "PhD"
-   - Degree-related text containing: "degree", "in [Subject]", "completed", "while", "maintaining"
-   - Job titles: "Software Engineer", "Project Manager", "Data Analyst"
-   - Organization names: "Google LLC", "Infosys Limited", "Microsoft Corporation"
-   - Sentences or bullet points: "full course load.", "while maintaining", "in order to"
-   - Text ending with: periods (.), commas (,), or descriptive verbs ("maintaining", "completed", "achieved")
-   - Descriptive fragments: "while working", "for the", "as part of", "in a best"
+   WHAT TO REJECT (Never Treat as a Name):
+   - Section headers: Education, Experience, Skills, Contact, Objective, Summary
+   - Degrees: B.S. in Computer Science, B.Tech in EEE, M.S., Ph.D.
+   - Job titles or roles: Software Engineer, Project Manager, Data Analyst
+   - Organization names: Google LLC, Infosys Limited, University of California
+   - Lines with punctuation (commas, periods, dashes)
+   - Lines that include numeric characters, email addresses, or locations
 
-   A NAME IS:
-   - A human name like "Daniel Mindlin", "Priya Sharma", "VARRE DHANA LAKSHMI DURGA"
-   - Found in the HEADER region, first text block, or PDF title metadata
-   - Properly capitalized (Title Case or ALL CAPS)
-   - Clean with no extra punctuation at the end (no trailing commas or periods)
-   - Typically 2–3 words (4 words maximum for names with middle names)
-   - Contains only alphabetic characters, hyphens, or periods (for middle initials like "John M. Smith")
-   - Is the FIRST MAJOR identifying element before contact information or resume sections
+   EXAMPLES:
+   ✅ Correct Extraction:
+   Line 1: Daniel Mindlin → ✔ Full Name
+
+   ❌ Incorrect Extractions:
+   Line 2: 6056 Sunnycrest Drive – Oak Park, California → ✗ Address
+   Line 3: 1-(818)-665-8871 → ✗ Contact Info
+   Line 4: Education → ✗ Section Header
+   Line 5: B.S. in Statistical Data Science → ✗ Degree
+
+   EXTRACTION RULES:
+   - Check first line first (most common location for name)
+   - Look for 2–4 words in Title Case or ALL CAPS
+   - Must be alphabetic only (hyphens and periods allowed for middle initials)
+   - Stop searching after first 3 lines
+   - Reject anything with punctuation, numbers, or non-name patterns
 
 2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
 
@@ -136,20 +137,19 @@ EXTRACTION GUIDELINES:
 QUALITY & VALIDATION RULES FOR NAME EXTRACTION:
 - The name MUST reflect the actual candidate's personal name
 - The name field should NEVER contain:
-  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary", "Qualifications"
-  * Academic degrees: "B.A. in History", "M.S. in Computer Science", "B.Tech", "PhD", "MBA", "M.Tech"
-  * Degree patterns: anything containing "in [Subject]", "degree", "major", "minor", "completed"
-  * Job titles: "Software Engineer", "Data Analyst", "Manager", "Developer"
-  * Organization names: "Microsoft", "Google", "Infosys", "Company Name"
-  * Descriptive fragments: "while maintaining", "full course load", "as part of"
-  * Text ending with periods or commas
-- A name is typically 2-4 words (first name + last name, sometimes with middle name)
-- IMPORTANT: The name is USUALLY AT THE VERY TOP of the resume — in the PDF header, page margin, or first 2–5 lines
-- Check PDF metadata, title area, and header region — names often appear in larger/bolder formatting
-- The name appears BEFORE any "Education", "Experience", or section headers
-- If a line appears as a section header (like "Education", "Skills"), it's NOT the candidate's name
+  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
+  * Academic degrees: "B.S. in Computer Science", "B.Tech in EEE", "M.S.", "Ph.D."
+  * Job titles or roles: "Software Engineer", "Project Manager", "Data Analyst"
+  * Organization names: "Google LLC", "Infosys Limited", "University of California"
+  * Lines with punctuation (commas, periods, dashes)
+  * Lines that include numeric characters, email addresses, or locations
+- The name is almost always at the very top of the resume — usually line 1 or line 2
+- The name line typically contains only 2–3 words in Title Case (e.g., Daniel Mindlin, John M. Smith, VARRE DHANA LAKSHMI DURGA)
 - Names can be in Title Case (e.g., "John Smith") or ALL CAPS (e.g., "VARRE DHANA LAKSHMI DURGA")
-- Names contain only alphabetic characters, hyphens, or periods (for middle initials)
+- Names contain only alphabetic characters, hyphens, or periods (for middle initials like "John M. Smith")
+- Check Line 1 first: If it contains 2–4 words, all alphabetic, and written in Title Case → this is likely the name
+- If Line 1 fails, check Line 2 or Line 3 using the same rule
+- Stop once a valid name is found — do not scan further down the document
 
 QUALITY & VALIDATION RULES FOR ALL FIELDS:
 - Email must always be fetched if present in resume
@@ -160,9 +160,16 @@ QUALITY & VALIDATION RULES FOR ALL FIELDS:
 - If data is not available, return field as null (do not guess)
 - Output strictly valid JSON ready for database insertion
 
-OUTPUT FORMAT:
+CRITICAL: To extract the name correctly:
+1. Check Line 1 FIRST - if it contains 2-4 words in Title Case or ALL CAPS (alphabetic only, no punctuation or numbers), that IS the name
+2. If Line 1 doesn't match, check Line 2 using the same rule
+3. If Line 2 doesn't match, check Line 3 using the same rule
+4. STOP after checking first 3 lines - do not scan further
+5. REJECT section headers, degrees, job titles, organization names, and lines with punctuation/numbers
+
+OUTPUT FORMAT (return valid JSON only):
 {
-  "full_name": "Candidate's Actual Name",
+  "full_name": "Candidate's Actual Name from first line",
   "email": "email@example.com",
   "phone_number": "phone_number_or_null",
   "total_experience": <numeric_value>,
@@ -177,7 +184,14 @@ OUTPUT FORMAT:
   "summary": "Professional summary here"
 }
 
-Resume Text:
+IMPORTANT: 
+- Return ONLY valid JSON (no markdown code blocks, no explanatory text)
+- Check Line 1 FIRST - if it contains 2-4 words in Title Case or ALL CAPS, that IS the name
+- Check only first 3 lines for the name - STOP after that
+- Reject section headers, degrees, job titles, organization names, and lines with punctuation/numbers
+- Ensure the JSON is complete and valid
+
+Resume Text (look for name in FIRST FEW LINES):
 {resume_text}
 """
     
@@ -378,6 +392,9 @@ Resume Text:
             line = ' '.join(line.split())  # Normalize multiple spaces to single space
             line = line.strip()
             
+            # Remove trailing separators like | or • that might appear after names
+            line = line.rstrip('|•').strip()
+            
             # Skip empty lines
             if not line:
                 continue
@@ -498,12 +515,33 @@ Resume Text:
                 model=self.ai_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Low temperature for consistent results
-                max_tokens=3000,   # Increased for comprehensive response
+                max_tokens=4000,   # Increased to ensure complete JSON response
                 response_format={"type": "json_object"}  # Ensure JSON output
             )
             
-            # Parse JSON response
-            ai_result = json.loads(response.choices[0].message.content)
+            logger.info(f"AI response received, length: {len(response.choices[0].message.content)} chars")
+            
+            # Parse JSON response with better error handling
+            response_content = response.choices[0].message.content.strip()
+            
+            # Try to fix common JSON issues
+            if not response_content.startswith('{') and not response_content.startswith('['):
+                # Try to find JSON object start
+                start_idx = response_content.find('{')
+                if start_idx != -1:
+                    response_content = response_content[start_idx:]
+                else:
+                    logger.error(f"No JSON object found in AI response. First 200 chars: {response_content[:200]}")
+                    return None
+            
+            # Try to parse JSON
+            try:
+                ai_result = json.loads(response_content)
+            except json.JSONDecodeError as je:
+                logger.error(f"JSON decode error at position {je.pos}: {je.msg}")
+                logger.error(f"Problematic JSON around error: {response_content[max(0, je.pos-100):je.pos+100]}")
+                logger.error(f"Full response (first 500 chars): {response_content[:500]}")
+                return None
             
             # Validate extracted name - reject section headers and academic degrees
             full_name = ai_result.get('full_name', '')
@@ -831,9 +869,13 @@ Resume Text:
                         # Check first 10 lines thoroughly
                         for idx, line in enumerate(lines[:10]):
                             line = line.strip()
+                            
+                            # Remove trailing separators like | or •
+                            line = line.rstrip('|•').strip()
+                            
                             # Look for lines that are Title Case, 2-4 words, no special chars
                             # Allow up to 4 words for names like "VARRE DHANA LAKSHMI DURGA"
-                            if line and 2 <= len(line.split()) <= 4 and len(line) < 70 and line[0].isalpha():
+                            if line and 2 <= len(line.split()) <= 4 and len(line) < 70 and len(line) > 3:
                                 # Check if it's all alphabetic (plus spaces, hyphens, periods)
                                 words = line.split()
                                 if all(word.replace('-', '').replace("'", '').replace('.', '').isalpha() for word in words):
@@ -841,10 +883,12 @@ Resume Text:
                                     line_lower = line.lower()
                                     if line_lower not in invalid_names and not any(keyword in line_lower for keyword in degree_keywords):
                                         # Skip if it's an email
-                                        if '@' not in line:
-                                            name = line
-                                            logger.info(f"Found name via heuristic (line {idx+1}): {name}")
-                                            break
+                                        if '@' not in line and '://' not in line:
+                                            # Skip if it contains phone number patterns
+                                            if not re.search(r'\+\d|\d{3}[-.]?\d{3}', line):
+                                                name = line
+                                                logger.info(f"Found name via heuristic (line {idx+1}): {name}")
+                                                break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
                 experience = float(ai_data.get('total_experience', 0)) if ai_data.get('total_experience') else self.extract_experience(resume_text)

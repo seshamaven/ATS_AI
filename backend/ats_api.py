@@ -408,13 +408,13 @@ def index_existing_resumes():
 @app.route('/api/searchResumes', methods=['POST'])
 def search_resumes():
     """
-    Search resumes using Pinecone vector similarity.
+    Search resumes using Pinecone vector similarity with exact skill matching.
     
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores
     
     Parameters:
-        - query (required): Search query string
+        - query (required): Search query string (e.g., ".net", "Python", "Java")
         - top_k (optional): Number of results to return (default: 10)
         - min_similarity_score (optional): Minimum similarity threshold (default: 0.3)
         - filters (optional): Metadata filters
@@ -422,6 +422,12 @@ def search_resumes():
     STATELESS GUARANTEE: Each search query is processed independently.
     A fresh embedding is generated for the search query, and results are
     retrieved from the vector database without any state from previous searches.
+    
+    EXACT SKILL FILTERING: 
+    - Results are filtered to only include candidates who ACTUALLY have the queried skill
+    - For ".net" queries, matches: .NET, ASP.NET, ADO.NET, VB.NET, .NET Core, C#.NET
+    - For other queries (e.g., "Python"), matches exact skill names or variations
+    - Candidates without the required skill are excluded, even if they have high similarity scores
     
     FILTERING: Results below the similarity threshold are filtered out.
     For meaningless queries (like single characters), the API returns a proper
@@ -498,12 +504,56 @@ def search_resumes():
                 'timestamp': datetime.now().isoformat()
             }), 200
         
-        # Process search results and filter by similarity score
+        # Function to check if candidate has the required skill
+        def has_skill(candidate_metadata, query_text):
+            """Check if candidate's skills contain the query or its variations."""
+            # Check all skill fields (primary_skills, secondary_skills, all_skills)
+            skill_fields = [
+                candidate_metadata.get('primary_skills', ''),
+                candidate_metadata.get('secondary_skills', ''),
+                candidate_metadata.get('all_skills', '')
+            ]
+            
+            # Combine all skills for checking
+            all_skills_text = ', '.join(filter(None, skill_fields))
+            
+            if not all_skills_text:
+                return False
+            
+            # Normalize for comparison (lowercase, no special chars for matching)
+            skills_lower = all_skills_text.lower()
+            
+            # Handle different query formats
+            query_lower = query_text.lower()
+            
+            # Check for exact match or contained match
+            if query_lower in skills_lower:
+                return True
+            
+            # Handle special cases for technical terms
+            # .net variations
+            if '.net' in query_lower or 'dotnet' in query_lower:
+                net_variations = ['.net', 'dotnet', 'asp.net', 'ado.net', '.net core', 'vb.net', 'c#.net']
+                for variation in net_variations:
+                    if variation in skills_lower:
+                        return True
+            
+            return False
+        
+        # Process search results and filter by similarity score AND skill presence
         candidates = []
+        filtered_count = 0
+        
         for match in search_results.matches:
             # Filter out low-relevance results based on similarity score
             if match.score < min_similarity_score:
                 logger.debug(f"Filtered out candidate {match.metadata.get('candidate_id')} with score {match.score:.3f} (threshold: {min_similarity_score})")
+                continue
+            
+            # CRITICAL: Filter by actual skill presence to ensure exact matching
+            if not has_skill(match.metadata, user_query):
+                logger.info(f"Filtered out candidate {match.metadata.get('candidate_id')} - no matching skill '{user_query}' found")
+                filtered_count += 1
                 continue
                 
             candidate_info = {
@@ -523,6 +573,8 @@ def search_resumes():
                 'metadata': match.metadata
             }
             candidates.append(candidate_info)
+        
+        logger.info(f"Filtered {filtered_count} candidates without the required skill '{user_query}'")
         
         # If no candidates passed the similarity threshold
         if not candidates:

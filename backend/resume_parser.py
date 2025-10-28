@@ -654,7 +654,7 @@ Resume Text (look for name in FIRST FEW LINES):
     
     def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: int = 15) -> List[str]:
         """Extract skills from resume text using word-boundary matching with TECHNICAL_SKILLS."""
-        logger.warning("No skills found with strict filtering. Trying word-boundary matching from entire resume text...")
+        logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
         resume_text_lower = resume_text.lower()
         
         # Use case-insensitive whole-word matching for each skill in TECHNICAL_SKILLS
@@ -662,7 +662,18 @@ Resume Text (look for name in FIRST FEW LINES):
             skill_lower = skill.lower()
             # Match whole words only (case-insensitive) using word boundaries
             pattern = r'\b' + re.escape(skill_lower) + r'\b'
-            if re.search(pattern, resume_text_lower):
+            
+            # Also handle compound words (e.g., "MicrosoftSqlServer" should match "sql server")
+            # Create a pattern without word boundaries to match compound words
+            skill_words = skill_lower.split()
+            if len(skill_words) > 1:
+                # For multi-word skills, check if they appear together without spaces
+                # e.g., "sql server" -> "sqlserver" or "sql-server" or "sql_server"
+                pattern_compound = r'\b' + r'[\s\-_]?'.join(re.escape(w) for w in skill_words) + r'\b'
+            else:
+                pattern_compound = pattern
+            
+            if re.search(pattern, resume_text_lower) or re.search(pattern_compound, resume_text_lower):
                 if skill_lower not in existing_skills_set:
                     existing_skills.append(skill)
                     existing_skills_set.add(skill_lower)
@@ -977,11 +988,11 @@ Resume Text (look for name in FIRST FEW LINES):
                         secondary_skills.append(skill.strip())
                         logger.info(f"✓ Added secondary skill: {skill}")
                 
-                # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
-                if not technical_skills:
-                    technical_skills = self._extract_skills_from_text_with_word_boundaries(
-                        resume_text, technical_skills, technical_skills_lower, max_skills=15
-                    )
+                # ALWAYS supplement with word-boundary matching to catch any missed skills
+                logger.info(f"Supplementing with word-boundary matching from entire resume...")
+                technical_skills = self._extract_skills_from_text_with_word_boundaries(
+                    resume_text, technical_skills, technical_skills_lower, max_skills=15
+                )
                 
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills[:15]) if technical_skills else ''  # Top 15 technical skills
@@ -1079,11 +1090,11 @@ Resume Text (look for name in FIRST FEW LINES):
                         if not found_match:
                             secondary_skills_list.append(skill)
                 
-                # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
-                if not technical_skills_list:
-                    technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
-                        resume_text, technical_skills_list, technical_skills_set, max_skills=15
-                    )
+                # ALWAYS supplement with word-boundary matching to catch any missed skills
+                logger.info(f"Supplementing with word-boundary matching from entire resume...")
+                technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
+                    resume_text, technical_skills_list, technical_skills_set, max_skills=15
+                )
                 
                 # Format primary_skills after potential lenient extraction
                 primary_skills = ', '.join(technical_skills_list[:15]) if technical_skills_list else ''

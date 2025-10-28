@@ -986,10 +986,15 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Secondary skills: everything that's NOT in TECHNICAL_SKILLS
                 secondary_skills = []
+                
+                # Process AI secondary skills
                 for skill in ai_secondary_skills:
+                    if not skill or not isinstance(skill, str):
+                        continue
                     skill_lower = skill.lower().strip()
-                    if skill_lower not in self.TECHNICAL_SKILLS:
-                        secondary_skills.append(skill)
+                    if skill_lower not in self.TECHNICAL_SKILLS and skill_lower not in [s.lower() for s in secondary_skills]:
+                        secondary_skills.append(skill.strip())
+                        logger.info(f"✓ Added secondary skill: {skill}")
                 
                 # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
                 if not technical_skills:
@@ -999,14 +1004,17 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills[:15]) if technical_skills else ''  # Top 15 technical skills
-                secondary_skills_str = ', '.join(secondary_skills)  # Non-technical skills
-                all_skills_str = ', '.join(all_skills_list) if all_skills_list else ''
+                secondary_skills_str = ', '.join(secondary_skills) if secondary_skills else ''  # Non-technical skills
                 
-                logger.info(f"✓ Filtered to {len(technical_skills)} technical skills total (AI: {len(ai_technical_skills)}, Regex: {len(all_extracted_skills)})")
-                if primary_skills:
-                    logger.info(f"✓ Primary skills extracted: {primary_skills[:100]}{'...' if len(primary_skills) > 100 else ''}")
-                else:
-                    logger.warning("⚠ No primary skills found!")
+                # all_skills = primary_skills + secondary_skills
+                all_skills_combined = technical_skills + secondary_skills
+                all_skills_str = ', '.join(all_skills_combined) if all_skills_combined else ''
+                
+                logger.info(f"✓ Primary skills ({len(technical_skills)}): {primary_skills[:80]}...")
+                logger.info(f"✓ Secondary skills ({len(secondary_skills)}): {secondary_skills_str[:80]}...")
+                logger.info(f"✓ All skills ({len(all_skills_combined)}): {all_skills_str[:80]}...")
+                
+                logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
@@ -1090,11 +1098,6 @@ Resume Text (look for name in FIRST FEW LINES):
                         if not found_match:
                             secondary_skills_list.append(skill)
                 
-                secondary_skills_str = ', '.join(secondary_skills_list)  # Non-technical skills
-                all_skills_str = ', '.join(all_extracted_skills)
-                
-                logger.info(f"Filtered to {len(technical_skills_list)} technical skills from {len(all_extracted_skills)} extracted skills")
-                
                 # If we still have no skills, try a very lenient approach - extract common tech terms from entire resume
                 if not technical_skills_list:
                     technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
@@ -1103,12 +1106,17 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Format primary_skills after potential lenient extraction
                 primary_skills = ', '.join(technical_skills_list[:15]) if technical_skills_list else ''
+                secondary_skills_str = ', '.join(secondary_skills_list) if secondary_skills_list else ''
                 
-                logger.info(f"✓ Filtered to {len(technical_skills_list)} technical skills total (Regex: {len(all_extracted_skills)})")
-                if primary_skills:
-                    logger.info(f"✓ Primary skills extracted: {primary_skills[:100]}{'...' if len(primary_skills) > 100 else ''}")
-                else:
-                    logger.warning("⚠ No primary skills found!")
+                # all_skills = primary_skills + secondary_skills (combine lists, then join)
+                all_skills_combined = technical_skills_list + secondary_skills_list
+                all_skills_str = ', '.join(all_skills_combined) if all_skills_combined else ''
+                
+                logger.info(f"✓ Primary skills ({len(technical_skills_list)}): {primary_skills[:80]}...")
+                logger.info(f"✓ Secondary skills ({len(secondary_skills_list)}): {secondary_skills_str[:80]}...")
+                logger.info(f"✓ All skills ({len(all_skills_combined)}): {all_skills_str[:80]}...")
+                
+                logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
                 domain = self.extract_domain(resume_text)
                 education_info = self.extract_education(resume_text)

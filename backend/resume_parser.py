@@ -652,10 +652,12 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
-    def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: int = 15) -> List[str]:
-        """Extract skills from resume text using word-boundary matching with TECHNICAL_SKILLS."""
-        logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
-        resume_text_lower = resume_text.lower()
+    def _extract_skills_from_text_with_word_boundaries(self, scope_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: int = 15) -> List[str]:
+        """Extract skills from provided scope text using word-boundary matching with TECHNICAL_SKILLS.
+        Scope should be the Skills section when available; otherwise, the whole resume text.
+        """
+        logger.info(f"Running word-boundary matching... scope_len={len(scope_text)} currently_found={len(existing_skills)}")
+        resume_text_lower = scope_text.lower()
         
         # Use case-insensitive whole-word matching for each skill in TECHNICAL_SKILLS
         for skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
@@ -673,6 +675,10 @@ Resume Text (look for name in FIRST FEW LINES):
             else:
                 pattern_compound = pattern
             
+            # Reject single-letter skills (e.g., accidental 'r') unless explicitly matched as a standalone in skills section
+            if len(skill_lower) == 1:
+                continue
+
             if re.search(pattern, resume_text_lower) or re.search(pattern_compound, resume_text_lower):
                 if skill_lower not in existing_skills_set:
                     existing_skills.append(skill)
@@ -729,7 +735,7 @@ Resume Text (look for name in FIRST FEW LINES):
         }
     
     def extract_experience(self, text: str) -> float:
-        """Extract total years of experience."""
+        """Extract total years of experience. Prefer explicit years; validate against date span."""
         # Look for experience statements
         patterns = [
             r'(?i)(\d+)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp)',
@@ -737,16 +743,23 @@ Resume Text (look for name in FIRST FEW LINES):
             r'(?i)total\s+experience[:\s]+(\d+)\+?\s*(?:years?|yrs?)'
         ]
         
+        stated_years: Optional[float] = None
         for pattern in patterns:
             matches = re.findall(pattern, text)
             if matches:
                 try:
-                    return float(matches[0])
+                    stated_years = float(matches[0])
+                    break
                 except ValueError:
-                    pass
+                    stated_years = None
         
         # Alternative: Calculate from work history
         experience_years = self._calculate_experience_from_dates(text)
+        # If stated years wildly exceed date span (+/- 5 years tolerance), trust date span
+        if stated_years is not None:
+            if experience_years > 0 and (stated_years - experience_years) > 5:
+                return experience_years
+            return stated_years
         return experience_years
     
     def _calculate_experience_from_dates(self, text: str) -> float:
@@ -988,10 +1001,11 @@ Resume Text (look for name in FIRST FEW LINES):
                         secondary_skills.append(skill.strip())
                         logger.info(f"✓ Added secondary skill: {skill}")
                 
-                # ALWAYS supplement with word-boundary matching to catch any missed skills
-                logger.info(f"Supplementing with word-boundary matching from entire resume...")
+                # ALWAYS supplement with word-boundary matching scoped to Skills section if present
+                scoped_text = skills_section if skills_section else resume_text
+                logger.info(f"Supplementing with word-boundary matching (scoped={bool(skills_section)})...")
                 technical_skills = self._extract_skills_from_text_with_word_boundaries(
-                    resume_text, technical_skills, technical_skills_lower, max_skills=15
+                    scoped_text, technical_skills, technical_skills_lower, max_skills=15
                 )
                 
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
@@ -1090,10 +1104,11 @@ Resume Text (look for name in FIRST FEW LINES):
                         if not found_match:
                             secondary_skills_list.append(skill)
                 
-                # ALWAYS supplement with word-boundary matching to catch any missed skills
-                logger.info(f"Supplementing with word-boundary matching from entire resume...")
+                # ALWAYS supplement with word-boundary matching scoped to Skills section if present
+                scoped_text = skills_section if skills_section else resume_text
+                logger.info(f"Supplementing with word-boundary matching (scoped={bool(skills_section)})...")
                 technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
-                    resume_text, technical_skills_list, technical_skills_set, max_skills=15
+                    scoped_text, technical_skills_list, technical_skills_set, max_skills=15
                 )
                 
                 # Format primary_skills after potential lenient extraction

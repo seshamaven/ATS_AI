@@ -86,7 +86,7 @@ EXTRACTION GUIDELINES:
 
 3. phone_number – Include complete phone number if found.
 
-4. total_experience – Calculate accurately based on career timeline and roles. Cross-check start and end dates to avoid inflated values (e.g., 32 should be 23 if that's the correct calculation).
+4. total_experience – Calculate accurately based on career timeline and roles. Cross-check start and end dates to avoid inflated values 
 
 5. current_company – Capture the current/most recent employer's name.
 
@@ -100,7 +100,7 @@ EXTRACTION GUIDELINES:
 
 10. domain – Determine ALL relevant domains based on candidate's experience. List multiple domains if applicable (e.g., ["Banking", "Finance", "Insurance"]).
 
-11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
+11. education_details – Include all degrees with full names and specializations .
 
 12. certifications – Capture all professional or vendor-specific certifications if mentioned.
 

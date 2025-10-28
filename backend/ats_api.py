@@ -443,15 +443,7 @@ def search_resumes():
         # Optional parameters
         filters = data.get('filters', {})
         top_k = data.get('top_k', 10)
-        min_similarity_score = data.get('min_similarity_score', 0.2)  # Lower default threshold for better matching
-        include_debug_info = data.get('include_debug_info', False)  # Show all raw results for debugging
-        
-        # Expand query for better matching (handle variations like .net, .NET, dotnet, etc.)
-        expanded_query = user_query
-        if '.net' in user_query.lower():
-            # For .NET queries, expand to include common variations for better matching
-            # This helps match resumes that might use different capitalization or formats
-            expanded_query = f"{user_query} .NET dotnet asp.net"
+        min_similarity_score = data.get('min_similarity_score', 0.3)  # Default threshold
         
         # Validate query is meaningful
         # Reject queries that are 1 or 2 characters (too short to be meaningful)
@@ -466,7 +458,6 @@ def search_resumes():
             }), 200
         
         logger.info(f"Processing resume search query: {user_query}")
-        logger.info(f"Expanded query: {expanded_query}")
         logger.info(f"Applied filters: {filters}")
         logger.info(f"Minimum similarity score threshold: {min_similarity_score}")
         
@@ -486,8 +477,8 @@ def search_resumes():
         )
         pinecone_manager.get_or_create_index()
         
-        # Generate embedding for query (use expanded query for better matching)
-        query_embedding = embedding_service.generate_embedding(expanded_query)
+        # Generate embedding for query
+        query_embedding = embedding_service.generate_embedding(user_query)
         
         # Perform vector search in Pinecone
         search_results = pinecone_manager.query_vectors(
@@ -506,14 +497,6 @@ def search_resumes():
                 'processing_time_ms': int((time.time() - start_time) * 1000),
                 'timestamp': datetime.now().isoformat()
             }), 200
-        
-        # Log raw search results for debugging
-        logger.info(f"Raw search results: {len(search_results.matches)} matches")
-        for i, match in enumerate(search_results.matches):
-            logger.info(f"Match {i+1}: candidate_id={match.metadata.get('candidate_id')}, "
-                       f"name={match.metadata.get('name')}, "
-                       f"score={match.score:.4f}, "
-                       f"primary_skills={match.metadata.get('primary_skills')}")
         
         # Process search results and filter by similarity score
         candidates = []
@@ -558,34 +541,14 @@ def search_resumes():
         # Calculate processing time
         processing_time = int((time.time() - start_time) * 1000)
         
-        response_data = {
+        return jsonify({
             'message': 'Resume search completed',
             'query': user_query,
             'search_results': candidates,
             'total_matches': len(candidates),
             'processing_time_ms': processing_time,
             'timestamp': datetime.now().isoformat()
-        }
-        
-        # Include debug information if requested
-        if include_debug_info:
-            raw_results = []
-            for match in search_results.matches:
-                raw_results.append({
-                    'candidate_id': match.metadata.get('candidate_id'),
-                    'name': match.metadata.get('name'),
-                    'score': match.score,
-                    'primary_skills': match.metadata.get('primary_skills'),
-                    'filtered': match.score < min_similarity_score
-                })
-            response_data['debug_info'] = {
-                'raw_results_count': len(search_results.matches),
-                'filtered_count': len(search_results.matches) - len(candidates),
-                'min_similarity_score': min_similarity_score,
-                'raw_results': raw_results
-            }
-        
-        return jsonify(response_data), 200
+        }), 200
         
     except Exception as e:
         logger.error(f"Error in resume search: {e}")

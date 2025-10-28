@@ -92,26 +92,7 @@ EXTRACTION GUIDELINES:
 
 6. current_designation – Extract the most recent role or job title.
 
-7. technical_skills – Extract ALL technical skills listed anywhere in the resume.
-
-   CRITICAL: Search through ALL sections of the resume (Skills, Experience, Projects, Education, Summary, etc.) and extract EVERY technical skill mentioned.
-   
-   What to Extract (examples):
-   - Programming Languages: Python, Java, JavaScript, C#, Go, Ruby, Swift, Kotlin, etc.
-   - Frameworks: React, Django, ASP.NET, .NET Core, Express.js, Spring, Angular, Vue, etc.
-   - Databases: MySQL, PostgreSQL, MongoDB, Redis, Oracle, SQL Server, etc.
-   - Cloud Platforms: AWS, Azure, GCP, etc.
-   - DevOps/Tools: Docker, Jenkins, Git, GitHub, Terraform, Kubernetes, etc.
-   - Technologies: HTML5, CSS3, JavaScript, jQuery, Bootstrap, Visual Studio, VS Code, etc.
-   - ERP/CRM: SAP, Salesforce, Power Apps, etc.
-   - Any other recognizable technology name
-   
-   Do NOT Extract:
-   - Verbs: "developed", "implemented", "managed", "created", "tested"
-   - Phrases: "responsible for", "worked on", "experience in"
-   - Generic terms: "unit testing", "applications", "frameworks" (unless explicitly listed as skills)
-   
-   IMPORTANT: Extract skills as an ARRAY of strings, e.g., ["Python", "JavaScript", "SQL", "AWS", "Docker"]
+7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed ANYWHERE in the resume. Include EVERY skill mentioned.
 
 8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
 

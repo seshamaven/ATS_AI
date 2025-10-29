@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     file_name VARCHAR(500),
     file_type VARCHAR(50),
     file_size_kb INT,
+    file_base64 LONGTEXT COMMENT 'Base64-encoded resume file content',
     
     -- AI Analysis Fields
     ai_primary_skills JSON COMMENT 'AI-extracted primary skills with experience and weights',

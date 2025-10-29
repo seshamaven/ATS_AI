@@ -218,8 +218,16 @@ def process_resume():
             # Extract file type
             file_type = filename.rsplit('.', 1)[1].lower()
             
+            # Convert file to base64 for sample storage
+            import base64
+            with open(file_path, 'rb') as f:
+                file_base64 = base64.b64encode(f.read()).decode('utf-8')
+            
             # Parse resume
             parsed_data = resume_parser.parse_resume(file_path, file_type)
+            
+            # Add base64 to parsed data for storage
+            parsed_data['file_base64'] = file_base64
             
             # Generate embedding from resume text
             logger.info("Generating embedding for resume...")
@@ -364,12 +372,15 @@ def process_resume_base64():
 
             # Parse resume
             parsed_data = resume_parser.parse_resume(file_path, file_type)
+            
+            # Add base64 to parsed data for storage (use original from request)
+            parsed_data['file_base64'] = file_b64
 
             # Generate embedding from resume text
             logger.info("Generating embedding for resume...")
             resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
 
-            # Store in database (without embedding - stored in Pinecone only)
+            # Store in database (with base64 - stored in database)
             with create_ats_database() as db:
                 candidate_id = db.insert_resume(parsed_data)
 

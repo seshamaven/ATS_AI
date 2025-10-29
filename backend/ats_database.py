@@ -80,7 +80,7 @@ class ATSDatabase:
                     current_company, current_designation,
                     notice_period, expected_salary, current_salary,
                     resume_summary,
-                    file_name, file_type, file_size_kb,
+                    file_name, file_type, file_size_kb, file_base64,
                     status
                 ) VALUES (
                     %(name)s, %(email)s, %(phone)s,
@@ -91,7 +91,7 @@ class ATSDatabase:
                     %(current_company)s, %(current_designation)s,
                     %(notice_period)s, %(expected_salary)s, %(current_salary)s,
                     %(resume_summary)s,
-                    %(file_name)s, %(file_type)s, %(file_size_kb)s,
+                    %(file_name)s, %(file_type)s, %(file_size_kb)s, %(file_base64)s,
                     %(status)s
                 )
             """
@@ -120,6 +120,7 @@ class ATSDatabase:
                 'file_name': resume_data.get('file_name'),
                 'file_type': resume_data.get('file_type'),
                 'file_size_kb': resume_data.get('file_size_kb'),
+                'file_base64': resume_data.get('file_base64'),
                 'status': resume_data.get('status', 'active')
             }
             

@@ -620,8 +620,16 @@ def profile_ranking_by_jd():
     Optional inputs for overriding/extending:
     - job_title, required_skills, preferred_skills, min_experience, max_experience
     - domain, education_required, location, employment_type, salary_range
+    - min_match_percent: Minimum match percentage threshold (default: 50)
+      Only candidates meeting this threshold OR having at least 1 matching skill are returned
     
-    Returns: Ranked list of candidates with scores
+    Returns: Ranked list of ELIGIBLE candidates only (not all candidates)
+    
+    ELIGIBILITY FILTERING:
+    - Candidates are filtered to include only those who meet the eligibility criteria
+    - Eligibility criteria: match_percent >= min_match_percent OR having at least 1 matching skill
+    - By default, min_match_percent = 50 (candidates with <50% match are excluded)
+    - Only eligible candidates are stored in database and returned in response
     
     STATELESS GUARANTEE: This endpoint creates a fresh ranking engine instance
     and database connection for each request. Rankings are calculated independently
@@ -802,9 +810,26 @@ def profile_ranking_by_jd():
             top_k=data.get('top_k', 50)  # Return top 50 by default
         )
         
-        # Store ranking results in database
+        # Get minimum match percent threshold from request (default: 50)
+        min_match_percent = data.get('min_match_percent', 50)
+        
+        logger.info(f"Filtering candidates with match_percent >= {min_match_percent}")
+        
+        # Filter to eligible candidates only
+        eligible_profiles = []
+        for profile in ranked_profiles:
+            # Eligible if: match_percent >= threshold OR has at least 1 matching skill
+            has_matching_skill = len(profile.get('matched_skills', [])) > 0
+            meets_match_threshold = profile.get('match_percent', 0) >= min_match_percent
+            
+            if meets_match_threshold or has_matching_skill:
+                eligible_profiles.append(profile)
+        
+        logger.info(f"Found {len(eligible_profiles)} eligible candidates out of {len(ranked_profiles)} total ranked")
+        
+        # Store ranking results in database (only for eligible candidates)
         with create_ats_database() as db:
-            for profile in ranked_profiles:
+            for profile in eligible_profiles:
                 ranking_data = {
                     'job_id': job_id,
                     'candidate_id': profile['candidate_id'],
@@ -824,13 +849,17 @@ def profile_ranking_by_jd():
                 db.insert_ranking_result(ranking_data)
         
         # Prepare response
+        eligible_count = len(eligible_profiles)
+        total_count = len(ranked_profiles)
+        
         response_data = {
             'status': 'success',
-            'message': 'Profile ranking completed successfully',
+            'message': f'Profile ranking completed. Found {eligible_count} eligible candidates out of {total_count} total ranked candidates.',
             'job_id': job_id,
-            'ranked_profiles': ranked_profiles,
+            'ranked_profiles': eligible_profiles,
             'total_candidates_evaluated': len(candidates),
-            'top_candidates_returned': len(ranked_profiles),
+            'total_candidates_ranked': len(ranked_profiles),
+            'eligible_candidates_returned': len(eligible_profiles),
             'extracted_job_requirements': {
                 'required_skills': required_skills_list,
                 'preferred_skills': preferred_skills_list,
@@ -841,15 +870,16 @@ def profile_ranking_by_jd():
             },
             'ranking_criteria': {
                 'weights': ATSConfig.RANKING_WEIGHTS,
-                'semantic_similarity': 'enabled'
+                'semantic_similarity': 'enabled',
+                'min_match_percent': min_match_percent
             },
             'timestamp': datetime.now().isoformat()
         }
         
-        if ranked_profiles:
-            logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")
+        if eligible_profiles:
+            logger.info(f"Ranking completed. Top candidate: {eligible_profiles[0]['name']} with score {eligible_profiles[0]['total_score']}")
         else:
-            logger.info("Ranking completed. No candidates were ranked.")
+            logger.info("Ranking completed. No eligible candidates found (all candidates filtered out).")
         
         return jsonify(response_data), 200
         

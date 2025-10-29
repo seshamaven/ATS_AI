@@ -313,6 +313,144 @@ def process_resume():
         }), 500
 
 
+@app.route('/api/processResumeBase64', methods=['POST'])
+def process_resume_base64():
+    """
+    Process and store resume when provided as JSON with base64 content.
+    
+    Accepts: application/json body with fields:
+      - filename: original filename with extension (e.g., resume.pdf)
+      - fileBase64: base64-encoded file content
+      - text: optional additional context (ignored by parser)
+    Returns: JSON with candidate_id and status
+    """
+    try:
+        # Validate JSON request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+
+        data = request.get_json()
+        filename = (data.get('filename') or '').strip()
+        file_b64 = (data.get('fileBase64') or '').strip()
+
+        if not filename or not file_b64:
+            return jsonify({'error': 'filename and fileBase64 are required'}), 400
+
+        if not allowed_file(filename):
+            return jsonify({
+                'error': f'Invalid file type. Allowed types: {", ".join(ATSConfig.ALLOWED_EXTENSIONS)}'
+            }), 400
+
+        # Decode base64 and write to temporary file
+        from werkzeug.utils import secure_filename
+        import base64, binascii
+
+        safe_name = secure_filename(filename)
+        file_path = os.path.join(ATSConfig.UPLOAD_FOLDER, safe_name)
+
+        try:
+            file_bytes = base64.b64decode(file_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return jsonify({'error': 'Invalid base64 data'}), 400
+
+        with open(file_path, 'wb') as f:
+            f.write(file_bytes)
+
+        logger.info(f"Processing base64 resume: {safe_name}")
+
+        try:
+            # Extract file type
+            file_type = safe_name.rsplit('.', 1)[1].lower()
+
+            # Parse resume
+            parsed_data = resume_parser.parse_resume(file_path, file_type)
+
+            # Generate embedding from resume text
+            logger.info("Generating embedding for resume...")
+            resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
+
+            # Store in database (without embedding - stored in Pinecone only)
+            with create_ats_database() as db:
+                candidate_id = db.insert_resume(parsed_data)
+
+                if not candidate_id:
+                    return jsonify({'error': 'Failed to store resume in database'}), 500
+
+            # Index in Pinecone if enabled
+            pinecone_indexed = False
+            if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+                try:
+                    from enhanced_pinecone_manager import EnhancedPineconeManager
+                    pinecone_manager = EnhancedPineconeManager(
+                        api_key=ATSConfig.PINECONE_API_KEY,
+                        index_name=ATSConfig.PINECONE_INDEX_NAME,
+                        dimension=ATSConfig.EMBEDDING_DIMENSION
+                    )
+                    pinecone_manager.get_or_create_index()
+
+                    # Prepare metadata for Pinecone with NULL value handling
+                    pinecone_metadata = {
+                        'candidate_id': candidate_id,
+                        'name': parsed_data.get('name') or 'Unknown',
+                        'email': parsed_data.get('email') or 'No email',
+                        'domain': parsed_data.get('domain') or 'Unknown',
+                        'primary_skills': parsed_data.get('primary_skills') or 'No skills',
+                        'total_experience': parsed_data.get('total_experience', 0),
+                        'education': parsed_data.get('education') or 'Unknown',
+                        'file_type': file_type or 'Unknown',
+                        'source': 'resume_upload',
+                        'created_at': datetime.now().isoformat()
+                    }
+
+                    vector_data = {
+                        'id': f'resume_{candidate_id}',
+                        'values': resume_embedding,
+                        'metadata': pinecone_metadata
+                    }
+
+                    pinecone_manager.upsert_vectors([vector_data])
+                    pinecone_indexed = True
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
+                except Exception as e:
+                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {e}")
+                    # Do not fail request for Pinecone errors
+
+            # Clean up temporary file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            response_data = {
+                'status': 'success',
+                'message': 'Resume processed successfully',
+                'candidate_id': candidate_id,
+                'candidate_name': parsed_data.get('name'),
+                'email': parsed_data.get('email'),
+                'total_experience': parsed_data.get('total_experience'),
+                'primary_skills': parsed_data.get('primary_skills'),
+                'domain': parsed_data.get('domain'),
+                'education': parsed_data.get('education'),
+                'embedding_dimensions': 'stored_in_pinecone_only',
+                'pinecone_indexed': pinecone_indexed,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            return jsonify(response_data), 200
+
+        except Exception:
+            # Ensure temp file cleanup on error
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise
+
+    except Exception as e:
+        logger.error(f"Error processing base64 resume: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/api/indexExistingResumes', methods=['POST'])
 def index_existing_resumes():
     """

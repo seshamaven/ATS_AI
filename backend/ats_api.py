@@ -494,13 +494,48 @@ def index_existing_resumes():
         vectors_to_upsert = []
         
         for resume in resumes:
+            temp_file_path = None
             try:
-                # Generate embedding for each resume since we don't store it in DB anymore
-                # We need the resume text to generate embedding
-                # Since resume_text is not stored in DB, we'll skip indexing
-                logger.warning(f"Resume {resume['candidate_id']} cannot be indexed - no resume_text available in database")
-                failed_count += 1
-                continue
+                # Check if file_base64 is available
+                file_base64 = resume.get('file_base64')
+                if not file_base64:
+                    logger.warning(f"Resume {resume['candidate_id']} cannot be indexed - no file_base64 available in database")
+                    failed_count += 1
+                    continue
+                
+                # Decode base64 file and create temporary file
+                import base64
+                import binascii
+                import tempfile
+                
+                try:
+                    file_bytes = base64.b64decode(file_base64, validate=True)
+                except (binascii.Error, ValueError) as e:
+                    logger.error(f"Invalid base64 data for resume {resume['candidate_id']}: {e}")
+                    failed_count += 1
+                    continue
+                
+                # Create temporary file from decoded bytes
+                file_name = resume.get('file_name', 'resume.pdf')
+                file_type = resume.get('file_type', 'pdf').lower()
+                
+                # Create temp file with proper extension
+                suffix = f'.{file_type}' if file_type else '.pdf'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=ATSConfig.UPLOAD_FOLDER) as tmp_file:
+                    tmp_file.write(file_bytes)
+                    temp_file_path = tmp_file.name
+                
+                # Parse resume to extract text
+                resume_text = resume_parser.extract_text_from_file(temp_file_path, file_type)
+                
+                if not resume_text or len(resume_text) < 100:
+                    logger.warning(f"Resume {resume['candidate_id']} text too short or empty after parsing")
+                    failed_count += 1
+                    continue
+                
+                # Generate embedding for the resume text
+                logger.info(f"Generating embedding for resume {resume['candidate_id']}...")
+                embedding = embedding_service.generate_embedding(resume_text)
                 
                 # Prepare metadata for Pinecone with NULL value handling
                 pinecone_metadata = {
@@ -533,8 +568,15 @@ def index_existing_resumes():
                     
             except Exception as e:
                 logger.error(f"Failed to prepare resume {resume.get('candidate_id', 'unknown')} for indexing: {e}")
+                logger.error(traceback.format_exc())
                 failed_count += 1
-                continue
+            finally:
+                # Clean up temporary file
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
         
         # Upsert remaining vectors
         if vectors_to_upsert:

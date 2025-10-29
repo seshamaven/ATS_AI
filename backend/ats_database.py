@@ -150,7 +150,7 @@ class ATSDatabase:
                     current_company, current_designation,
                     notice_period, expected_salary, current_salary,
                     resume_summary,
-                    file_name, file_type, file_size_kb,
+                    file_name, file_type, file_size_kb, file_base64,
                     status,
                     created_at, updated_at
                 FROM resume_metadata 

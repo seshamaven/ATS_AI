@@ -185,18 +185,29 @@ class ATSDatabase:
             return None
     
     def get_all_resumes(self, status: str = 'active', limit: int = 1000) -> List[Dict[str, Any]]:
-        """Get all resumes with optional filtering."""
+        """Get resumes for processing/indexing, including file data when available."""
         try:
             query = """
-                SELECT candidate_id, name, email, total_experience, 
-                       primary_skills, domain, education
-                FROM resume_metadata 
+                SELECT 
+                    candidate_id,
+                    name,
+                    email,
+                    total_experience,
+                    primary_skills,
+                    domain,
+                    education,
+                    file_name,
+                    file_type,
+                    file_size_kb,
+                    file_base64,
+                    created_at
+                FROM resume_metadata
                 WHERE status = %s
+                ORDER BY created_at DESC
                 LIMIT %s
             """
             self.cursor.execute(query, (status, limit))
             results = self.cursor.fetchall()
-            
             return results
         except Error as e:
             logger.error(f"Error fetching resumes: {e}")

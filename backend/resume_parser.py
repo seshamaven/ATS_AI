@@ -242,47 +242,6 @@ Resume Text (look for name in FIRST FEW LINES):
         'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c'
     }
     
-    # Standardized, commonly recognized domains for output (single selection only)
-    STANDARD_DOMAINS = [
-        "Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare",
-        "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce",
-        "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"
-    ]
-    
-    # Keyword mapping (lowercase) to standardized domains
-    DOMAIN_KEYWORDS = {
-        # Banking / Finance / Insurance
-        'banking': 'Banking', 'bank': 'Banking', 'nbfc': 'Banking', 'lending': 'Banking', 'credit card': 'Banking',
-        'finance': 'Finance', 'financial services': 'Finance', 'fintech': 'Finance', 'wealth management': 'Finance', 'capital markets': 'Finance', 'trading': 'Finance',
-        'insurance': 'Insurance', 'underwriting': 'Insurance', 'policy': 'Insurance',
-        
-        # Healthcare / Pharmaceutical
-        'healthcare': 'Healthcare', 'medical': 'Healthcare', 'hospital': 'Healthcare', 'emr': 'Healthcare', 'ehr': 'Healthcare',
-        'pharma': 'Pharmaceutical', 'pharmaceutical': 'Pharmaceutical', 'clinical': 'Pharmaceutical', 'gxp': 'Pharmaceutical',
-        
-        # Retail / E-commerce
-        'retail': 'Retail', 'pos': 'Retail',
-        'e-commerce': 'E-commerce', 'ecommerce': 'E-commerce', 'online store': 'E-commerce', 'marketplace': 'E-commerce',
-        
-        # Manufacturing / Logistics / Automotive / Construction / Energy / Real Estate
-        'manufacturing': 'Manufacturing', 'plant': 'Manufacturing', 'mes': 'Manufacturing', 'erp': 'Manufacturing',
-        'logistics': 'Logistics', 'supply chain': 'Logistics', 'warehouse': 'Logistics', 'wms': 'Logistics', 'transportation': 'Logistics',
-        'automotive': 'Automotive', 'vehicle': 'Automotive', 'ev': 'Automotive',
-        'construction': 'Construction', 'civil engineering': 'Construction',
-        'energy': 'Energy', 'power': 'Energy', 'utilities': 'Energy', 'oil and gas': 'Energy', 'oil & gas': 'Energy',
-        'real estate': 'Real Estate', 'property': 'Real Estate', 'reit': 'Real Estate',
-        
-        # Telecom / Media / Education / Government / Consulting
-        'telecom': 'Telecom', 'telecommunications': 'Telecom', '5g': 'Telecom', 'oss': 'Telecom', 'bss': 'Telecom',
-        'media': 'Media', 'broadcast': 'Media', 'streaming': 'Media',
-        'education': 'Education', 'edtech': 'Education', 'lms': 'Education',
-        'government': 'Government', 'public sector': 'Government',
-        'consulting': 'Consulting', 'consultant': 'Consulting', 'advisory': 'Consulting',
-        
-        # Software/IT explicit
-        'software development': 'Software Development',
-    }
-    
     EDUCATION_KEYWORDS = {
         'b.tech', 'b.e.', 'bachelor', 'btech', 'bca', 'bsc', 'ba',
         'm.tech', 'm.e.', 'master', 'mtech', 'mca', 'msc', 'mba', 'ma',
@@ -852,71 +811,19 @@ Resume Text (look for name in FIRST FEW LINES):
         return 0.0
     
     def extract_domain(self, text: str) -> Optional[str]:
-        """Extract a single standardized domain focused on the most recent role/project.
-        Rules:
-        - Consider the latest job/project context first.
-        - Map to STANDARD_DOMAINS only.
-        - If only general tech terms are present and no business industry is found, return "Information Technology".
-        - Return a single domain name as string.
-        """
-        try:
-            text_lower = text.lower()
-            lines = [l.strip() for l in text_lower.split('\n') if l.strip()]
-            
-            # Heuristic: isolate the most recent experience block
-            recent_block = text_lower[:1200]  # default to top portion as fallback
-            
-            # Prefer the Experience section's first block
-            exp_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
-            if exp_match and exp_match.group(2):
-                exp_text = exp_match.group(2)
-                # Take first ~30 lines from experience as most recent role area
-                exp_lines = [l for l in exp_text.split('\n') if l.strip()]
-                recent_block = '\n'.join(exp_lines[:30])
-            else:
-                # Look for a line mentioning Present/Current or latest year and take a small window
-                window_idx = None
-                for i, l in enumerate(lines[:200]):
-                    if re.search(r'(?i)(present|current)', l) or re.search(r'\b(20\d{2})\b', l):
-                        window_idx = i
-                        break
-                if window_idx is not None:
-                    start = max(0, window_idx - 5)
-                    end = min(len(lines), window_idx + 25)
-                    recent_block = '\n'.join(lines[start:end])
-            
-            # Domain detection: check keyword mapping in the recent block first
-            def detect_domain_from_text(body: str) -> Optional[str]:
-                body_lower = body.lower()
-                for key, std_domain in self.DOMAIN_KEYWORDS.items():
-                    if re.search(r'\b' + re.escape(key) + r'\b', body_lower):
-                        return std_domain
-                return None
-            
-            domain = detect_domain_from_text(recent_block)
-            if not domain:
-                # Fallback: scan entire text
-                domain = detect_domain_from_text(text_lower)
-            
-            # If no business domain found, determine if it's general IT by tech indicators
-            if not domain:
-                tech_indicators = [
-                    '.net', 'java', 'python', 'javascript', 'typescript', 'sql', 'api', 'apis', 'rest', 'graphql',
-                    'azure', 'aws', 'gcp', 'cloud', 'microservices', 'docker', 'kubernetes'
-                ]
-                if any(re.search(r'\b' + re.escape(tk) + r'\b', text_lower) for tk in tech_indicators):
-                    return 'Information Technology'
-                # If still unclear, default to IT per rules
-                return 'Information Technology'
-            
-            # Ensure the detected domain is one of the standardized outputs
-            if domain in self.STANDARD_DOMAINS:
-                return domain
-            
-            # Last-resort safety
-            return 'Information Technology'
-        except Exception:
-            return 'Information Technology'
+        """Extract domain/industry."""
+        text_lower = text.lower()
+        
+        found_domains = []
+        for domain in self.DOMAINS:
+            if domain in text_lower:
+                found_domains.append(domain)
+        
+        # Return most frequent or first found
+        if found_domains:
+            return found_domains[0]
+        
+        return None
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""

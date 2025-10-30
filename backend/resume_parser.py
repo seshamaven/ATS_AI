@@ -98,17 +98,7 @@ EXTRACTION GUIDELINES:
 
 9. all_skills – Combine technical and secondary skills to form complete skill set.
 
-10. domain – Determine the most recent professional domain or industry based on the candidate’s latest experience, skills, and project context.
-
-   INSTRUCTIONS:
-   - Analyze the resume chronologically and identify the latest role or project.
-   - Return ONLY one concise domain name in a JSON array (e.g., ["Banking"]).
-   - Focus ONLY on the latest job/project’s domain — ignore older or unrelated experiences.
-   - Use ONLY one of the following standardized domains:
-     ["Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare", "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce", "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"]
-   - If the latest experience mentions technologies like .NET, Java, Python, SQL, APIs, or cloud platforms (Azure, AWS, GCP) and no clear industry is stated, default to ["Information Technology"] or ["Software Development"].
-   - If the latest project mentions a specific industry (e.g., "banking app", "hospital management system"), return that domain (e.g., ["Banking"], ["Healthcare"]).
-   - DO NOT include multiple domains or any extra text.
+10. domain – Determine all relevant IT or business domains based on the candidate’s work experience, projects, or client industry. If multiple domains apply, list them in an array format (e.g., ["Banking", "Finance", "Healthcare"]). If unclear, return ["Information Technology"].
 
 11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
 
@@ -137,7 +127,7 @@ QUALITY & VALIDATION RULES FOR ALL FIELDS:
 - Email must always be fetched if present in resume
 - Experience must be logically derived from career history
 - Skills extraction must be from the Skills/Tech Skills section only - DO NOT extract from responsibilities
-- Domain must reflect the latest experience only and contain exactly one standardized domain
+- Domain classification should be comprehensive (multi-domain where applicable)
 - Education details must not be omitted
 - If data is not available, return field as null (do not guess)
 - Output strictly valid JSON ready for database insertion
@@ -160,7 +150,7 @@ OUTPUT FORMAT (return valid JSON only):
   "technical_skills": ["skill1", "skill2", ...],
   "secondary_skills": ["skill1", "skill2", ...],
   "all_skills": ["skill1", "skill2", ...],
-  "domain": ["Banking"],
+  "domain": ["domain1", "domain2", ...],
   "education_details": ["Degree details"],
   "certifications": ["cert1", "cert2"] or null,
   "summary": "Professional summary here"

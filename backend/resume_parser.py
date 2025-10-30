@@ -888,6 +888,34 @@ Resume Text (look for name in FIRST FEW LINES):
             return found_domains[0]
         
         return None
+
+    def extract_most_recent_domain(self, text: str) -> str:
+        """Infer the most recent and relevant domain by focusing on the latest experience segment.
+        Returns a single standardized domain name as plain text.
+        """
+        # Try to isolate the Experience section
+        experience_text = text
+        try:
+            section_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
+            if section_match and section_match.group(2):
+                experience_text = section_match.group(2)
+        except Exception:
+            pass
+
+        # Assume reverse-chronological: take the top portion as most recent
+        head = experience_text.strip().split('\n')[:40]  # first ~40 lines
+        head_text = '\n'.join(head)[:2000]  # limit to first 2k chars
+
+        domains = self.extract_domain_list(head_text)
+        if domains:
+            return domains[0]
+
+        # Fallback to full-text inference
+        domains = self.extract_domain_list(text)
+        if domains:
+            return domains[0]
+
+        return 'Information Technology'
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""
@@ -1143,6 +1171,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Get additional data
                 location = self.extract_location(resume_text)
+                primary_domain = self.extract_most_recent_domain(resume_text)
                 
             else:
                 # Fallback to regex-based extraction
@@ -1227,6 +1256,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 certifications_str = ''
                 summary = ''
                 location = self.extract_location(resume_text)
+                primary_domain = self.extract_most_recent_domain(resume_text)
             
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
@@ -1248,6 +1278,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 'current_designation': current_designation,
                 'certifications': certifications_str,
                 'resume_summary': summary,
+                'primary_domain': primary_domain,
                 'resume_text': resume_text,
                 'file_name': os.path.basename(file_path),
                 'file_type': file_type,

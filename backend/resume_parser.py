@@ -98,16 +98,7 @@ EXTRACTION GUIDELINES:
 
 9. all_skills – Combine technical and secondary skills to form complete skill set.
 
-10. domain – Determine ALL relevant professional domains or industries based on the candidate’s experience, skills, and project context.
-   - Return ONLY a concise JSON array of domain names (e.g., ["Information Technology", "Banking", "Finance"]).
-   - Focus on the candidate’s actual work domain, NOT words like “travelled” or “project travel”.
-   - If the resume mentions technologies like .NET, Java, Python, SQL, APIs, or cloud platforms (Azure, AWS, etc.), the domain is likely "Information Technology" or "Software Development".
-   - If projects mention clients or industries (e.g., “banking project”, “hospital management system”), include those specific domains as well.
-   - Use ONLY standardized, commonly recognized domains from this list:
-     ["Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare", "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce", "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"]
-   - DO NOT invent new domains or return irrelevant words like “travel”, “project”, “training”, “internship”, or company names.
-   - If no clear industry context is found, default to ["Information Technology"].
-   - Output strictly as a JSON array only (no extra text, no explanations).
+10. domain – Determine all relevant IT or business domains based on the candidate’s work experience, projects, or client industry. If multiple domains apply, list them in an array format (e.g., ["Banking", "Finance", "Healthcare"]). If unclear, return ["Information Technology"].
 
 11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
 
@@ -246,10 +237,9 @@ Resume Text (look for name in FIRST FEW LINES):
     }
     
     DOMAINS = {
-        'Information Technology', 'Software Development', 'Banking', 'Finance', 'Insurance',
-        'Healthcare', 'Manufacturing', 'Retail', 'Telecom', 'Education', 'Government',
-        'Logistics', 'E-commerce', 'Construction', 'Energy', 'Automotive', 'Pharmaceutical',
-        'Real Estate', 'Media', 'Consulting'
+        'finance', 'banking', 'fintech', 'healthcare', 'insurance', 'retail', 'e-commerce',
+        'telecom', 'manufacturing', 'logistics', 'education', 'real estate', 'travel',
+        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c'
     }
     
     EDUCATION_KEYWORDS = {
@@ -820,60 +810,6 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return 0.0
     
-    def extract_domain_list(self, text: str) -> List[str]:
-        """Infer standardized domain list from resume text using keywords and the allowed DOMAINS set.
-        Defaults to ["Information Technology"] if nothing else is clearly indicated.
-        """
-        text_lower = text.lower()
-        domains: List[str] = []
-
-        # Heuristics for IT/Software
-        tech_indicators = [
-            '.net', 'dotnet', 'java', 'python', 'sql', 'api', 'apis', 'rest', 'graphql',
-            'azure', 'aws', 'gcp', 'cloud', 'docker', 'kubernetes', 'devops',
-            'javascript', 'typescript', 'react', 'angular', 'node', 'spring', 'flask', 'django'
-        ]
-        if any(tok in text_lower for tok in tech_indicators):
-            if 'Information Technology' in self.DOMAINS and 'Information Technology' not in domains:
-                domains.append('Information Technology')
-            dev_stack = ['.net', 'dotnet', 'java', 'python', 'javascript', 'typescript', 'react', 'angular', 'node', 'spring']
-            if any(tok in text_lower for tok in dev_stack):
-                if 'Software Development' in self.DOMAINS and 'Software Development' not in domains:
-                    domains.append('Software Development')
-
-        # Industry mappings
-        patterns = [
-            (r'\bbank|banking|financial services?\b', 'Banking'),
-            (r'\bfinance(?!\s*services)\b', 'Finance'),
-            (r'\binsurance|insurer|policy management\b', 'Insurance'),
-            (r'\bhospital|clinic|healthcare|medical|patient management\b', 'Healthcare'),
-            (r'\bmanufacturing|factory|plant operations\b', 'Manufacturing'),
-            (r'\bretail|point of sale|pos\b', 'Retail'),
-            (r'\btelecom|telecommunications|oss|bss\b', 'Telecom'),
-            (r'\beducation|edtech|university|school management\b', 'Education'),
-            (r'\bgovernment|public sector|e-gov\b', 'Government'),
-            (r'\blogistics|supply chain|warehouse management|wms|tms\b', 'Logistics'),
-            (r'\be-?commerce|online store|shopping cart\b', 'E-commerce'),
-            (r'\bconstruction|civil engineering|site management\b', 'Construction'),
-            (r'\benergy|utilities|power grid|oil\s*&\s*gas|oil and gas\b', 'Energy'),
-            (r'\bautomotive|vehicle telematics|oem\b', 'Automotive'),
-            (r'\bpharma|pharmaceutical|drug safety|gxp\b', 'Pharmaceutical'),
-            (r'\breal estate|property management|realtor|mls\b', 'Real Estate'),
-            (r'\bmedia|broadcast|publishing\b', 'Media'),
-            (r'\bconsulting|consultancy|advisory\b', 'Consulting'),
-        ]
-        exclusions = [r'\btravelled\b', r'\btravel\b', r'\btraining\b', r'\binternship\b', r'\bproject\b']
-
-        for pattern, name in patterns:
-            if re.search(pattern, text_lower):
-                if not any(re.search(exc, text_lower) for exc in exclusions):
-                    if name in self.DOMAINS and name not in domains:
-                        domains.append(name)
-
-        if not domains:
-            return ['Information Technology'] if 'Information Technology' in self.DOMAINS else []
-        return domains
-
     def extract_domain(self, text: str) -> Optional[str]:
         """Extract domain/industry."""
         text_lower = text.lower()
@@ -888,7 +824,6 @@ Resume Text (look for name in FIRST FEW LINES):
             return found_domains[0]
         
         return None
-
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""
@@ -1109,17 +1044,12 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
                 
-                # Get domain: prefer AI list; sanitize and/or infer, then select a single domain
+                # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
-                if not isinstance(domain_list, list) or not domain_list:
-                    domain_list = self.extract_domain_list(resume_text)
+                if isinstance(domain_list, list):
+                    domain = ', '.join(domain_list)
                 else:
-                    # Sanitize to allowed DOMAINS only
-                    allowed = set(self.DOMAINS)
-                    domain_list = [d for d in domain_list if isinstance(d, str) and d in allowed]
-                    if not domain_list:
-                        domain_list = self.extract_domain_list(resume_text)
-                domain = domain_list[0] if domain_list else ''
+                    domain = domain_list or self.extract_domain(resume_text)
                 
                 # Get education
                 education_list = ai_data.get('education_details', [])
@@ -1216,8 +1146,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
-                domain_list = self.extract_domain_list(resume_text)
-                domain = domain_list[0] if domain_list else ''
+                domain = self.extract_domain(resume_text)
                 education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details'])

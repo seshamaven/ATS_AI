@@ -98,7 +98,20 @@ EXTRACTION GUIDELINES:
 
 9. all_skills – Combine technical and secondary skills to form complete skill set.
 
-10. domain – Determine all relevant IT or business domains based on the candidate’s work experience, projects, or client industry. If multiple domains apply, list them in an array format (e.g., ["Banking", "Finance", "Healthcare"]). If unclear, return ["Information Technology"].
+10. domain – Determine ALL relevant professional domains or industries based on the candidate’s experience, skills, and project context.
+
+Instructions:
+- Return ONLY a concise JSON array of domain names (e.g., ["Information Technology", "Banking", "Finance"]).
+- Focus on the candidate’s actual work domain, NOT words like “travelled” or “project travel”.
+- If the resume mentions technologies like .NET, Java, Python, SQL, APIs, or cloud platforms (Azure, AWS, etc.), the domain is likely "Information Technology" or "Software Development".
+- If projects mention clients or industries (e.g., “banking project”, “hospital management system”), include those specific domains as well.
+- Use ONLY standardized, commonly recognized domains from this list:
+
+["Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare", "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce", "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"]
+
+- DO NOT invent new domains or return irrelevant words like “travel”, “project”, “training”, “internship”, or company names.
+- If no clear industry context is found, default to ["Information Technology"].
+- Output strictly as a JSON array only (no extra text, no explanations).
 
 11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
 
@@ -236,10 +249,75 @@ Resume Text (look for name in FIRST FEW LINES):
         'visual studio', 'visual studio code', 'eclipse', 'intellij idea', 'netbeans', 'xcode', 'android studio'
     }
     
-    DOMAINS = {
-        'finance', 'banking', 'fintech', 'healthcare', 'insurance', 'retail', 'e-commerce',
-        'telecom', 'manufacturing', 'logistics', 'education', 'real estate', 'travel',
-        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c'
+    DOMAINS_STANDARD = [
+        "Information Technology", "Software Development", "Banking", "Finance", "Insurance",
+        "Healthcare", "Manufacturing", "Retail", "Telecom", "Education", "Government",
+        "Logistics", "E-commerce", "Construction", "Energy", "Automotive", "Pharmaceutical",
+        "Real Estate", "Media", "Consulting"
+    ]
+
+    DOMAIN_KEYWORD_MAP = {
+        'information technology': 'Information Technology',
+        'software development': 'Software Development',
+        'banking': 'Banking',
+        'finance': 'Finance',
+        'insurance': 'Insurance',
+        'healthcare': 'Healthcare',
+        'manufacturing': 'Manufacturing',
+        'retail': 'Retail',
+        'telecom': 'Telecom',
+        'telecommunications': 'Telecom',
+        'education': 'Education',
+        'government': 'Government',
+        'logistics': 'Logistics',
+        'e-commerce': 'E-commerce',
+        'ecommerce': 'E-commerce',
+        'construction': 'Construction',
+        'energy': 'Energy',
+        'automotive': 'Automotive',
+        'pharmaceutical': 'Pharmaceutical',
+        'pharma': 'Pharmaceutical',
+        'real estate': 'Real Estate',
+        'media': 'Media',
+        'consulting': 'Consulting',
+
+        # Client/industry cues
+        'hospital': 'Healthcare',
+        'clinical': 'Healthcare',
+        'medical': 'Healthcare',
+        'insurance claims': 'Insurance',
+        'claims processing': 'Insurance',
+        'policy administration': 'Insurance',
+        'payments': 'Finance',
+        'trading': 'Finance',
+        'investment': 'Finance',
+        'wealth': 'Finance',
+        'capital markets': 'Finance',
+        'mortgage': 'Banking',
+        'loan': 'Banking',
+        'core banking': 'Banking',
+        'crm retail': 'Retail',
+        'pos': 'Retail',
+        'supply chain': 'Logistics',
+        'warehouse': 'Logistics',
+        'fleet': 'Logistics',
+        'telecom billing': 'Telecom',
+        '5g': 'Telecom',
+        'lte': 'Telecom',
+        'sap mm': 'Manufacturing',
+        'sap pp': 'Manufacturing',
+        'sap sd': 'Manufacturing',
+        'erp': 'Manufacturing',
+
+        # E-commerce cues
+        'catalog': 'E-commerce',
+        'checkout': 'E-commerce',
+        'cart': 'E-commerce',
+        'merchant': 'E-commerce',
+
+        # Real estate cues
+        'property': 'Real Estate',
+        'realty': 'Real Estate',
     }
     
     EDUCATION_KEYWORDS = {
@@ -810,20 +888,45 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return 0.0
     
-    def extract_domain(self, text: str) -> Optional[str]:
-        """Extract domain/industry."""
+    def extract_domains(self, text: str) -> List[str]:
+        """Return all relevant standardized domains as a list per rules."""
+        if not text:
+            return ["Information Technology"]
+
         text_lower = text.lower()
-        
-        found_domains = []
-        for domain in self.DOMAINS:
-            if domain in text_lower:
-                found_domains.append(domain)
-        
-        # Return most frequent or first found
-        if found_domains:
-            return found_domains[0]
-        
-        return None
+
+        # Tech cues imply IT/Software
+        tech_cues = [
+            '.net', 'java', 'python', 'sql', ' api', 'apis', 'rest api', 'graphql',
+            'azure', 'aws', 'gcp', 'cloud', 'docker', 'kubernetes', 'microservices',
+            'devops', 'ci/cd', 'react', 'angular', 'node', 'spring', 'django', 'flask'
+        ]
+
+        selected: List[str] = []
+
+        def add(domain_name: str):
+            if domain_name in self.DOMAINS_STANDARD and domain_name not in selected:
+                selected.append(domain_name)
+
+        # Industry/Client cues
+        for keyword, std_domain in self.DOMAIN_KEYWORD_MAP.items():
+            if keyword in text_lower:
+                add(std_domain)
+
+        # Tech cues -> IT and Software Development
+        if any(cue in text_lower for cue in tech_cues):
+            add('Information Technology')
+            add('Software Development')
+
+        if not selected:
+            selected = ['Information Technology']
+
+        return selected
+
+    def extract_domain(self, text: str) -> Optional[str]:
+        """Backward-compatible single domain: first from extract_domains or None."""
+        domains = self.extract_domains(text)
+        return domains[0] if domains else None
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""
@@ -1044,12 +1147,11 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
                 
-                # Get domains (handle both single and multiple)
+                # Get domains as list per rules, then join for storage
                 domain_list = ai_data.get('domain', [])
-                if isinstance(domain_list, list):
-                    domain = ', '.join(domain_list)
-                else:
-                    domain = domain_list or self.extract_domain(resume_text)
+                if not isinstance(domain_list, list) or not domain_list:
+                    domain_list = self.extract_domains(resume_text)
+                domain = ', '.join(domain_list)
                 
                 # Get education
                 education_list = ai_data.get('education_details', [])
@@ -1146,7 +1248,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
-                domain = self.extract_domain(resume_text)
+                domain_list = self.extract_domains(resume_text)
+                domain = ', '.join(domain_list)
                 education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details'])

@@ -249,10 +249,33 @@ Resume Text (look for name in FIRST FEW LINES):
         'visual studio', 'visual studio code', 'eclipse', 'intellij idea', 'netbeans', 'xcode', 'android studio'
     }
     
-    DOMAINS = {
-        'finance', 'banking', 'fintech', 'healthcare', 'insurance', 'retail', 'e-commerce',
-        'telecom', 'manufacturing', 'logistics', 'education', 'real estate', 'travel',
-        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c'
+    # Allowed domains (standardized)
+    ALLOWED_DOMAINS = [
+        "Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare",
+        "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce",
+        "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"
+    ]
+
+    # Keyword patterns to detect domains from resume text (all lowercase matching)
+    DOMAIN_KEYWORDS = {
+        "Banking": [r"\bbank\w*\b", r"\bcore banking\b", r"\bnbfc\b"],
+        "Finance": [r"\bfinance\b", r"\bfinancial\b", r"\basset management\b", r"\btrading\b"],
+        "Insurance": [r"\binsurance\b", r"\binsurer\b", r"\breinsurance\b", r"\bp&c\b"],
+        "Healthcare": [r"\bhealthcare\b", r"\bhospital\b", r"\bclinical\b", r"\bemr\b", r"\behr\b"],
+        "Manufacturing": [r"\bmanufactur\w*\b", r"\bplant\b", r"\bsupply chain\b"],
+        "Retail": [r"\bretail\b", r"\bpos\b", r"\bmerchandising\b"],
+        "Telecom": [r"\btelecom\b", r"\btelecommunication\w*\b", r"\b5g\b"],
+        "Education": [r"\bschool\b", r"\buniversity\b", r"\bcollege\b", r"\bteacher\b", r"\bstudent\b", r"\blms\b", r"\bedtech\b"],
+        "Government": [r"\bgovernment\b", r"\bpublic sector\b", r"\bministry\b"],
+        "Logistics": [r"\blogistic\w*\b", r"\bwarehouse\b", r"\bfleet\b", r"\bsupply chain\b"],
+        "E-commerce": [r"\be-?commerce\b", r"\bonline store\b", r"\bmarketplace\b"],
+        "Construction": [r"\bconstruction\b", r"\bepc\b", r"\binfrastructure\b"],
+        "Energy": [r"\benergy\b", r"\boil\b", r"\bgas\b", r"\bpower\b", r"\butilities\b"],
+        "Automotive": [r"\bautomotive\b", r"\boem\b", r"\bvehicle\b"],
+        "Pharmaceutical": [r"\bpharma\w*\b", r"\bdrug\b", r"\bgmp\b"],
+        "Real Estate": [r"\breal estate\b", r"\bproperty\b"],
+        "Media": [r"\bmedia\b", r"\bbroadcast\b", r"\bstreaming\b"],
+        "Consulting": [r"\bconsulting\b", r"\badvisory\b"]
     }
     
     EDUCATION_KEYWORDS = {
@@ -823,20 +846,38 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return 0.0
     
-    def extract_domain(self, text: str) -> Optional[str]:
-        """Extract domain/industry."""
+    def extract_domain(self, text: str, primary_skills_str: str = "") -> List[str]:
+        """Extract domain(s)/industry from resume text constrained to ALLOWED_DOMAINS.
+        Returns a list of standardized domain names, defaults to ["Information Technology"] if unclear.
+        """
         text_lower = text.lower()
-        
-        found_domains = []
-        for domain in self.DOMAINS:
-            if domain in text_lower:
-                found_domains.append(domain)
-        
-        # Return most frequent or first found
-        if found_domains:
-            return found_domains[0]
-        
-        return None
+
+        detected: List[str] = []
+
+        # Detect specific industry domains via keyword patterns
+        for domain_name, patterns in self.DOMAIN_KEYWORDS.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    if domain_name not in detected:
+                        detected.append(domain_name)
+                        break
+
+        # If nothing specific found, infer IT/Software from tech stack presence
+        tech_indicators = [
+            '.net', 'java', 'python', 'sql', 'api', 'rest api', 'graphql', 'azure', 'aws', 'gcp',
+            'javascript', 'typescript', 'react', 'angular', 'node', 'kubernetes', 'docker', 'microservices'
+        ]
+        combined_skills_text = f"{text_lower}\n{(primary_skills_str or '').lower()}"
+        if not detected:
+            if any(tok in combined_skills_text for tok in tech_indicators):
+                # Prefer Information Technology; Software Development can be added if clearly dev-focused
+                detected = ["Information Technology"]
+
+        # Final guard: if still empty, default to IT
+        if not detected:
+            detected = ["Information Technology"]
+
+        return detected
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""
@@ -1057,12 +1098,35 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
                 
-                # Get domains (handle both single and multiple)
-                domain_list = ai_data.get('domain', [])
-                if isinstance(domain_list, list):
-                    domain = ', '.join(domain_list)
-                else:
-                    domain = domain_list or self.extract_domain(resume_text)
+                # Get domains: normalize to allowed list and return as array
+                ai_domain = ai_data.get('domain', [])
+                normalized_domains: List[str] = []
+                if isinstance(ai_domain, list):
+                    # Keep only allowed and title-case properly
+                    for d in ai_domain:
+                        if not isinstance(d, str):
+                            continue
+                        d_clean = d.strip().lower()
+                        for allowed in self.ALLOWED_DOMAINS:
+                            if d_clean == allowed.lower():
+                                if allowed not in normalized_domains:
+                                    normalized_domains.append(allowed)
+                                break
+                elif isinstance(ai_domain, str) and ai_domain.strip():
+                    parts = [p.strip() for p in re.split(r'[;,/]', ai_domain) if p.strip()]
+                    for p in parts:
+                        p_lower = p.lower()
+                        for allowed in self.ALLOWED_DOMAINS:
+                            if p_lower == allowed.lower():
+                                if allowed not in normalized_domains:
+                                    normalized_domains.append(allowed)
+                                break
+
+                # If AI didn't return valid domains, infer from text/skills
+                if not normalized_domains:
+                    normalized_domains = self.extract_domain(resume_text, primary_skills)
+
+                domain = normalized_domains
                 
                 # Get education
                 education_list = ai_data.get('education_details', [])
@@ -1159,7 +1223,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
-                domain = self.extract_domain(resume_text)
+                domain = self.extract_domain(resume_text, primary_skills)
                 education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details'])

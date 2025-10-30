@@ -257,7 +257,10 @@ def process_resume():
                         'candidate_id': candidate_id,
                         'name': parsed_data.get('name') or 'Unknown',
                         'email': parsed_data.get('email') or 'No email',
-                        'domain': parsed_data.get('domain') or 'Unknown',
+                        'domain': (
+                            ', '.join(parsed_data.get('domain')) if isinstance(parsed_data.get('domain'), list)
+                            else (parsed_data.get('domain') or 'Unknown')
+                        ),
                         'primary_skills': parsed_data.get('primary_skills') or 'No skills',
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',
@@ -287,6 +290,15 @@ def process_resume():
                 os.remove(file_path)
             
             # Prepare response
+            # Normalize domain to array for API response; keep string for Pinecone metadata
+            parsed_domain = parsed_data.get('domain')
+            if isinstance(parsed_domain, str):
+                domain_array = [d.strip() for d in parsed_domain.split(',') if d.strip()]
+            elif isinstance(parsed_domain, list):
+                domain_array = parsed_domain
+            else:
+                domain_array = []
+
             response_data = {
                 'status': 'success',
                 'message': 'Resume processed successfully',
@@ -295,7 +307,7 @@ def process_resume():
                 'email': parsed_data.get('email'),
                 'total_experience': parsed_data.get('total_experience'),
                 'primary_skills': parsed_data.get('primary_skills'),
-                'domain': parsed_data.get('domain'),
+                'domain': domain_array,
                 'education': parsed_data.get('education'),
                 'embedding_dimensions': 'stored_in_pinecone_only',
                 'pinecone_indexed': pinecone_indexed,
@@ -404,7 +416,10 @@ def process_resume_base64():
                         'candidate_id': candidate_id,
                         'name': parsed_data.get('name') or 'Unknown',
                         'email': parsed_data.get('email') or 'No email',
-                        'domain': parsed_data.get('domain') or 'Unknown',
+                        'domain': (
+                            ', '.join(parsed_data.get('domain')) if isinstance(parsed_data.get('domain'), list)
+                            else (parsed_data.get('domain') or 'Unknown')
+                        ),
                         'primary_skills': parsed_data.get('primary_skills') or 'No skills',
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',

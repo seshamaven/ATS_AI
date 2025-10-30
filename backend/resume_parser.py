@@ -98,7 +98,20 @@ EXTRACTION GUIDELINES:
 
 9. all_skills – Combine technical and secondary skills to form complete skill set.
 
-10. domain – Determine all relevant IT or business domains based on the candidate’s work experience, projects, or client industry. If multiple domains apply, list them in an array format (e.g., ["Banking", "Finance", "Healthcare"]). If unclear, return ["Information Technology"].
+10. domain – Determine ALL relevant professional domains or industries based on the candidate’s experience, skills, and project context.
+
+Instructions:
+- Return ONLY a concise JSON array of domain names (e.g., ["Information Technology", "Banking", "Finance"]).
+- Focus on the candidate’s actual work domain, NOT words like “travelled” or “project travel”.
+- If the resume mentions technologies like .NET, Java, Python, SQL, APIs, or cloud platforms (Azure, AWS, etc.), the domain is likely "Information Technology" or "Software Development".
+- If projects mention clients or industries (e.g., “banking project”, “hospital management system”), include those specific domains as well.
+- Use ONLY standardized, commonly recognized domains from this list:
+
+["Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare", "Manufacturing", "Retail", "Telecom", "Education", "Government", "Logistics", "E-commerce", "Construction", "Energy", "Automotive", "Pharmaceutical", "Real Estate", "Media", "Consulting"]
+
+- DO NOT invent new domains or return irrelevant words like “travel”, “project”, “training”, “internship”, or company names.
+- If no clear industry context is found, default to ["Information Technology"].
+- Output strictly as a JSON array only (no extra text, no explanations).
 
 11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
 

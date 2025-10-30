@@ -912,7 +912,6 @@ Resume Text (look for name in FIRST FEW LINES):
         # Tech cues -> IT and Software Development
         if any(cue in text_lower for cue in tech_cues):
             add('Information Technology')
-            add('Software Development')
 
         if not selected:
             selected = ['Information Technology']

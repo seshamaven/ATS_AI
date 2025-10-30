@@ -267,18 +267,14 @@ Resume Text (look for name in FIRST FEW LINES):
         'retail': 'Retail',
         'telecom': 'Telecom',
         'telecommunications': 'Telecom',
-        'education': 'Education',
-        'government': 'Government',
         'logistics': 'Logistics',
         'e-commerce': 'E-commerce',
         'ecommerce': 'E-commerce',
         'construction': 'Construction',
-        'energy': 'Energy',
         'automotive': 'Automotive',
         'pharmaceutical': 'Pharmaceutical',
         'pharma': 'Pharmaceutical',
         'real estate': 'Real Estate',
-        'media': 'Media',
         'consulting': 'Consulting',
 
         # Client/industry cues

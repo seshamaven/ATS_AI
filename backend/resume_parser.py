@@ -889,33 +889,6 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
 
-    def extract_most_recent_domain(self, text: str) -> str:
-        """Infer the most recent and relevant domain by focusing on the latest experience segment.
-        Returns a single standardized domain name as plain text.
-        """
-        # Try to isolate the Experience section
-        experience_text = text
-        try:
-            section_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
-            if section_match and section_match.group(2):
-                experience_text = section_match.group(2)
-        except Exception:
-            pass
-
-        # Assume reverse-chronological: take the top portion as most recent
-        head = experience_text.strip().split('\n')[:40]  # first ~40 lines
-        head_text = '\n'.join(head)[:2000]  # limit to first 2k chars
-
-        domains = self.extract_domain_list(head_text)
-        if domains:
-            return domains[0]
-
-        # Fallback to full-text inference
-        domains = self.extract_domain_list(text)
-        if domains:
-            return domains[0]
-
-        return 'Information Technology'
     
     def extract_education(self, text: str) -> Dict[str, Any]:
         """Extract education information."""
@@ -1136,7 +1109,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
                 
-                # Get domains: prefer AI list; sanitize and/or infer using standardized list
+                # Get domain: prefer AI list; sanitize and/or infer, then select a single domain
                 domain_list = ai_data.get('domain', [])
                 if not isinstance(domain_list, list) or not domain_list:
                     domain_list = self.extract_domain_list(resume_text)
@@ -1146,7 +1119,7 @@ Resume Text (look for name in FIRST FEW LINES):
                     domain_list = [d for d in domain_list if isinstance(d, str) and d in allowed]
                     if not domain_list:
                         domain_list = self.extract_domain_list(resume_text)
-                domain = ', '.join(domain_list) if domain_list else ''
+                domain = domain_list[0] if domain_list else ''
                 
                 # Get education
                 education_list = ai_data.get('education_details', [])
@@ -1171,7 +1144,6 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Get additional data
                 location = self.extract_location(resume_text)
-                primary_domain = self.extract_most_recent_domain(resume_text)
                 
             else:
                 # Fallback to regex-based extraction
@@ -1245,7 +1217,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
                 domain_list = self.extract_domain_list(resume_text)
-                domain = ', '.join(domain_list) if domain_list else ''
+                domain = domain_list[0] if domain_list else ''
                 education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details'])
@@ -1256,7 +1228,6 @@ Resume Text (look for name in FIRST FEW LINES):
                 certifications_str = ''
                 summary = ''
                 location = self.extract_location(resume_text)
-                primary_domain = self.extract_most_recent_domain(resume_text)
             
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
@@ -1278,7 +1249,6 @@ Resume Text (look for name in FIRST FEW LINES):
                 'current_designation': current_designation,
                 'certifications': certifications_str,
                 'resume_summary': summary,
-                'primary_domain': primary_domain,
                 'resume_text': resume_text,
                 'file_name': os.path.basename(file_path),
                 'file_type': file_type,

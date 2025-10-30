@@ -97,6 +97,11 @@ class ATSDatabase:
             """
             
             # Prepare data with defaults
+            # Normalize types: convert list domains to comma-separated string
+            domain_value = resume_data.get('domain')
+            if isinstance(domain_value, list):
+                domain_value = ', '.join([str(d).strip() for d in domain_value if str(d).strip()]) or None
+
             data = {
                 'name': resume_data.get('name'),
                 'email': resume_data.get('email'),
@@ -105,7 +110,7 @@ class ATSDatabase:
                 'primary_skills': resume_data.get('primary_skills'),
                 'secondary_skills': resume_data.get('secondary_skills'),
                 'all_skills': resume_data.get('all_skills'),
-                'domain': resume_data.get('domain'),
+                'domain': domain_value,
                 'sub_domain': resume_data.get('sub_domain'),
                 'education': resume_data.get('education'),
                 'education_details': resume_data.get('education_details'),

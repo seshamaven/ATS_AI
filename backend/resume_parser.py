@@ -885,7 +885,7 @@ Resume Text (look for name in FIRST FEW LINES):
         return 0.0
     
     def extract_domains(self, text: str) -> List[str]:
-        """Return all relevant standardized domains as a list per rules."""
+        """Extract the professional domain or industry based on the context."""
         if not text:
             return ["Information Technology"]
 

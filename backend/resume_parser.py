@@ -112,9 +112,11 @@ Rules:
 
 2. If multiple business domains are relevant (e.g., Banking + Finance), include all in the array.
 
-3. Ignore education, degrees, or generic terms like "project", "training", "learning".
+3. CRITICAL - Ignore all mentions of education, study, courses, degrees (like B.Tech, MCA, MBA, B.S., M.S., Ph.D.), and do NOT return "Education Technology" or "Education" as a domain unless it specifically refers to EdTech work (software for learning platforms, LMS, student information systems, educational software development). Academic degrees and university education are NOT business domains - they are qualifications, not industry work.
 
-4. Output only the JSON array. Do not add explanations or extra text.
+4. Ignore generic terms like "project", "training", "learning" (unless part of EdTech work).
+
+5. Output only the JSON array. Do not add explanations or extra text.
 
 11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
 
@@ -254,8 +256,10 @@ Resume Text (look for name in FIRST FEW LINES):
     
     DOMAINS = {
         'finance', 'banking', 'fintech', 'healthcare', 'insurance', 'retail', 'e-commerce',
-        'telecom', 'manufacturing', 'logistics', 'education', 'real estate', 'travel',
-        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c'
+        'telecom', 'manufacturing', 'logistics', 'real estate', 'travel',
+        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c',
+        # Note: 'education' removed - only 'education technology' or 'edtech' should match (via AI prompt)
+        # Generic education/degrees are qualifications, not business domains
     }
     
     EDUCATION_KEYWORDS = {

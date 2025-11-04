@@ -118,7 +118,20 @@ Rules:
 
 5. Output only the JSON array. Do not add explanations or extra text.
 
-11. education_details – Include all degrees with full names and specializations (e.g., "MCA - Master of Computer Applications", "B.Tech in Computer Science").
+11. education – Identify the candidate's HIGHEST completed education qualification.
+
+Task:
+- Extract only the highest completed education (not all degrees).
+- Prefer completed degrees over ongoing ones.
+- Consider this hierarchy for determining the highest level: PhD > Masters > Bachelors > Diploma > High School.
+- Include specialization or major if mentioned (e.g., "B.Tech in Computer Science and Engineering").
+- Ignore certifications, trainings, and courses.
+- If no education found, return "Unknown".
+
+Return the output as a single string value (not an array):
+- Format: "Full highest degree with specialization if available"
+- Examples: "B.Tech in Computer Science and Engineering", "M.S. in Data Science", "PhD in Physics", "MCA - Master of Computer Applications"
+- If multiple degrees exist, return only the highest one.
 
 12. certifications – Capture all professional or vendor-specific certifications if mentioned.
 
@@ -169,7 +182,7 @@ OUTPUT FORMAT (return valid JSON only):
   "secondary_skills": ["skill1", "skill2", ...],
   "all_skills": ["skill1", "skill2", ...],
   "domain": ["domain1", "domain2", ...],
-  "education_details": ["Degree details"],
+  "education": "Highest completed degree with specialization (e.g., B.Tech in Computer Science) or Unknown",
   "certifications": ["cert1", "cert2"] or null,
   "summary": "Professional summary here"
 }
@@ -1098,15 +1111,26 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 domain = ', '.join(domain_list) if domain_list else ''
                 
-                # Get education
-                education_list = ai_data.get('education_details', [])
-                if isinstance(education_list, list):
-                    education_details = '\n'.join(education_list)
-                    # Extract highest degree
-                    highest_degree = education_list[0] if education_list else None
+                # Get education (now returns single string for highest degree)
+                highest_degree = ai_data.get('education') or ai_data.get('education_details')
+                
+                # Handle backward compatibility: if education_details is a list, extract first item
+                if isinstance(highest_degree, list):
+                    highest_degree = highest_degree[0] if highest_degree else None
+                elif not highest_degree:
+                    # Fallback to regex extraction if AI didn't return education
+                    education_info = self.extract_education(resume_text)
+                    highest_degree = education_info['highest_degree']
+                
+                # For education_details, use highest_degree if available, otherwise extract full details
+                if highest_degree and highest_degree != 'Unknown':
+                    education_details = highest_degree
                 else:
-                    education_details = education_list or ''
-                    highest_degree = education_details.split('\n')[0] if education_details else None
+                    # Fallback: extract full education details from text
+                    education_info = self.extract_education(resume_text)
+                    education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else ''
+                    if not highest_degree:
+                        highest_degree = education_info['highest_degree']
                 
                 # Get certifications
                 certifications = ai_data.get('certifications', [])

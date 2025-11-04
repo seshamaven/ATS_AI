@@ -22,6 +22,7 @@ import os
 import logging
 import json
 import time
+import re
 from typing import Dict, List, Any
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -595,10 +596,140 @@ def index_existing_resumes():
         logger.error(f"Error in batch indexing: {e}")
         return jsonify({'error': str(e)}), 500
 
+def parse_boolean_query(query: str) -> Dict:
+    """
+    Parse Boolean query into structured format.
+    
+    Handles:
+    - Simple queries: "python"
+    - AND queries: "python AND java"
+    - OR queries: "python OR java"
+    - Complex queries: ("Product Owner" OR "Product Manager") AND "Business" AND "Analyst"
+    
+    Example: ("Product Owner" OR "Product Manager") AND "Business" AND "Analyst"
+    Returns: {
+        'and_terms': [['Product Owner', 'Product Manager'], ['Business'], ['Analyst']]
+    }
+    """
+    # Normalize query
+    query = query.strip()
+    if not query:
+        return {'and_terms': []}
+    
+    # Extract quoted phrases first (preserve them)
+    quoted_phrases = {}
+    quote_counter = 0
+    
+    def replace_quote(match):
+        nonlocal quote_counter
+        quote_counter += 1
+        key = f"__QUOTE_{quote_counter}__"
+        quoted_phrases[key] = match.group(1)
+        return key
+    
+    # Replace quoted phrases with placeholders
+    query_normalized = re.sub(r'"([^"]+)"', replace_quote, query)
+    
+    # Split by AND (case-insensitive)
+    and_parts = re.split(r'\s+AND\s+', query_normalized, flags=re.IGNORECASE)
+    
+    # Process each AND part
+    and_terms = []
+    for part in and_parts:
+        part = part.strip()
+        if not part:
+            continue
+        
+        # Remove outer parentheses if present
+        part = part.strip('()')
+        
+        # Check for OR groups (inside parentheses or just OR separated)
+        if ' OR ' in part.upper() or '|' in part:
+            # Split by OR
+            or_terms = re.split(r'\s+OR\s+', part, flags=re.IGNORECASE)
+            or_list = [t.strip().strip('()') for t in or_terms if t.strip()]
+        else:
+            or_list = [part]
+        
+        # Replace placeholders back with quoted phrases
+        restored_terms = []
+        for term in or_list:
+            if term in quoted_phrases:
+                restored_terms.append(quoted_phrases[term])
+            else:
+                restored_terms.append(term)
+        
+        and_terms.append(restored_terms)
+    
+    return {'and_terms': and_terms}
+
+
+def build_searchable_text(metadata: Dict) -> str:
+    """Build searchable text from candidate metadata."""
+    searchable_fields = [
+        'primary_skills', 'secondary_skills', 'all_skills',
+        'resume_summary', 'current_company', 'current_designation',
+        'domain', 'education', 'name'
+    ]
+    
+    text_parts = []
+    for field in searchable_fields:
+        value = metadata.get(field, '')
+        if value and value != 'Unknown' and value != 'No skills':
+            text_parts.append(str(value).lower())
+    
+    return ' '.join(text_parts)
+
+
+def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
+    """
+    Check if candidate text matches Boolean query.
+    
+    Args:
+        candidate_text: Lowercased searchable text from candidate
+        parsed_query: Parsed Boolean query structure
+        
+    Returns:
+        True if candidate matches all AND conditions
+    """
+    and_terms = parsed_query.get('and_terms', [])
+    
+    if not and_terms:
+        return True  # No query terms means match all
+    
+    # All AND groups must match
+    for or_group in and_terms:
+        # At least one term in OR group must match
+        group_matched = False
+        for term in or_group:
+            term_lower = term.lower().strip()
+            # Remove quotes if present
+            term_lower = term_lower.strip('"')
+            
+            if not term_lower:
+                continue
+            
+            # Check if term exists in candidate text (case-insensitive)
+            if term_lower in candidate_text:
+                group_matched = True
+                break
+        
+        # If any AND group doesn't match, candidate fails
+        if not group_matched:
+            return False
+    
+    return True
+
+
 @app.route('/api/searchResumes', methods=['POST'])
 def search_resumes():
     """
-    Search resumes using Pinecone vector similarity.
+    Hybrid Boolean + Semantic Resume Search using Pinecone.
+    
+    Supports:
+    - Simple queries: "python"
+    - Boolean queries: "python AND java"
+    - Complex queries: ("Product Owner" OR "Product Manager") AND "Business" AND "Analyst"
     
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores
@@ -619,9 +750,11 @@ def search_resumes():
         # Optional parameters
         filters = data.get('filters', {})
         top_k = data.get('top_k', 10)
+        use_boolean_search = data.get('use_boolean_search', True)  # Enable Boolean by default
         
-        logger.info(f"Processing resume search query: {user_query}")
+        logger.info(f"Processing hybrid search query: {user_query}")
         logger.info(f"Applied filters: {filters}")
+        logger.info(f"Boolean search enabled: {use_boolean_search}")
         
         # Start timing for performance monitoring
         start_time = time.time()
@@ -639,13 +772,27 @@ def search_resumes():
         )
         pinecone_manager.get_or_create_index()
         
+        # === Step 1: Parse Boolean Query (if enabled) ===
+        parsed_query = None
+        if use_boolean_search and (' AND ' in user_query.upper() or ' OR ' in user_query.upper() or '(' in user_query):
+            parsed_query = parse_boolean_query(user_query)
+            logger.info(f"Parsed Boolean query: {parsed_query}")
+        else:
+            # Simple query - treat as single term
+            parsed_query = {'and_terms': [[user_query]]}
+            logger.info(f"Simple query detected, treating as single term")
+        
+        # === Step 2: Semantic Search (get broad candidate pool) ===
         # Generate embedding for query
         query_embedding = embedding_service.generate_embedding(user_query)
+        
+        # Get larger candidate pool for Boolean filtering if Boolean search is enabled
+        semantic_top_k = min(500, top_k * 10) if use_boolean_search and parsed_query else top_k
         
         # Perform vector search in Pinecone
         search_results = pinecone_manager.query_vectors(
             query_vector=query_embedding,
-            top_k=top_k,
+            top_k=semantic_top_k,
             include_metadata=True,
             filter=filters if filters else None
         )
@@ -660,9 +807,25 @@ def search_resumes():
                 'timestamp': datetime.now().isoformat()
             }), 200
         
-        # Process search results
-        candidates = []
+        # === Step 3: Apply Boolean Filtering (if enabled) ===
+        filtered_candidates = []
+        total_before_filter = len(search_results.matches)
+        
         for match in search_results.matches:
+            if use_boolean_search and parsed_query:
+                # Build searchable text from candidate metadata
+                candidate_text = build_searchable_text(match.metadata)
+                
+                # Check if candidate matches Boolean query
+                if matches_boolean_query(candidate_text, parsed_query):
+                    filtered_candidates.append(match)
+            else:
+                # No Boolean filtering, use all semantic results
+                filtered_candidates.append(match)
+        
+        # === Step 4: Format results ===
+        candidates = []
+        for match in filtered_candidates[:top_k]:
             candidate_info = {
                 'candidate_id': match.metadata.get('candidate_id'),
                 'name': match.metadata.get('name'),
@@ -684,17 +847,26 @@ def search_resumes():
         # Calculate processing time
         processing_time = int((time.time() - start_time) * 1000)
         
+        # Prepare response message
+        if use_boolean_search and parsed_query and total_before_filter > len(filtered_candidates):
+            message = f'Boolean + semantic search completed. Filtered {len(filtered_candidates)} candidates from {total_before_filter} semantic matches.'
+        else:
+            message = 'Semantic search completed'
+        
         return jsonify({
-            'message': 'Resume search completed',
+            'message': message,
             'query': user_query,
             'search_results': candidates,
             'total_matches': len(candidates),
+            'total_before_boolean_filter': total_before_filter if use_boolean_search else None,
+            'boolean_filter_applied': use_boolean_search and parsed_query is not None,
             'processing_time_ms': processing_time,
             'timestamp': datetime.now().isoformat()
         }), 200
         
     except Exception as e:
-        logger.error(f"Error in resume search: {e}")
+        logger.error(f"Error in hybrid search: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 

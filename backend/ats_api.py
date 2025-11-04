@@ -665,17 +665,31 @@ def parse_boolean_query(query: str) -> Dict:
 
 
 def build_searchable_text(metadata: Dict) -> str:
-    """Build searchable text from candidate metadata."""
+    """
+    Build searchable text from candidate metadata.
+    
+    Includes all searchable fields: skills, location, name, company, domain, education, summary.
+    This ensures Boolean queries can match candidates by any text field.
+    """
     searchable_fields = [
+        # Skills
         'primary_skills', 'secondary_skills', 'all_skills',
-        'resume_summary', 'current_company', 'current_designation',
-        'domain', 'education', 'name'
+        # Personal info
+        'name', 'email',
+        # Professional info
+        'current_company', 'current_designation', 'current_location',
+        'resume_summary',
+        # Background
+        'domain', 'education',
+        # Additional fields that might be in metadata
+        'certifications', 'preferred_locations'
     ]
     
     text_parts = []
     for field in searchable_fields:
         value = metadata.get(field, '')
-        if value and value != 'Unknown' and value != 'No skills':
+        if value and value != 'Unknown' and value != 'No skills' and value != 'No email':
+            # Convert to string and lowercase for case-insensitive matching
             text_parts.append(str(value).lower())
     
     return ' '.join(text_parts)
@@ -726,10 +740,22 @@ def search_resumes():
     """
     Hybrid Boolean + Semantic Resume Search using Pinecone.
     
-    Supports:
-    - Simple queries: "python"
-    - Boolean queries: "python AND java"
+    The system allows searching by any text (e.g., location, candidate name, skills, 
+    or keywords found in resumes) and retrieves related candidates using Pinecone's 
+    vector similarity search.
+    
+    Search Coverage:
+    - Semantic Search: Searches full resume text content via embeddings (understands meaning)
+    - Boolean Filtering: Searches metadata fields (skills, location, name, company, domain, education, summary)
+    
+    Query Types Supported:
+    - Simple queries: "python", "Bangalore", "John Doe"
+    - Boolean queries: "python AND java", "Bangalore AND AWS"
     - Complex queries: ("Product Owner" OR "Product Manager") AND "Business" AND "Analyst"
+    - Location queries: "Portland" OR "Oregon" (searches current_location field)
+    - Name queries: "John Smith" (searches name field)
+    - Skill queries: "Python" AND "Django" (searches primary_skills, secondary_skills)
+    - Company queries: "Microsoft" OR "Google" (searches current_company field)
     
     Accepts: JSON with query text and optional filters
     Returns: JSON with matching resumes and scores

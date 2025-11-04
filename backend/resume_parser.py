@@ -255,9 +255,11 @@ Resume Text (look for name in FIRST FEW LINES):
     }
     
     DOMAINS = {
-        'finance', 'banking', 'fintech', 'healthcare', 'insurance', 'retail', 'e-commerce',
-        'telecom', 'manufacturing', 'logistics', 'real estate', 'travel',
-        'energy', 'automotive', 'media', 'entertainment', 'consulting', 'saas', 'b2b', 'b2c',
+  "Information Technology","Software Development","Cloud Computing","Cybersecurity","Data Science","Blockchain",
+  "Internet of Things","Banking","Finance","Insurance","FinTech","Healthcare","Pharmaceuticals","Biotechnology",
+  "Manufacturing","Automotive","Energy","Construction","Retail","E-commerce","Logistics","Telecommunications",
+  "Media & Entertainment","Advertising & Marketing","Education Technology","Public Sector","Real Estate",
+  "Hospitality","Travel & Tourism","Agriculture","Legal & Compliance","Human Resources","Environmental & Sustainability"
         # Note: 'education' removed - only 'education technology' or 'edtech' should match (via AI prompt)
         # Generic education/degrees are qualifications, not business domains
     }
@@ -834,14 +836,28 @@ Resume Text (look for name in FIRST FEW LINES):
         """Extract domain/industry."""
         text_lower = text.lower()
         
+        # Check if tech skills are present - auto-add "Information Technology"
+        tech_skill_keywords = ['python', 'java', 'sql', 'javascript', 'html', 'css', '.net', 'c++', 
+                              'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'react', 'angular', 
+                              'node.js', 'django', 'flask', 'spring', 'mongodb', 'mysql', 'postgresql']
+        has_tech_skills = any(skill in text_lower for skill in tech_skill_keywords)
+        
         found_domains = []
         for domain in self.DOMAINS:
-            if domain in text_lower:
+            if domain.lower() in text_lower:
                 found_domains.append(domain)
+        
+        # Auto-add "Information Technology" if tech skills found
+        if has_tech_skills and "Information Technology" not in found_domains:
+            found_domains.insert(0, "Information Technology")
         
         # Return most frequent or first found
         if found_domains:
             return found_domains[0]
+        
+        # If no domain found but tech skills present, return IT
+        if has_tech_skills:
+            return "Information Technology"
         
         return None
     
@@ -1066,10 +1082,21 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
-                if isinstance(domain_list, list):
-                    domain = ', '.join(domain_list)
-                else:
-                    domain = domain_list or self.extract_domain(resume_text)
+                if not isinstance(domain_list, list):
+                    domain_list = [domain_list] if domain_list else []
+                
+                # Auto-add "Information Technology" if tech skills are present
+                if technical_skills and "Information Technology" not in domain_list:
+                    domain_list.insert(0, "Information Technology")
+                    logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
+                
+                # If no domains found, try fallback extraction
+                if not domain_list:
+                    fallback_domain = self.extract_domain(resume_text)
+                    if fallback_domain:
+                        domain_list = [fallback_domain]
+                
+                domain = ', '.join(domain_list) if domain_list else ''
                 
                 # Get education
                 education_list = ai_data.get('education_details', [])
@@ -1166,7 +1193,18 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Regex extraction completed: {len(technical_skills_list)} technical skills")
                 
+                # Extract domain - auto-add IT if tech skills present
                 domain = self.extract_domain(resume_text)
+                if not domain and technical_skills_list:
+                    domain = "Information Technology"
+                    logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
+                elif technical_skills_list and domain != "Information Technology":
+                    # Ensure IT is included if tech skills found
+                    domain_parts = [d.strip() for d in domain.split(',')] if domain else []
+                    if "Information Technology" not in domain_parts:
+                        domain_parts.insert(0, "Information Technology")
+                        domain = ', '.join(domain_parts)
+                        logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
                 education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details'])

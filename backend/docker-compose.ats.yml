@@ -7,7 +7,7 @@ services:
     container_name: ats_mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${ATS_MYSQL_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${ATS_MYSQL_DATABASE:-ats_db}
+      MYSQL_DATABASE: ${ATS_MYSQL_DATABASE:-ats_db_1}
     ports:
       - "${ATS_MYSQL_PORT:-3306}:3306"
     volumes:

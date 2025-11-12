@@ -4,11 +4,25 @@ Handles environment variables and application settings.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any
 
+# Get the directory where this config file is located
+config_dir = Path(__file__).parent.absolute()
+# Try to load .env from backend directory first, then root directory
+env_path_backend = config_dir / '.env'
+env_path_root = config_dir.parent / '.env'
+
 # Load environment variables from .env file
-load_dotenv()
+# Try backend/.env first, then root/.env
+if env_path_backend.exists():
+    load_dotenv(env_path_backend)
+elif env_path_root.exists():
+    load_dotenv(env_path_root)
+else:
+    # Fallback to default behavior (current directory)
+    load_dotenv()
 
 
 class ATSConfig:

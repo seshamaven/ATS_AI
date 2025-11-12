@@ -27,6 +27,15 @@ PyPDF2>=3.0.0
 # Resume Parsing - DOCX
 python-docx>=0.8.11
 
+# Resume Parsing - DOC (older binary format)
+# Option 1: NT-TextFileLoader (recommended - works well on Windows)
+NT-TextFileLoader>=2.0.0
+# Alternative Option 2: textract (may have installation issues on newer pip)
+# textract>=1.6.5
+# Alternative Option 3: pypandoc (requires pandoc installation)
+# pypandoc>=1.11
+# Install pandoc separately: https://pandoc.org/installing.html
+
 # Environment Configuration
 python-dotenv==1.0.0
 

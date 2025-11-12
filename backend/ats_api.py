@@ -186,7 +186,7 @@ def process_resume():
     """
     Process and store resume with metadata and embeddings.
     
-    Accepts: PDF or DOCX file
+    Accepts: PDF, DOCX, or DOC file
     Returns: JSON with candidate_id and status
     
     STATELESS GUARANTEE: This endpoint processes each resume independently.
@@ -1390,7 +1390,7 @@ def read_profiles_from_directory(profiles_dir: str) -> List[Dict]:
 
 
 def extract_text_from_file(file_path: str) -> str:
-    """Extract text from PDF/DOCX files"""
+    """Extract text from PDF, DOCX, or DOC files"""
     try:
         if file_path.lower().endswith('.pdf'):
             # Try PyPDF2 first
@@ -1425,7 +1425,7 @@ def extract_text_from_file(file_path: str) -> str:
                         logger.warning("PyMuPDF not available, using placeholder text")
                         return f"PDF file content for {os.path.basename(file_path)} - text extraction libraries not available"
         
-        elif file_path.lower().endswith(('.docx', '.doc')):
+        elif file_path.lower().endswith('.docx'):
             try:
                 from docx import Document
                 doc = Document(file_path)
@@ -1436,6 +1436,36 @@ def extract_text_from_file(file_path: str) -> str:
             except ImportError:
                 logger.warning("python-docx not available")
                 return f"DOCX file content for {os.path.basename(file_path)} - text extraction library not available"
+        
+        elif file_path.lower().endswith('.doc'):
+            # DOC files (older binary format) require different libraries
+            try:
+                # Try NT-TextFileLoader first
+                from nt_textfileloader import TextFileLoader
+                loader = TextFileLoader()
+                text = loader.load(file_path)
+                if text and isinstance(text, str) and text.strip():
+                    return text.strip()
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"NT-TextFileLoader failed: {e}, trying textract")
+            
+            try:
+                import textract
+                text = textract.process(file_path).decode('utf-8')
+                return text.strip()
+            except ImportError:
+                try:
+                    import pypandoc
+                    text = pypandoc.convert_file(file_path, 'plain')
+                    return text.strip()
+                except ImportError:
+                    logger.warning("No DOC parsing library available")
+                    return f"DOC file content for {os.path.basename(file_path)} - DOC parsing requires 'NT-TextFileLoader', 'textract', or 'pypandoc' library"
+            except Exception as e:
+                logger.error(f"Error parsing DOC file: {e}")
+                return f"Error extracting text from DOC file {os.path.basename(file_path)}: {str(e)}"
         
         return ""
         

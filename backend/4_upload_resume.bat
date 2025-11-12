@@ -20,7 +20,7 @@ echo ✓ API is running
 echo.
 
 REM Prompt for resume file
-set /p RESUME_FILE="Enter path to resume file (PDF or DOCX): "
+set /p RESUME_FILE="Enter path to resume file (PDF, DOCX, or DOC): "
 
 if not exist "%RESUME_FILE%" (
     echo.

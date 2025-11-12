@@ -1,6 +1,6 @@
 """
 Resume Parser for ATS System.
-Extracts structured information from PDF and DOCX resumes with AI-powered skill analysis.
+Extracts structured information from PDF, DOCX, and DOC resumes with AI-powered skill analysis.
 """
 
 import re
@@ -16,6 +16,21 @@ try:
     from docx import Document
 except ImportError:
     pass
+
+# DOC parsing libraries (older binary format)
+try:
+    import textract
+except ImportError:
+    textract = None
+try:
+    import pypandoc
+except ImportError:
+    pypandoc = None
+try:
+    from nt_textfileloader import TextFileLoader
+    nt_loader = TextFileLoader()
+except ImportError:
+    nt_loader = None
 
 # NLP libraries
 try:
@@ -35,170 +50,8 @@ logger = logging.getLogger(__name__)
 
 class ResumeParser:
     """Intelligent resume parser with NLP and AI capabilities."""
-    
-    # AI-powered comprehensive extraction prompt
-    AI_COMPREHENSIVE_EXTRACTION_PROMPT = """
-You are an expert resume parser trained to extract complete and accurate professional metadata from resumes.
-Analyze the provided resume text carefully and return a structured JSON with well-validated information.
 
-EXTRACTION GUIDELINES:
-
-1. full_name – Identify the candidate's ACTUAL PERSONAL NAME (e.g., "Daniel Mindlin", "John M. Smith", "VARRE DHANA LAKSHMI DURGA").
-
-   RULES FOR EXTRACTION:
-   - The name is almost always at the very top of the resume — usually line 1 or line 2
-   - The name line typically contains only 2–3 words in Title Case (e.g., Daniel Mindlin, John M. Smith, VARRE DHANA LAKSHMI DURGA)
-   - The name appears before any contact information (address, phone, email) or section headers (Education, Experience, etc.)
-   - The name should not contain punctuation like ., ,, /, or –
-   - The name should not include job titles, degrees, or descriptive text
-
-   STEP-BY-STEP STRATEGY:
-   - Check Line 1: If it contains 2–4 words, all alphabetic, and written in Title Case → this is likely the name
-   - If Line 1 fails, check Line 2 or Line 3 using the same rule
-   - Stop once a valid name is found — do not scan further down the document
-
-   WHAT TO REJECT (Never Treat as a Name):
-   - Section headers: Education, Experience, Skills, Contact, Objective, Summary
-   - Degrees: B.S. in Computer Science, B.Tech in EEE, M.S., Ph.D.
-   - Job titles or roles: Software Engineer, Project Manager, Data Analyst
-   - Organization names: Google LLC, Infosys Limited, University of California
-   - Lines with punctuation (commas, periods, dashes)
-   - Lines that include numeric characters, email addresses, or locations
-
-   EXAMPLES:
-   ✅ Correct Extraction:
-   Line 1: Daniel Mindlin → ✔ Full Name
-
-   ❌ Incorrect Extractions:
-   Line 2: 6056 Sunnycrest Drive – Oak Park, California → ✗ Address
-   Line 3: 1-(818)-665-8871 → ✗ Contact Info
-   Line 4: Education → ✗ Section Header
-   Line 5: B.S. in Statistical Data Science → ✗ Degree
-
-   EXTRACTION RULES:
-   - Check first line first (most common location for name)
-   - Look for 2–4 words in Title Case or ALL CAPS
-   - Must be alphabetic only (hyphens and periods allowed for middle initials)
-   - Stop searching after first 3 lines
-   - Reject anything with punctuation, numbers, or non-name patterns
-
-2. email – Extract the correct and primary email ID. Ensure this field is NEVER missing if present in resume.
-
-3. phone_number – Include complete phone number if found.
-
-4. total_experience – Identify total professional experience in full years from any available source: prioritize explicit mentions (e.g., "3+ Years of experience", "Over 2 years in IT", "Nearly 5 years"), otherwise calculate from job timelines (start–end dates) in the Experience section, merging overlapping periods, treating "Present/Till Date" as the current date, and ignoring months or duplicate counts.
-
-5. current_company – Capture the current/most recent employer's name.
-
-6. current_designation – Extract the most recent role or job title.
-
-7. technical_skills – Identify ALL technical skills (programming languages, tools, frameworks, cloud platforms, databases, etc.) listed ANYWHERE in the resume. Include EVERY skill mentioned.
-
-8. secondary_skills – Capture complementary or soft skills (leadership, management, communication, mentoring, etc.).
-
-9. all_skills – Combine technical and secondary skills to form complete skill set.
-
-10. domain – Extract only the professional or business domains relevant to the candidate's actual work experience, client industries, or projects.
-
-Return a JSON array of standardized domain names (e.g., ["Banking", "Finance", "Healthcare"]).
-
-Use only from this list:
-
-["Information Technology", "Software Development", "Banking", "Finance", "Insurance", "Healthcare", "Manufacturing", "Retail", "Telecommunications", "Education Technology", "E-commerce", "Logistics", "Real Estate", "Automotive", "Energy", "Construction", "Public Sector"]
-
-Rules:
-
-1. If the resume mentions any technical or programming skills such as Python, Java, SQL, C++, .NET, JavaScript, HTML, CSS, or cloud platforms (AWS, Azure, GCP), automatically include "Information Technology" in the output.
-
-2. If multiple business domains are relevant (e.g., Banking + Finance), include all in the array.
-
-3. CRITICAL - Ignore all mentions of education, study, courses, degrees (like B.Tech, MCA, MBA, B.S., M.S., Ph.D.), and do NOT return "Education Technology" or "Education" as a domain unless it specifically refers to EdTech work (software for learning platforms, LMS, student information systems, educational software development). Academic degrees and university education are NOT business domains - they are qualifications, not industry work.
-
-4. Ignore generic terms like "project", "training", "learning" (unless part of EdTech work).
-
-5. Output only the JSON array. Do not add explanations or extra text.
-
-11. education – Identify the candidate's HIGHEST completed education qualification.
-
-Task:
-- Extract only the highest completed education (not all degrees).
-- Prefer completed degrees over ongoing ones.
-- Consider this hierarchy for determining the highest level: PhD > Masters > Bachelors > Diploma > High School.
-- Include specialization or major if mentioned (e.g., "B.Tech in Computer Science and Engineering").
-- Ignore certifications, trainings, and courses.
-- If no education found, return "Unknown".
-
-Return the output as a single string value (not an array):
-- Format: "Full highest degree with specialization if available"
-- Examples: "B.Tech in Computer Science and Engineering", "M.S. in Data Science", "PhD in Physics", "MCA - Master of Computer Applications"
-- If multiple degrees exist, return only the highest one.
-
-12. certifications – Capture all professional or vendor-specific certifications if mentioned.
-
-13. summary – Provide a concise 2-3 line professional summary describing overall experience, domain focus, and key strengths.
-
-QUALITY & VALIDATION RULES FOR NAME EXTRACTION:
-- The name MUST reflect the actual candidate's personal name
-- The name field should NEVER contain:
-  * Section headers: "Education", "Experience", "Skills", "Contact", "Objective", "Summary"
-  * Academic degrees: "B.S. in Computer Science", "B.Tech in EEE", "M.S.", "Ph.D."
-  * Job titles or roles: "Software Engineer", "Project Manager", "Data Analyst"
-  * Organization names: "Google LLC", "Infosys Limited", "University of California"
-  * Lines with punctuation (commas, periods, dashes)
-  * Lines that include numeric characters, email addresses, or locations
-- The name is almost always at the very top of the resume — usually line 1 or line 2
-- The name line typically contains only 2–3 words in Title Case (e.g., Daniel Mindlin, John M. Smith, VARRE DHANA LAKSHMI DURGA)
-- Names can be in Title Case (e.g., "John Smith") or ALL CAPS (e.g., "VARRE DHANA LAKSHMI DURGA")
-- Names contain only alphabetic characters, hyphens, or periods (for middle initials like "John M. Smith")
-- Check Line 1 first: If it contains 2–4 words, all alphabetic, and written in Title Case → this is likely the name
-- If Line 1 fails, check Line 2 or Line 3 using the same rule
-- Stop once a valid name is found — do not scan further down the document
-
-QUALITY & VALIDATION RULES FOR ALL FIELDS:
-- Email must always be fetched if present in resume
-- Experience must be logically derived from career history
-- Skills extraction must be from the Skills/Tech Skills section only - DO NOT extract from responsibilities
-- Domain classification should be comprehensive (multi-domain where applicable)
-- Education details must not be omitted
-- If data is not available, return field as null (do not guess)
-- Output strictly valid JSON ready for database insertion
-
-CRITICAL: To extract the name correctly:
-1. Check Line 1 FIRST - if it contains 2-4 words in Title Case or ALL CAPS (alphabetic only, no punctuation or numbers), that IS the name
-2. If Line 1 doesn't match, check Line 2 using the same rule
-3. If Line 2 doesn't match, check Line 3 using the same rule
-4. STOP after checking first 3 lines - do not scan further
-5. REJECT section headers, degrees, job titles, organization names, and lines with punctuation/numbers
-
-OUTPUT FORMAT (return valid JSON only):
-{
-  "full_name": "Candidate's Actual Name from first line",
-  "email": "email@example.com",
-  "phone_number": "phone_number_or_null",
-  "total_experience": <numeric_value>,
-  "current_company": "Company Name or null",
-  "current_designation": "Job Title or null",
-  "technical_skills": ["skill1", "skill2", ...],
-  "secondary_skills": ["skill1", "skill2", ...],
-  "all_skills": ["skill1", "skill2", ...],
-  "domain": ["domain1", "domain2", ...],
-  "education": "Highest completed degree with specialization (e.g., B.Tech in Computer Science) or Unknown",
-  "certifications": ["cert1", "cert2"] or null,
-  "summary": "Professional summary here"
-}
-
-IMPORTANT: 
-- Return ONLY valid JSON (no markdown code blocks, no explanatory text)
-- Check Line 1 FIRST - if it contains 2-4 words in Title Case or ALL CAPS, that IS the name
-- Check only first 3 lines for the name - STOP after that
-- Reject section headers, degrees, job titles, organization names, and lines with punctuation/numbers
-- Ensure the JSON is complete and valid
-
-Resume Text (look for name in FIRST FEW LINES):
-{resume_text}
-"""
-    
-    # Comprehensive technical skills database - ONLY these should appear in primary_skills
+        # Comprehensive technical skills database - ONLY these should appear in primary_skills
     TECHNICAL_SKILLS = {
         # === Programming Languages ===
         'python', 'py', 'java', 'javascript', 'js', 'ecmascript', 'typescript', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
@@ -394,6 +247,228 @@ Resume Text (look for name in FIRST FEW LINES):
         # Generic education/degrees are qualifications, not business domains
     }
     
+    # AI-powered comprehensive extraction prompt
+    AI_COMPREHENSIVE_EXTRACTION_PROMPT = """
+🧠 ROLE / PERSONA
+
+You are an Expert Resume Parser and Metadata Extraction Specialist trained to identify and extract complete, accurate, and ATS-ready professional data from unstructured resumes.
+
+Your behavior and purpose:
+
+Act as a senior technical recruiter assistant who understands resume semantics, structure, and ATS taxonomy.
+
+Analyze resumes systematically to identify factual candidate details.
+
+Ensure the extracted data is accurate, complete, normalized, and JSON-valid.
+
+Never generate commentary, guesses, or summaries beyond required fields.
+
+Your only task is to return validated structured JSON output.
+
+🎯 GOAL
+
+Your goal is to analyze the provided resume text and return a structured JSON containing validated professional metadata, including:
+
+Personal Information
+
+Career Details
+
+Skills
+
+Domain
+
+Education
+
+Certifications
+
+Summary
+
+The extracted JSON must be database-ready and syntactically valid (no markdown or extra text).
+
+⚙️ EXTRACTION GUIDELINES
+1. full_name
+
+Identify the candidate’s actual personal name.
+Follow these detailed rules and rejection patterns:
+
+Rules for Extraction:
+
+Name is usually on line 1 or 2 (Title Case or ALL CAPS).
+
+Should contain 2–4 alphabetic words only.
+
+Reject anything containing punctuation, digits, or organization names.
+
+Stop searching after the first 3 lines.
+
+Reject:
+
+Section headers (Education, Experience, etc.)
+
+Degrees, Job Titles, or Organization Names.
+
+Examples:
+✅ Correct: Daniel Mindlin, VARRE DHANA LAKSHMI DURGA
+❌ Incorrect: Education, Infosys, B.Tech in EEE
+
+2. email
+
+Extract the primary and valid email address.
+
+Must be RFC-compliant.
+
+Never omit if present.
+
+3. phone_number
+
+Extract a valid phone number, including country code if available.
+
+4. total_experience
+
+Identify total professional experience in years using explicit mentions or computed from job dates.
+
+Prefer explicit text like “5+ years of experience”.
+
+If not stated, calculate from earliest to latest employment dates, ignoring overlaps.
+
+Use integers or floats for years.
+
+5. current_company
+
+Extract the current or most recent employer name.
+
+6. current_designation
+
+Extract the most recent job title.
+
+7. technical_skills
+
+Capture all technical skills (programming languages, frameworks, databases, cloud, DevOps, tools).
+Use your internal technical skill dictionary for normalization and matching, also use the sample skills from the sample skills {{TECHNICAL_SKILLS}} if it is present.
+
+8. secondary_skills
+
+Extract non-technical or complementary skills (communication, leadership, project management, mentoring).
+
+9. all_skills
+
+Combine technical and secondary skills into one unified list.
+
+10. domain
+
+Extract professional domains or industries (not education fields).
+Use the sample list as reference :
+ {{DOMAINS}}
+
+Rules:
+
+If technical keywords (Python, Java, AWS, etc.) appear → include "Information Technology".
+
+Include multiple relevant business domains (e.g., "Banking", "Finance").
+
+Ignore educational degrees — only professional domains count.
+
+11. education
+
+Extract only the highest completed degree.
+
+Include specialization if available (e.g., “B.Tech in Computer Science”).
+
+Exclude certifications, courses, and trainings.
+
+If multiple degrees exist, return only the highest one.
+
+If no education found → "Unknown".
+
+Format:
+"M.S. in Data Science"
+"B.Tech in Computer Science and Engineering"
+
+12. certifications
+
+Capture all professional or vendor certifications (e.g., AWS Certified Developer, PMP).
+
+13. summary
+
+Provide a concise 2–3 line professional summary describing:
+
+Experience in years
+
+Domain focus
+
+Technical strengths
+
+Avoid generic summaries (“Hardworking individual”) — focus on quantifiable professional traits.
+
+⚙️ QUALITY & VALIDATION RULES
+
+For full_name:
+
+Must not include punctuation, numbers, company, or degree text.
+
+Must appear within first 3 lines.
+
+Use alphabetic words only.
+
+For All Fields:
+
+Never guess or assume missing data.
+
+If data unavailable → return null.
+
+Ensure consistent JSON formatting.
+
+Each skill or domain must be part of your known taxonomy.
+
+💡 OUTPUT FORMAT
+
+Return a single valid JSON object — no markdown, no explanation text.
+
+Example:
+
+{
+  "full_name": "John M. Smith",
+  "email": "john.smith@gmail.com",
+  "phone_number": "+1-9876543210",
+  "total_experience": 6,
+  "current_company": "Infosys",
+  "current_designation": "Software Engineer",
+  "technical_skills": ["Java", "Spring Boot", "ReactJS"],
+  "secondary_skills": ["Leadership", "Team Management"],
+  "all_skills": ["Java", "Spring Boot", "ReactJS", "Leadership", "Team Management"],
+  "domain": ["Information Technology", "Banking"],
+  "education": "B.Tech in Computer Science",
+  "certifications": ["AWS Certified Developer"],
+  "summary": "6 years of experience in Java and ReactJS with strong exposure to banking domain."
+}
+
+🧮 EVALUATION CRITERIA
+Criterion	Weight	Description
+Accuracy	35%	All fields correctly extracted
+Completeness	25%	All major fields present
+JSON Validity	20%	Output is machine-parseable
+Skill Categorization	10%	Technical vs. soft skills are separated correctly
+Neutrality	10%	No added commentary or inferred data
+🧭 TONE AND STYLE
+
+Objective, analytical, and strictly data-driven.
+
+Do not infer, assume, or explain — extract only.
+
+Output must be clean JSON, no markdown formatting.
+
+🧰 ADDITIONAL REFERENCE DICTIONARIES
+
+TECHNICAL_SKILLS → your full skill taxonomy (programming, cloud, databases, etc.)
+DOMAINS → pre-defined industry domain list
+EDUCATION_KEYWORDS → used to identify degrees and specializations
+
+Resume Text (look for name in FIRST FEW LINES):
+{resume_text}
+"""
+    
+
+    
     EDUCATION_KEYWORDS = {
         'b.tech', 'b.e.', 'bachelor', 'btech', 'bca', 'bsc', 'ba',
         'm.tech', 'm.e.', 'master', 'mtech', 'mca', 'msc', 'mba', 'ma',
@@ -482,14 +557,56 @@ Resume Text (look for name in FIRST FEW LINES):
             logger.error(f"Error parsing DOCX: {e}")
             raise ValueError(f"Failed to parse DOCX: {str(e)}")
     
+    def parse_doc(self, file_path: str) -> str:
+        """Extract text from DOC file (older binary format)."""
+        try:
+            # Try NT-TextFileLoader first (works well on Windows)
+            if nt_loader is not None:
+                try:
+                    text = nt_loader.load(file_path)
+                    if text and isinstance(text, str) and text.strip():
+                        return text.strip()
+                except Exception as e:
+                    logger.warning(f"NT-TextFileLoader failed for DOC file: {e}, trying textract")
+            
+            # Try textract if available
+            if textract is not None:
+                try:
+                    text = textract.process(file_path).decode('utf-8')
+                    return text.strip()
+                except Exception as e:
+                    logger.warning(f"textract failed for DOC file: {e}, trying pypandoc")
+            
+            # Fallback to pypandoc if available
+            if pypandoc is not None:
+                try:
+                    text = pypandoc.convert_file(file_path, 'plain')
+                    return text.strip()
+                except Exception as e:
+                    logger.warning(f"pypandoc failed for DOC file: {e}")
+            
+            # If no library is available, raise informative error
+            raise ImportError(
+                "DOC file parsing requires one of: 'NT-TextFileLoader', 'textract', or 'pypandoc' library. "
+                "Install with: pip install NT-TextFileLoader OR pip install textract OR pip install pypandoc"
+            )
+            
+        except ImportError:
+            raise
+        except Exception as e:
+            logger.error(f"Error parsing DOC: {e}")
+            raise ValueError(f"Failed to parse DOC: {str(e)}")
+    
     def extract_text_from_file(self, file_path: str, file_type: str) -> str:
         """Extract text based on file type."""
         file_type = file_type.lower()
         
         if file_type == 'pdf':
             return self.parse_pdf(file_path)
-        elif file_type in ['docx', 'doc']:
+        elif file_type == 'docx':
             return self.parse_docx(file_path)
+        elif file_type == 'doc':
+            return self.parse_doc(file_path)
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
     
@@ -632,7 +749,7 @@ Resume Text (look for name in FIRST FEW LINES):
         
         try:
             # Prepare the prompt with resume text (increase limit for comprehensive extraction)
-            prompt = self.AI_COMPREHENSIVE_EXTRACTION_PROMPT.format(resume_text=text[:16000])
+            prompt = self.AI_COMPREHENSIVE_EXTRACTION_PROMPT.replace("{resume_text}", text[:16000])
             
             # Call AI API
             response = self.ai_client.chat.completions.create(
@@ -754,8 +871,8 @@ Resume Text (look for name in FIRST FEW LINES):
             all_skills_list = ai_data.get('all_skills', [])
             
             return {
-                'primary_skills': technical_skills[:15],
-                'secondary_skills': secondary_skills + technical_skills[15:],
+                'primary_skills': technical_skills,  # All technical skills
+                'secondary_skills': secondary_skills,  # Non-technical skills only
                 'all_skills': all_skills_list,
                 'ai_analysis': {
                     'total_experience': ai_data.get('total_experience', 0),
@@ -804,7 +921,7 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
-    def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: int = 15) -> List[str]:
+    def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: Optional[int] = None) -> List[str]:
         """Extract skills from resume text using word-boundary matching with TECHNICAL_SKILLS."""
         logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
         resume_text_lower = resume_text.lower()
@@ -830,7 +947,7 @@ Resume Text (look for name in FIRST FEW LINES):
                     existing_skills.append(skill)
                     existing_skills_set.add(skill_lower)
                     logger.info(f"Added skill via word-boundary matching: {skill}")
-                    if len(existing_skills) >= max_skills:  # Stop after finding max skills
+                    if max_skills is not None and len(existing_skills) >= max_skills:  # Stop after finding max skills (if limit set)
                         break
         
         return existing_skills
@@ -1193,11 +1310,11 @@ Resume Text (look for name in FIRST FEW LINES):
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
                 technical_skills = self._extract_skills_from_text_with_word_boundaries(
-                    resume_text, technical_skills, technical_skills_lower, max_skills=15
+                    resume_text, technical_skills, technical_skills_lower, max_skills=None  # No limit - extract all skills
                 )
                 
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
-                primary_skills = ', '.join(technical_skills[:15]) if technical_skills else ''  # Top 15 technical skills
+                primary_skills = ', '.join(technical_skills) if technical_skills else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills) if secondary_skills else ''  # Non-technical skills
                 
                 # all_skills = primary_skills + secondary_skills
@@ -1317,11 +1434,11 @@ Resume Text (look for name in FIRST FEW LINES):
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
                 technical_skills_list = self._extract_skills_from_text_with_word_boundaries(
-                    resume_text, technical_skills_list, technical_skills_set, max_skills=15
+                    resume_text, technical_skills_list, technical_skills_set, max_skills=None  # No limit - extract all skills
                 )
                 
                 # Format primary_skills after potential lenient extraction
-                primary_skills = ', '.join(technical_skills_list[:15]) if technical_skills_list else ''
+                primary_skills = ', '.join(technical_skills_list) if technical_skills_list else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills_list) if secondary_skills_list else ''
                 
                 # all_skills = primary_skills + secondary_skills (combine lists, then join)

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     primary_skills TEXT COMMENT 'Comma-separated primary skills',
     secondary_skills TEXT COMMENT 'Comma-separated secondary skills',
     all_skills TEXT COMMENT 'All extracted skills',
+    profile_type VARCHAR(100) DEFAULT 'Generalist' COMMENT 'Primary role classification (Java, .Net, SAP, etc.)',
     
     -- Domain and Industry
     domain VARCHAR(255) COMMENT 'Primary domain/industry',
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     INDEX idx_name (name),
     INDEX idx_email (email),
     INDEX idx_domain (domain),
+    INDEX idx_profile_type (profile_type),
     INDEX idx_experience (total_experience),
     INDEX idx_status (status),
     INDEX idx_created_at (created_at),

@@ -47,6 +47,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+from profile_type_utils import determine_primary_profile_type
+
 
 class ResumeParser:
     """Intelligent resume parser with NLP and AI capabilities."""
@@ -1555,6 +1557,9 @@ Resume Text (look for name in FIRST FEW LINES):
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
             
+            # Derive canonical profile type before persisting metadata
+            profile_type = determine_primary_profile_type(primary_skills, secondary_skills_str, resume_text)
+            
             # Prepare parsed data
             parsed_data = {
                 'name': name,
@@ -1576,7 +1581,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 'file_name': os.path.basename(file_path),
                 'file_type': file_type,
                 'file_size_kb': int(file_size_kb),
-                'ai_extraction_used': ai_data is not None
+                'ai_extraction_used': ai_data is not None,
+                'profile_type': profile_type
             }
             
             logger.info(f"Successfully parsed resume for: {name}")

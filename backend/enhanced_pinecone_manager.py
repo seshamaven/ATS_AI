@@ -272,7 +272,7 @@ class EnhancedPineconeManager:
         for key, value in metadata.items():
             if value is None:
                 # Convert NULL values to appropriate defaults
-                if key in ['name', 'email', 'domain', 'education', 'file_type', 'source']:
+                if key in ['name', 'email', 'domain', 'education', 'file_type', 'source', 'profile_type']:
                     cleaned_metadata[key] = 'Unknown'
                 elif key in ['primary_skills', 'secondary_skills', 'all_skills']:
                     cleaned_metadata[key] = 'No skills'

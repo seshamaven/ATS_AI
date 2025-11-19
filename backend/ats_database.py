@@ -10,6 +10,11 @@ import mysql.connector
 from mysql.connector import Error
 from datetime import datetime
 from ats_config import ATSConfig
+from profile_type_utils import (
+    DEFAULT_PROFILE_TYPE,
+    canonicalize_profile_type,
+    canonicalize_profile_type_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +78,7 @@ class ATSDatabase:
             query = """
                 INSERT INTO resume_metadata (
                     name, email, phone,
-                    total_experience, primary_skills, secondary_skills, all_skills,
+                    total_experience, primary_skills, secondary_skills, all_skills, profile_type,
                     domain, sub_domain,
                     education, education_details,
                     current_location, preferred_locations,
@@ -84,7 +89,7 @@ class ATSDatabase:
                     status
                 ) VALUES (
                     %(name)s, %(email)s, %(phone)s,
-                    %(total_experience)s, %(primary_skills)s, %(secondary_skills)s, %(all_skills)s,
+                    %(total_experience)s, %(primary_skills)s, %(secondary_skills)s, %(all_skills)s, %(profile_type)s,
                     %(domain)s, %(sub_domain)s,
                     %(education)s, %(education_details)s,
                     %(current_location)s, %(preferred_locations)s,
@@ -105,6 +110,9 @@ class ATSDatabase:
                 'primary_skills': resume_data.get('primary_skills'),
                 'secondary_skills': resume_data.get('secondary_skills'),
                 'all_skills': resume_data.get('all_skills'),
+                'profile_type': canonicalize_profile_type(
+                    resume_data.get('profile_type', DEFAULT_PROFILE_TYPE)
+                ),
                 'domain': resume_data.get('domain'),
                 'sub_domain': resume_data.get('sub_domain'),
                 'education': resume_data.get('education'),
@@ -143,7 +151,7 @@ class ATSDatabase:
             query = """
                 SELECT 
                     candidate_id, name, email, phone,
-                    total_experience, primary_skills, secondary_skills, all_skills,
+                    total_experience, primary_skills, secondary_skills, all_skills, profile_type,
                     domain, sub_domain,
                     education, education_details,
                     current_location, preferred_locations,
@@ -196,6 +204,11 @@ class ATSDatabase:
                     primary_skills,
                     domain,
                     education,
+                    profile_type,
+                    current_location,
+                    current_company,
+                    current_designation,
+                    resume_summary,
                     file_name,
                     file_type,
                     file_size_kb,
@@ -234,10 +247,134 @@ class ATSDatabase:
         except Error as e:
             logger.error(f"Error searching resumes by skills: {e}")
             return []
+
+    def filter_candidates(self, filters: Dict[str, Any], limit: int = 10000) -> List[Dict[str, Any]]:
+        """
+        Apply structured metadata filters before semantic/vector search.
+        """
+        def _listify(value):
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [v for v in value if v not in (None, '', [])]
+            if isinstance(value, str):
+                trimmed = value.strip()
+                return [trimmed] if trimmed else []
+            return [value]
+        
+        try:
+            query = """
+                SELECT 
+                    candidate_id,
+                    name,
+                    email,
+                    phone,
+                    total_experience,
+                    primary_skills,
+                    secondary_skills,
+                    all_skills,
+                    profile_type,
+                    domain,
+                    sub_domain,
+                    education,
+                    education_details,
+                    current_location,
+                    preferred_locations,
+                    current_company,
+                    current_designation,
+                    notice_period,
+                    expected_salary,
+                    current_salary,
+                    resume_summary,
+                    status,
+                    created_at,
+                    updated_at
+                FROM resume_metadata
+                WHERE status = %s
+            """
+            params = ['active']
+            conditions = []
+            filters = filters or {}
+            
+            min_experience = filters.get('min_experience')
+            max_experience = filters.get('max_experience')
+            if min_experience is not None:
+                conditions.append("total_experience >= %s")
+                params.append(float(min_experience))
+            if max_experience is not None:
+                conditions.append("total_experience <= %s")
+                params.append(float(max_experience))
+            
+            education_terms = _listify(filters.get('education'))
+            if education_terms:
+                clauses = []
+                for term in education_terms:
+                    clauses.append("LOWER(education) LIKE %s")
+                    params.append(f"%{term.lower()}%")
+                conditions.append(f"({' OR '.join(clauses)})")
+            
+            domain_terms = _listify(filters.get('domain') or filters.get('domains'))
+            if domain_terms:
+                clauses = []
+                for term in domain_terms:
+                    clauses.append("LOWER(domain) LIKE %s")
+                    params.append(f"%{term.lower()}%")
+                conditions.append(f"({' OR '.join(clauses)})")
+            
+            location_terms = _listify(
+                filters.get('current_location') or filters.get('location') or filters.get('locations')
+            )
+            if location_terms:
+                clauses = []
+                for term in location_terms:
+                    clauses.append("LOWER(current_location) LIKE %s")
+                    params.append(f"%{term.lower()}%")
+                conditions.append(f"({' OR '.join(clauses)})")
+            
+            title_terms = _listify(filters.get('current_designation') or filters.get('job_title'))
+            if title_terms:
+                clauses = []
+                for term in title_terms:
+                    clauses.append("LOWER(current_designation) LIKE %s")
+                    params.append(f"%{term.lower()}%")
+                conditions.append(f"({' OR '.join(clauses)})")
+            
+            profile_types = canonicalize_profile_type_list(
+                _listify(filters.get('profile_type') or filters.get('profile_types'))
+            )
+            if profile_types:
+                placeholders = ', '.join(['%s'] * len(profile_types))
+                conditions.append(f"profile_type IN ({placeholders})")
+                params.extend(profile_types)
+            
+            skill_terms = _listify(filters.get('primary_skills') or filters.get('skills'))
+            if skill_terms:
+                clauses = []
+                for term in skill_terms:
+                    like_term = f"%{term.lower()}%"
+                    clauses.append("(LOWER(primary_skills) LIKE %s OR LOWER(all_skills) LIKE %s)")
+                    params.extend([like_term, like_term])
+                # Require all requested skills to be present
+                conditions.append(f"({' AND '.join(clauses)})")
+            
+            if conditions:
+                query += " AND " + " AND ".join(conditions)
+            
+            query += " ORDER BY updated_at DESC LIMIT %s"
+            params.append(limit)
+            
+            self.cursor.execute(query, tuple(params))
+            return self.cursor.fetchall()
+        except Error as e:
+            logger.error(f"Error applying structured filters: {e}")
+            return []
     
     def update_resume(self, candidate_id: int, updates: Dict[str, Any]) -> bool:
         """Update resume fields."""
         try:
+            if 'profile_type' in updates:
+                updates['profile_type'] = canonicalize_profile_type(updates['profile_type'])
+            
             # Build dynamic UPDATE query
             set_clauses = []
             values = []

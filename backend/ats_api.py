@@ -23,7 +23,7 @@ import logging
 import json
 import time
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
@@ -39,6 +39,11 @@ from ats_config import ATSConfig
 from ats_database import create_ats_database
 from resume_parser import ResumeParser
 from ranking_engine import create_ranking_engine
+from profile_type_utils import (
+    detect_profile_types_from_text,
+    infer_profile_type_from_requirements,
+    canonicalize_profile_type_list,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -120,11 +125,212 @@ class EmbeddingService:
             raise
 
 
+# Constants controlling layered search
+SQL_LAYER_LIMIT = int(os.getenv('ATS_SQL_LAYER_LIMIT', '10000'))
+VECTOR_CHUNK_SIZE = int(os.getenv('ATS_VECTOR_CHUNK_SIZE', '200'))
+LLM_REFINEMENT_WINDOW = int(os.getenv('ATS_LLM_REFINEMENT_WINDOW', '60'))
+
+
+class LLMRefinementService:
+    """Optional third-layer refinement using Azure/OpenAI chat completions."""
+    
+    def __init__(self):
+        self.client = None
+        self.model = None
+        try:
+            if ATSConfig.AZURE_OPENAI_ENDPOINT:
+                self.client = AzureOpenAI(
+                    api_key=ATSConfig.AZURE_OPENAI_API_KEY,
+                    api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
+                    azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
+                )
+                self.model = ATSConfig.AZURE_OPENAI_MODEL
+            elif ATSConfig.OPENAI_API_KEY:
+                self.client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
+                self.model = ATSConfig.OPENAI_MODEL
+        except Exception as exc:
+            logger.warning(f"LLM refinement disabled: {exc}")
+            self.client = None
+            self.model = None
+    
+    @property
+    def available(self) -> bool:
+        return self.client is not None and self.model is not None
+    
+    def rerank_candidates(self, job_context: str, candidates: List[Dict[str, Any]], top_n: int = 50) -> List[Dict[str, Any]]:
+        if not self.available or not candidates:
+            return candidates
+        
+        subset = candidates[:top_n]
+        try:
+            prompt_candidates = []
+            for idx, candidate in enumerate(subset, start=1):
+                prompt_candidates.append({
+                    'rank': idx,
+                    'candidate_id': candidate.get('candidate_id'),
+                    'name': candidate.get('name'),
+                    'profile_type': candidate.get('profile_type'),
+                    'current_designation': candidate.get('current_designation'),
+                    'primary_skills': candidate.get('primary_skills'),
+                    'total_experience': candidate.get('total_experience'),
+                    'domain': candidate.get('domain'),
+                    'match_score': candidate.get('match_score')
+                })
+            
+            prompt = (
+                "You are an expert technical recruiter. "
+                "Given the job requirements and candidate summaries below, "
+                "return a JSON array named ranking where each entry contains "
+                "candidate_id, rank (1 is best) and a short reason. "
+                "Only rerank the provided candidates; do not invent new ids.\n\n"
+                f"Job context:\n{job_context[:2000]}\n\n"
+                f"Candidates:\n{json.dumps(prompt_candidates, ensure_ascii=False)}"
+            )
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You rank technical candidates objectively."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
+            content = response.choices[0].message.content.strip()
+            parsed = json.loads(content)
+            ranking = parsed.get('ranking', [])
+            rank_order = {entry['candidate_id']: entry for entry in ranking if 'candidate_id' in entry}
+            
+            if not rank_order:
+                return candidates
+            
+            def sort_key(candidate):
+                data = rank_order.get(candidate.get('candidate_id'))
+                if data:
+                    return data.get('rank', 1000)
+                return 1000 + candidates.index(candidate)
+            
+            ordered = sorted(candidates, key=sort_key)
+            
+            # Attach LLM reasoning if available
+            for candidate in ordered:
+                llm_meta = rank_order.get(candidate.get('candidate_id'))
+                if llm_meta:
+                    candidate.setdefault('layer_scores', {})['llm_rank'] = llm_meta.get('rank')
+                    candidate['llm_reason'] = llm_meta.get('reason')
+            
+            return ordered
+        except Exception as exc:
+            logger.warning(f"LLM refinement failed, falling back to vector order: {exc}")
+            return candidates
+
+
 # Initialize services as global singletons
 # SAFETY: These are stateless - they only hold configuration and thread-safe clients.
 # No request data is stored in these instances, ensuring complete request isolation.
 embedding_service = EmbeddingService()
 resume_parser = ResumeParser()
+llm_refinement_service = LLMRefinementService()
+
+
+def chunk_list(items: List[Any], chunk_size: int) -> List[List[Any]]:
+    """Yield evenly sized chunks from a list."""
+    return [items[i:i + chunk_size] for i in range(0, len(items), max(chunk_size, 1))]
+
+
+def normalize_filter_value(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [v for v in value if v not in (None, '', [])]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return [value]
+
+
+def build_structured_filters(raw_filters: Dict[str, Any], query_text: str) -> Dict[str, Any]:
+    """Merge user-provided filters with inferred profile type from the query or skill filters."""
+    structured: Dict[str, Any] = {}
+    raw_filters = raw_filters or {}
+    
+    passthrough_keys = [
+        'education', 'domain', 'domains', 'current_location', 'locations',
+        'current_designation', 'job_title', 'primary_skills', 'skills',
+        'min_experience', 'max_experience'
+    ]
+    for key in passthrough_keys:
+        if key in raw_filters and raw_filters[key]:
+            structured[key] = raw_filters[key]
+    
+    # Honor explicitly provided profile type filters and normalize them
+    provided_profile_filters: List[str] = []
+    for key in ('profile_type', 'profile_types'):
+        if key in raw_filters and raw_filters[key]:
+            provided_profile_filters.extend(normalize_filter_value(raw_filters[key]))
+    canonical_profiles = canonicalize_profile_type_list(provided_profile_filters)
+    if canonical_profiles:
+        structured['profile_type'] = canonical_profiles
+    
+    # Auto-infer profile type if not provided
+    if 'profile_type' not in structured:
+        hint_sources: List[str] = []
+        if query_text:
+            hint_sources.append(query_text)
+        
+        hint_keys = [
+            'primary_skills', 'skills', 'job_title', 'current_designation',
+            'domain', 'domains'
+        ]
+        for key in hint_keys:
+            if not raw_filters.get(key):
+                continue
+            values = normalize_filter_value(raw_filters[key])
+            hint_sources.extend(values)
+        
+        inferred = detect_profile_types_from_text(*hint_sources)
+        if inferred:
+            structured['profile_type'] = canonicalize_profile_type_list(inferred[:1]) or inferred[:1]
+    
+    return structured
+
+
+def build_pinecone_metadata_filter(structured_filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Build a Pinecone metadata filter using profile_type and designation hints so that
+    vector searches respect the same structured constraints as the SQL layer.
+    """
+    if not structured_filters:
+        return None
+    
+    clauses: List[Dict[str, Any]] = []
+    
+    profile_types = structured_filters.get('profile_type')
+    if profile_types:
+        clauses.append({'profile_type': {'$in': profile_types}})
+    
+    designation_terms: List[str] = []
+    for key in ('current_designation', 'job_title'):
+        if structured_filters.get(key):
+            designation_terms.extend(normalize_filter_value(structured_filters[key]))
+    designation_terms = [term for term in designation_terms if term]
+    if designation_terms:
+        clauses.append({'current_designation': {'$in': designation_terms}})
+    
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {'$and': clauses}
+
+
+def merge_pinecone_filters(*filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Combine multiple Pinecone filter fragments with logical AND."""
+    clauses = [f for f in filters if f]
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {'$and': clauses}
 
 
 def allowed_file(filename: str) -> bool:
@@ -262,6 +468,9 @@ def process_resume():
                         'primary_skills': parsed_data.get('primary_skills') or 'No skills',
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',
+                        'profile_type': parsed_data.get('profile_type') or 'Generalist',
+                        'current_location': parsed_data.get('current_location') or 'Unknown',
+                        'current_designation': parsed_data.get('current_designation') or 'Unknown',
                         'file_type': file_type or 'Unknown',
                         'source': 'resume_upload',
                         'created_at': datetime.now().isoformat()
@@ -298,6 +507,7 @@ def process_resume():
                 'primary_skills': parsed_data.get('primary_skills'),
                 'domain': parsed_data.get('domain'),
                 'education': parsed_data.get('education'),
+                'profile_type': parsed_data.get('profile_type'),
                 'embedding_dimensions': 'stored_in_pinecone_only',
                 'pinecone_indexed': pinecone_indexed,
                 'timestamp': datetime.now().isoformat()
@@ -409,6 +619,9 @@ def process_resume_base64():
                         'primary_skills': parsed_data.get('primary_skills') or 'No skills',
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',
+                        'profile_type': parsed_data.get('profile_type') or 'Generalist',
+                        'current_location': parsed_data.get('current_location') or 'Unknown',
+                        'current_designation': parsed_data.get('current_designation') or 'Unknown',
                         'file_type': file_type or 'Unknown',
                         'source': 'resume_upload',
                         'created_at': datetime.now().isoformat()
@@ -441,6 +654,7 @@ def process_resume_base64():
                 'primary_skills': parsed_data.get('primary_skills'),
                 'domain': parsed_data.get('domain'),
                 'education': parsed_data.get('education'),
+                'profile_type': parsed_data.get('profile_type'),
                 'embedding_dimensions': 'stored_in_pinecone_only',
                 'pinecone_indexed': pinecone_indexed,
                 'timestamp': datetime.now().isoformat()
@@ -547,6 +761,9 @@ def index_existing_resumes():
                     'primary_skills': resume.get('primary_skills') or 'No skills',
                     'total_experience': resume.get('total_experience', 0),
                     'education': resume.get('education') or 'Unknown',
+                    'profile_type': resume.get('profile_type') or 'Generalist',
+                    'current_location': resume.get('current_location') or 'Unknown',
+                    'current_designation': resume.get('current_designation') or 'Unknown',
                     'file_type': resume.get('file_type') or 'Unknown',
                     'source': 'batch_indexing',
                     'created_at': resume.get('created_at', datetime.now().isoformat())
@@ -777,6 +994,8 @@ def search_resumes():
         filters = data.get('filters', {})
         top_k = data.get('top_k', 10)
         use_boolean_search = data.get('use_boolean_search', True)  # Enable Boolean by default
+        use_llm_refinement = data.get('use_llm_refinement', False)
+        llm_window = data.get('llm_window_size', LLM_REFINEMENT_WINDOW)
         
         logger.info(f"Processing hybrid search query: {user_query}")
         logger.info(f"Applied filters: {filters}")
@@ -808,84 +1027,204 @@ def search_resumes():
             parsed_query = {'and_terms': [[user_query]]}
             logger.info(f"Simple query detected, treating as single term")
         
-        # === Step 2: Semantic Search (get broad candidate pool) ===
-        # Generate embedding for query
+        # === Step 2: Generate Embedding Once ===
         query_embedding = embedding_service.generate_embedding(user_query)
         
-        # Get larger candidate pool for Boolean filtering if Boolean search is enabled
-        semantic_top_k = min(500, top_k * 10) if use_boolean_search and parsed_query else top_k
+        # === Layer 1: SQL metadata filtering ===
+        structured_filters = build_structured_filters(filters, user_query)
+        sql_limit = data.get('sql_limit', SQL_LAYER_LIMIT)
+        with create_ats_database() as db:
+            sql_candidates = db.filter_candidates(structured_filters, limit=sql_limit)
         
-        # Perform vector search in Pinecone
-        search_results = pinecone_manager.query_vectors(
-            query_vector=query_embedding,
-            top_k=semantic_top_k,
-            include_metadata=True,
-            filter=filters if filters else None
-        )
-        
-        if not search_results.matches:
+        if not sql_candidates:
             return jsonify({
-                'message': 'No matching resumes found',
+                'message': 'No matching resumes found after SQL filtering',
                 'query': user_query,
                 'search_results': [],
                 'total_matches': 0,
+                'layer_counts': {
+                    'sql_filtered': 0,
+                    'vector_considered': 0,
+                    'boolean_passed': 0,
+                    'llm_evaluated': 0
+                },
+                'profile_type_filter': structured_filters.get('profile_type'),
                 'processing_time_ms': int((time.time() - start_time) * 1000),
                 'timestamp': datetime.now().isoformat()
             }), 200
         
-        # === Step 3: Apply Boolean Filtering (if enabled) ===
-        filtered_candidates = []
-        total_before_filter = len(search_results.matches)
+        candidate_map = {
+            record['candidate_id']: record
+            for record in sql_candidates
+            if record.get('candidate_id') is not None
+        }
+        candidate_ids = list(candidate_map.keys())
+        if not candidate_ids:
+            return jsonify({
+                'message': 'No matching resumes found after SQL filtering',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'layer_counts': {
+                    'sql_filtered': 0,
+                    'vector_considered': 0,
+                    'boolean_passed': 0,
+                    'llm_evaluated': 0
+                },
+                'profile_type_filter': structured_filters.get('profile_type'),
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
         
-        for match in search_results.matches:
-            if use_boolean_search and parsed_query:
-                # Build searchable text from candidate metadata
-                candidate_text = build_searchable_text(match.metadata)
-                
-                # Check if candidate matches Boolean query
-                if matches_boolean_query(candidate_text, parsed_query):
-                    filtered_candidates.append(match)
-            else:
-                # No Boolean filtering, use all semantic results
-                filtered_candidates.append(match)
+        # === Layer 2: Vector search constrained to SQL subset ===
+        layer2_matches = {}
+        chunk_size = int(data.get('vector_chunk_size', VECTOR_CHUNK_SIZE))
+        chunk_size = max(chunk_size, 50)
+        vector_top_k = max(top_k * 3, 60)
+        pinecone_metadata_filter = build_pinecone_metadata_filter(structured_filters)
         
-        # === Step 4: Format results ===
-        candidates = []
-        for match in filtered_candidates[:top_k]:
+        for chunk in chunk_list(candidate_ids, chunk_size):
+            if not chunk:
+                continue
+            base_filter = {'candidate_id': {'$in': chunk}}
+            chunk_filter = merge_pinecone_filters(base_filter, pinecone_metadata_filter)
+            chunk_top_k = min(len(chunk), vector_top_k)
+            results = pinecone_manager.query_vectors(
+                query_vector=query_embedding,
+                top_k=chunk_top_k,
+                include_metadata=True,
+                filter=chunk_filter
+            )
+            for match in results.matches:
+                cid = match.metadata.get('candidate_id')
+                if cid not in candidate_map:
+                    continue
+                existing = layer2_matches.get(cid)
+                if not existing or match.score > existing['score']:
+                    layer2_matches[cid] = {
+                        'score': match.score,
+                        'metadata': match.metadata
+                    }
+        
+        if not layer2_matches:
+            return jsonify({
+                'message': 'No semantic matches found within SQL-filtered candidates',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'layer_counts': {
+                    'sql_filtered': len(candidate_ids),
+                    'vector_considered': 0,
+                    'boolean_passed': 0,
+                    'llm_evaluated': 0
+                },
+                'profile_type_filter': structured_filters.get('profile_type'),
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        vector_ranked = []
+        for cid, match_data in layer2_matches.items():
+            db_record = candidate_map[cid]
+            pinecone_meta = match_data.get('metadata') or {}
+            combined_metadata = dict(pinecone_meta)
+            for field in [
+                'primary_skills', 'secondary_skills', 'all_skills',
+                'current_location', 'current_company', 'current_designation',
+                'domain', 'education', 'resume_summary', 'profile_type'
+            ]:
+                if db_record.get(field):
+                    combined_metadata[field] = db_record[field]
+            
             candidate_info = {
-                'candidate_id': match.metadata.get('candidate_id'),
-                'name': match.metadata.get('name'),
-                'email': match.metadata.get('email'),
-                'match_score': match.score,
-                'primary_skills': match.metadata.get('primary_skills'),
-                'total_experience': match.metadata.get('total_experience'),
-                'domain': match.metadata.get('domain'),
-                'education': match.metadata.get('education'),
-                'file_type': match.metadata.get('file_type'),
-                'current_location': match.metadata.get('current_location'),
-                'current_company': match.metadata.get('current_company'),
-                'resume_summary': match.metadata.get('resume_summary'),
-                'pinecone_score': match.score,
-                'metadata': match.metadata
+                'candidate_id': cid,
+                'name': db_record.get('name') or pinecone_meta.get('name'),
+                'email': db_record.get('email') or pinecone_meta.get('email'),
+                'match_score': match_data['score'],
+                'profile_type': db_record.get('profile_type') or pinecone_meta.get('profile_type'),
+                'primary_skills': db_record.get('primary_skills'),
+                'total_experience': db_record.get('total_experience'),
+                'domain': db_record.get('domain'),
+                'education': db_record.get('education'),
+                'current_location': db_record.get('current_location'),
+                'current_company': db_record.get('current_company'),
+                'current_designation': db_record.get('current_designation'),
+                'resume_summary': db_record.get('resume_summary'),
+                'layer_scores': {'vector': match_data['score']},
+                'metadata': combined_metadata
             }
-            candidates.append(candidate_info)
+            vector_ranked.append(candidate_info)
         
-        # Calculate processing time
-        processing_time = int((time.time() - start_time) * 1000)
+        vector_ranked.sort(key=lambda c: c['match_score'], reverse=True)
         
-        # Prepare response message
-        if use_boolean_search and parsed_query and total_before_filter > len(filtered_candidates):
-            message = f'Boolean + semantic search completed. Filtered {len(filtered_candidates)} candidates from {total_before_filter} semantic matches.'
+        # === Layer 2b: Optional Boolean filtering ===
+        if use_boolean_search and parsed_query:
+            boolean_filtered = []
+            for candidate in vector_ranked:
+                candidate_text = build_searchable_text(candidate['metadata'])
+                if matches_boolean_query(candidate_text, parsed_query):
+                    boolean_filtered.append(candidate)
         else:
-            message = 'Semantic search completed'
+            boolean_filtered = vector_ranked
+        
+        if not boolean_filtered:
+            return jsonify({
+                'message': 'Boolean filter removed all semantic matches',
+                'query': user_query,
+                'search_results': [],
+                'total_matches': 0,
+                'layer_counts': {
+                    'sql_filtered': len(candidate_ids),
+                    'vector_considered': len(vector_ranked),
+                    'boolean_passed': 0,
+                    'llm_evaluated': 0
+                },
+                'profile_type_filter': structured_filters.get('profile_type'),
+                'boolean_filter_applied': True,
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        
+        # === Layer 3: Optional LLM refinement ===
+        llm_applied = False
+        final_candidates = boolean_filtered
+        if use_llm_refinement and llm_refinement_service.available:
+            job_context = data.get('job_description') or user_query
+            final_candidates = llm_refinement_service.rerank_candidates(
+                job_context,
+                boolean_filtered,
+                top_n=min(llm_window, len(boolean_filtered))
+            )
+            llm_applied = True
+        elif use_llm_refinement and not llm_refinement_service.available:
+            logger.warning("LLM refinement requested but service is not available.")
+        
+        response_candidates = final_candidates[:top_k]
+        
+        processing_time = int((time.time() - start_time) * 1000)
+        layer_counts = {
+            'sql_filtered': len(candidate_ids),
+            'vector_considered': len(vector_ranked),
+            'boolean_passed': len(boolean_filtered),
+            'llm_evaluated': len(response_candidates) if llm_applied else 0
+        }
+        
+        message = 'Hybrid SQL + vector search completed'
+        if llm_applied:
+            message += ' with LLM refinement'
+        elif use_llm_refinement:
+            message += ' (LLM refinement unavailable)'
         
         return jsonify({
             'message': message,
             'query': user_query,
-            'search_results': candidates,
-            'total_matches': len(candidates),
-            'total_before_boolean_filter': total_before_filter if use_boolean_search else None,
+            'search_results': response_candidates,
+            'total_matches': len(response_candidates),
+            'layer_counts': layer_counts,
+            'total_before_boolean_filter': len(vector_ranked) if use_boolean_search else None,
             'boolean_filter_applied': use_boolean_search and parsed_query is not None,
+            'llm_refinement_applied': llm_applied,
+            'profile_type_filter': structured_filters.get('profile_type'),
             'processing_time_ms': processing_time,
             'timestamp': datetime.now().isoformat()
         }), 200
@@ -1062,10 +1401,22 @@ def profile_ranking_by_jd():
             except Exception:
                 logger.info(f"Job description {job_id} may already exist in database")
         
-        # Retrieve all active candidates from database
-        logger.info("Retrieving candidate profiles from database...")
+        # Determine profile types relevant to this JD
+        inferred_profile_types = infer_profile_type_from_requirements(required_skills_list, job_description)
+        
+        candidate_filters = {
+            'domain': domain,
+            'education': education_required,
+            'min_experience': min_experience,
+            'max_experience': max_experience,
+            'primary_skills': required_skills_list[:5] if required_skills_list else None,
+        }
+        if inferred_profile_types:
+            candidate_filters['profile_type'] = inferred_profile_types
+        
+        logger.info(f"Retrieving candidate profiles with structured filters: {candidate_filters}")
         with create_ats_database() as db:
-            candidates = db.get_all_resumes(status='active')
+            candidates = db.filter_candidates(candidate_filters, limit=data.get('sql_limit', SQL_LAYER_LIMIT))
         
         if not candidates:
             return jsonify({

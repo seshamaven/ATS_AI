@@ -81,3 +81,10 @@ Updated the codebase to reflect the removal of the following columns from the `r
 - [ ] Verify ranking functionality still works (may have reduced semantic boost)
 - [ ] Verify candidate retrieval endpoints work without embedding/resume_text fields
 
+## 2025-11-19 Update: `profile_type` Column
+
+- Added `profile_type` column to `resume_metadata` to persist a canonical role classification (Java, .Net, SAP, etc.).
+- Updated `ats_database.py` insert/select logic to read/write the new column and introduced `filter_candidates()` for SQL-layer filtering.
+- Resume parser now infers `profile_type` based on extracted skills so every new profile stores the value automatically.
+- Pinecone metadata and search/ranking endpoints use `profile_type` to reduce the candidate pool before semantic/LLM layers.
+

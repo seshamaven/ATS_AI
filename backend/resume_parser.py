@@ -1114,48 +1114,106 @@ Resume Text (look for name in FIRST FEW LINES):
     def _calculate_experience_from_dates(self, text: str) -> float:
         """Calculate experience from date ranges in work history.
         Handles "Present/Current/Till Date" as today and merges overlapping periods.
+        CRITICAL: Excludes education dates to avoid counting graduation dates as work experience.
         """
-        # Find Experience section if possible
+        # Find Experience section if possible - CRITICAL for separating work from education dates
         experience_text = text
         try:
-            section_match = re.search(r'(?is)(experience|work experience|professional experience)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|skills|projects)\b|\Z)', text)
+            section_match = re.search(r'(?is)(experience|work experience|professional experience|employment|work history)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(education|academic|skills|projects|certifications)\b|\Z)', text)
             if section_match and section_match.group(2):
                 experience_text = section_match.group(2)
+                logger.info("Found Experience section, using it for date extraction")
+            else:
+                logger.warning("No Experience section found - will try to exclude education dates")
+        except Exception as e:
+            logger.warning(f"Error finding experience section: {e}")
+        
+        # Try to exclude Education section dates to avoid counting graduation year as work start
+        education_section = None
+        try:
+            edu_match = re.search(r'(?is)(education|academic|qualification)[\s\n\r:.-]+(.+?)(?=\n\s*[A-Z][A-Za-z ]{2,}:|\n\s*(experience|skills|projects|certifications)\b|\Z)', text)
+            if edu_match and edu_match.group(2):
+                education_section = edu_match.group(2)
+                logger.info("Found Education section - will exclude its dates from experience calculation")
         except Exception:
             pass
         
-        # Look for date patterns like "Jan 2020 - Present" or "2018 - 2020"
+        # Extract education years to exclude them
+        education_years = set()
+        if education_section:
+            # Directly extract full 4-digit years (1950-2024)
+            year_pattern = r'\b(19\d{2}|20\d{2})\b'
+            year_matches = re.findall(year_pattern, education_section)
+            for year_str in year_matches:
+                try:
+                    year = int(year_str)
+                    if 1950 <= year <= datetime.now().year:
+                        education_years.add(year)
+                        logger.debug(f"Found education year to exclude: {year}")
+                except ValueError:
+                    pass
+        
+        # Look for date patterns like "Jan 2020 - Present" or "2018 - 2020" in experience section
         month_regex = r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
         year_regex = r'(?:19|20)\d{2}'
         date_pattern = rf'(?i){month_regex}\s+{year_regex}|{year_regex}'
         dates = re.findall(date_pattern, experience_text)
         
         # Check for Present/Current/Till Date and add current date if found
-        has_present = bool(re.search(r'(?i)(present|current|till date)', experience_text))
-        if has_present:
-            current_date_str = datetime.now().strftime("%b %Y")
-            dates.append(current_date_str.lower())
+        has_present = bool(re.search(r'(?i)(present|current|till date|till now)', experience_text))
         
-        if len(dates) >= 1:
+        # Filter out education years from extracted dates
+        work_years = []
+        for date_str in dates:
+            year_match = re.search(r'\d{4}', date_str)
+            if year_match:
+                year = int(year_match.group())
+                # Exclude if it's an education year (likely graduation date)
+                if year not in education_years:
+                    work_years.append(year)
+                else:
+                    logger.debug(f"Excluded education year {year} from work experience calculation")
+        
+        if has_present:
+            current_year = datetime.now().year
+            work_years.append(current_year)
+        
+        if len(work_years) >= 2:
             try:
-                # Extract years
-                years = []
-                for date_str in dates:
-                    year_match = re.search(r'\d{4}', date_str)
-                    if year_match:
-                        years.append(int(year_match.group()))
+                # Calculate span from earliest work start to latest work end
+                current_year = datetime.now().year
+                max_year = min(max(work_years), current_year)
+                min_year = min(work_years)
+                experience = max(0, max_year - min_year)
                 
-                if years and len(years) >= 2:
-                    # Calculate span from earliest start to latest end
-                    current_year = datetime.now().year
-                    max_year = min(max(years), current_year)
-                    min_year = min(years)
-                    return max(0, max_year - min_year)
-                elif years and len(years) == 1 and has_present:
-                    # Single year + Present means from that year to now
-                    return max(0, current_year - years[0])
+                # For freshers: If experience is very high (e.g., >20 years) and we have education years,
+                # it might be miscalculated. Check if min_year is close to education year.
+                if experience > 20 and education_years:
+                    # Likely miscalculation - check if we're counting from graduation
+                    latest_edu_year = max(education_years) if education_years else 0
+                    if min_year <= latest_edu_year + 2:
+                        logger.warning(f"Experience calculation may be incorrect ({experience} years). Possible education date confusion. Returning 0.")
+                        return 0.0
+                
+                logger.info(f"Calculated experience from work dates: {experience} years (from {min_year} to {max_year})")
+                return float(experience)
             except Exception as e:
                 logger.warning(f"Error calculating experience from dates: {e}")
+        elif len(work_years) == 1 and has_present:
+            # Single year + Present means from that year to now
+            # But exclude if it's an education year
+            year = work_years[0]
+            if year in education_years:
+                logger.info(f"Only year found ({year}) is in education section - likely a fresher. Returning 0.")
+                return 0.0
+            current_year = datetime.now().year
+            experience = max(0, current_year - year)
+            logger.info(f"Calculated experience from single date: {experience} years (from {year} to {current_year})")
+            return float(experience)
+        elif len(work_years) == 0:
+            # No work dates found - likely a fresher
+            logger.info("No work experience dates found - returning 0 for fresher")
+            return 0.0
         
         return 0.0
     
@@ -1336,14 +1394,20 @@ Resume Text (look for name in FIRST FEW LINES):
                 for skill in ai_technical_skills:
                     if not skill or not isinstance(skill, str):
                         continue
-                    skill_lower = skill.lower().strip()
+                    skill_stripped = skill.strip()
+                    skill_lower = skill_stripped.lower()
+                    
+                    # Filter out single-letter skills (like "r" from "r," or from splitting issues)
+                    if len(skill_stripped) <= 1:
+                        logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
+                        continue
                     
                     # Check if exact match in TECHNICAL_SKILLS
                     if skill_lower in self.TECHNICAL_SKILLS:
                         if skill_lower not in technical_skills_lower:
-                            technical_skills.append(skill.strip())
+                            technical_skills.append(skill_stripped)
                             technical_skills_lower.add(skill_lower)
-                            logger.info(f"✓ Added AI skill: {skill}")
+                            logger.info(f"✓ Added AI skill: {skill_stripped}")
                     else:
                         # Try fuzzy/partial matching
                         matched = False
@@ -1367,13 +1431,19 @@ Resume Text (look for name in FIRST FEW LINES):
                 for skill in all_extracted_skills:
                     if not skill or not isinstance(skill, str):
                         continue
-                    skill_lower = skill.lower().strip()
+                    skill_stripped = skill.strip()
+                    skill_lower = skill_stripped.lower()
+                    
+                    # Filter out single-letter skills
+                    if len(skill_stripped) <= 1:
+                        logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
+                        continue
                     
                     # Only add if not already found
                     if skill_lower in self.TECHNICAL_SKILLS and skill_lower not in technical_skills_lower:
-                        technical_skills.append(skill.strip())
+                        technical_skills.append(skill_stripped)
                         technical_skills_lower.add(skill_lower)
-                        logger.info(f"✓ Added regex skill: {skill}")
+                        logger.info(f"✓ Added regex skill: {skill_stripped}")
                 
                 # Secondary skills: everything that's NOT in TECHNICAL_SKILLS
                 secondary_skills = []
@@ -1382,10 +1452,17 @@ Resume Text (look for name in FIRST FEW LINES):
                 for skill in ai_secondary_skills:
                     if not skill or not isinstance(skill, str):
                         continue
-                    skill_lower = skill.lower().strip()
+                    skill_stripped = skill.strip()
+                    skill_lower = skill_stripped.lower()
+                    
+                    # Filter out single-letter skills
+                    if len(skill_stripped) <= 1:
+                        logger.debug(f"Skipping single-letter secondary skill: '{skill_stripped}'")
+                        continue
+                    
                     if skill_lower not in self.TECHNICAL_SKILLS and skill_lower not in [s.lower() for s in secondary_skills]:
-                        secondary_skills.append(skill.strip())
-                        logger.info(f"✓ Added secondary skill: {skill}")
+                        secondary_skills.append(skill_stripped)
+                        logger.info(f"✓ Added secondary skill: {skill_stripped}")
                 
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
@@ -1486,17 +1563,25 @@ Resume Text (look for name in FIRST FEW LINES):
                 technical_skills_set = set()  # For deduplication
                 
                 for skill in all_extracted_skills:
-                    skill_lower = skill.lower().strip()
+                    if not skill or not isinstance(skill, str):
+                        continue
+                    skill_stripped = skill.strip()
+                    skill_lower = skill_stripped.lower()
+                    
+                    # Filter out single-letter skills
+                    if len(skill_stripped) <= 1:
+                        logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
+                        continue
                     
                     # Reject responsibility-like phrases unless they're explicitly in TECHNICAL_SKILLS
                     if skill_lower in responsibility_phrases and skill_lower not in self.TECHNICAL_SKILLS:
-                        logger.warning(f"Rejected responsibility phrase as skill: '{skill}'")
+                        logger.warning(f"Rejected responsibility phrase as skill: '{skill_stripped}'")
                         continue
                     
                     # Check if this skill is in our TECHNICAL_SKILLS list
                     if skill_lower in self.TECHNICAL_SKILLS:
                         if skill_lower not in technical_skills_set:
-                            technical_skills_list.append(skill)
+                            technical_skills_list.append(skill_stripped)
                             technical_skills_set.add(skill_lower)
                     else:
                         # Try partial match
@@ -1509,7 +1594,7 @@ Resume Text (look for name in FIRST FEW LINES):
                                     found_match = True
                                     break
                         if not found_match:
-                            secondary_skills_list.append(skill)
+                            secondary_skills_list.append(skill_stripped)
                 
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
@@ -1557,8 +1642,14 @@ Resume Text (look for name in FIRST FEW LINES):
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
             
-            # Derive canonical profile type before persisting metadata
-            profile_type = determine_primary_profile_type(primary_skills, secondary_skills_str, resume_text)
+            # Derive canonical profile type using NLM approach (analyzes overall content)
+            profile_type = determine_primary_profile_type(
+                primary_skills, 
+                secondary_skills_str, 
+                resume_text,
+                ai_client=self.ai_client if self.use_ai_extraction else None,
+                ai_model=self.ai_model if self.use_ai_extraction else None
+            )
             
             # Prepare parsed data
             parsed_data = {

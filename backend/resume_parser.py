@@ -325,13 +325,56 @@ Extract a valid phone number, including country code if available.
 
 4. total_experience
 
-Identify total professional experience in years using explicit mentions or computed from job dates.
+total_experience — Extraction Rules
 
-Prefer explicit text like “5+ years of experience”.
+Primary Calculation Method
 
-If not stated, calculate from earliest to latest employment dates, ignoring overlaps.
+Always compute total professional experience using the earliest employment start date and the latest employment end date (or “Present”).
 
-Use integers or floats for years.
+Experience = (latest date – earliest date).
+
+Ignore employment gaps.
+
+Ignore job overlaps (do not double count).
+
+Explicit Mentions Are Secondary
+
+If explicit text (e.g., “5 years experience”) conflicts with computed experience, always use the computed value.
+
+Role Coverage
+
+Include all roles listed under Experience / Work History, regardless of job titles.
+
+Exclude: education, certifications, projects without dates.
+
+Handling Missing Dates
+
+If end date is “Present”, “Current”, or missing → assume today’s date.
+
+If start date is missing but other roles have valid dates → use earliest available date.
+
+Overlapping Periods
+
+Count overlapping employment only once.
+
+Overlap should not inflate total experience.
+
+Internships & Part-time Roles
+
+Count them ONLY if they appear inside the main experience section with valid dates.
+
+Do NOT count student/academic roles.
+
+Date Format Flexibility
+
+Recognize formats like:
+“Aug 2015”, “August 2015”, “08/2015”, “2015-08”, “2015”, etc.
+
+Output Format
+
+Return total experience as a float rounded to one decimal (e.g., 10.1).
+
+If the number is whole, return an integer (e.g., 10).
 
 5. current_company
 

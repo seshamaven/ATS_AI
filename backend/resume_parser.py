@@ -54,7 +54,7 @@ class ResumeParser:
         # Comprehensive technical skills database - ONLY these should appear in primary_skills
     TECHNICAL_SKILLS = {
         # === Programming Languages ===
-        'python', 'py', 'java', 'javascript', 'js', 'ecmascript', 'typescript', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
+        'python', 'py', 'java','core java','advanced java' 'javascript', 'js', 'ecmascript', 'typescript', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
         'swift', 'kotlin', 'scala', 'r', 'perl', 'bash', 'shell scripting', 'objective-c', 'dart',
         'lua', 'matlab', 'assembly', 'fortran', 'sas', 'haskell', 'clojure', 'visual basic', 'vb.net', 'abap',
         
@@ -413,19 +413,54 @@ Ignore educational degrees — only professional domains count.
 
 11. education
 
-Extract only the highest completed degree.
+Education Section Detection
+Consider any of the following headings as education:
+“Education”, “Academic Details”, “Academics”, “Qualification / Qualifications”,
+“Educational Background”, “Academic Summary”, “Scholastic Profile”,
+“Educational Credentials”, “Education Summary”, “Education & Training”
+(extract only actual degrees; ignore trainings/certifications).
 
-Include specialization if available (e.g., “B.Tech in Computer Science”).
+Identify All Degrees and Academic Qualifications
+Detect structured or unstructured formats, including tables with columns like:
+“Qualification”, “Course”, “Board/University”, “Year”, “Percentage/CGPA”.
 
-Exclude certifications, courses, and trainings.
+Degree Ranking (Choose Only the Highest Level)
+When multiple items appear, return only the highest by this order:
 
-If multiple degrees exist, return only the highest one.
+PhD / Doctorate
 
-If no education found → "Unknown".
+Master's Degrees (M.S, M.Sc, M.Tech, MBA, MCA, MA, etc.)
 
-Format:
-"M.S. in Data Science"
-"B.Tech in Computer Science and Engineering"
+Bachelor's Degrees (B.Tech, B.E, B.Sc, BCA, BBA, etc.)
+
+Diploma
+
+Intermediate / 12th / HSC / PUC / Pre-University
+
+SSC / 10th / Matriculation
+
+Specialization Extraction
+Include specialization if mentioned (e.g., “Electronics and Communication Engineering”).
+Ignore percentages, GPA, board names, and years unless needed to identify the degree.
+
+Exclusions
+Do NOT treat the following as degrees:
+Certifications, training programs, online courses, bootcamps, workshops, nanodegrees.
+
+Interpretation Rules
+
+“Intermediate”, “12th”, “HSC”, “PUC” → Pre-university level
+
+“SSC”, “10th”, “Matriculation” → Secondary level
+
+If no bachelor's/master's degree exists, return the next highest valid academic qualification.
+
+Output Format
+Return a single string in this format:
+"B.Tech in Electronics and Communication Engineering"
+"M.S. in Computer Science"
+"MBA in Finance"
+If nothing is found → "Unknown".
 
 12. certifications
 

@@ -49,6 +49,22 @@ logger = logging.getLogger(__name__)
 
 from profile_type_utils import determine_primary_profile_type
 
+# Import the new EducationExtractor
+try:
+    from education_extractor import EducationExtractor, extract_education as extract_education_standalone
+except ImportError:
+    EducationExtractor = None
+    extract_education_standalone = None
+    logger.warning("EducationExtractor not available, using fallback extraction")
+
+# Import the new ExperienceExtractor
+try:
+    from experience_extractor import ExperienceExtractor, extract_experience as extract_experience_standalone
+except ImportError:
+    ExperienceExtractor = None
+    extract_experience_standalone = None
+    logger.warning("ExperienceExtractor not available, using fallback extraction")
+
 
 class ResumeParser:
     """Intelligent resume parser with NLP and AI capabilities."""
@@ -1078,7 +1094,44 @@ Resume Text (look for name in FIRST FEW LINES):
         }
     
     def extract_experience(self, text: str) -> float:
-        """Calculate total professional experience (full years): prioritize explicit mentions,
+        """
+        Calculate total professional experience using the comprehensive ExperienceExtractor.
+        Falls back to original method if ExperienceExtractor is not available.
+        
+        Args:
+            text: Resume text to parse
+            
+        Returns:
+            Total experience in years (float)
+        """
+        # Use the new comprehensive ExperienceExtractor if available
+        if ExperienceExtractor:
+            try:
+                # Try Python extraction first (no AI)
+                extractor = ExperienceExtractor(text)
+                result = extractor.extract()
+                total_experience = result.get('total_experience_years', 0.0)
+                
+                # Note: AI fallback is not implemented in the new ExperienceExtractor
+                # The new extractor handles all patterns without needing AI
+                
+                # Always use the result from ExperienceExtractor (even if 0)
+                # It properly handles freshers by returning 0 when no Experience section exists
+                logger.info(f"ExperienceExtractor calculated: {total_experience} years")
+                logger.debug(f"Experience segments: {result.get('segments', [])}")
+                logger.debug(f"Ignored entries: {result.get('ignored', [])}")
+                return float(total_experience)
+            except Exception as e:
+                logger.warning(f"ExperienceExtractor failed: {e}, falling back to original method")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        # Fallback to original method
+        return self._extract_experience_legacy(text)
+    
+    def _extract_experience_legacy(self, text: str) -> float:
+        """Legacy experience extraction method (original implementation).
+        Calculate total professional experience (full years): prioritize explicit mentions,
         otherwise compute from job timelines.
 
         - First tries explicit mentions like "3+ Years of experience", "Over 2 years", "Nearly 5 years"
@@ -1246,8 +1299,66 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
-    def extract_education(self, text: str) -> Dict[str, Any]:
-        """Extract education information."""
+    def extract_education(self, text: str, use_ai_fallback: bool = False, store_in_db: bool = False, candidate_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Extract education information using the enhanced EducationExtractor.
+        
+        Args:
+            text: Resume text to parse
+            use_ai_fallback: If True, use AI when Python extraction fails
+            store_in_db: If True, store extracted education in database
+            candidate_id: Candidate ID for database storage (required if store_in_db=True)
+        
+        Returns:
+            Dictionary with 'highest_degree' and 'education_details'
+        """
+        # Use the new EducationExtractor if available
+        if EducationExtractor:
+            try:
+                extractor = EducationExtractor(
+                    text,
+                    use_ai_fallback=use_ai_fallback and self.use_ai_extraction,  # Only use AI if enabled in parser
+                    store_in_db=store_in_db,
+                    candidate_id=candidate_id
+                )
+                education_list = extractor.extract()
+                
+                # Convert to the expected format
+                education_info = {
+                    'highest_degree': None,
+                    'education_details': education_list if education_list else []
+                }
+                
+                # Determine highest degree from the list
+                if education_list:
+                    # Get the first (highest) degree - keep the full extracted string with specialization
+                    highest_degree_str = education_list[0]
+                    
+                    # Use the extracted string as-is to preserve specialization (e.g., "BTech, Civil Engineering")
+                    # Only map to generic categories if the extracted string is too generic
+                    highest_degree_lower = highest_degree_str.lower()
+                    
+                    # If the extracted string is just a generic word like "bachelor" or "bachelors", map it
+                    # But if it contains specific degree info (like "BTech" or "B.Tech"), keep it as-is
+                    if highest_degree_str.strip().lower() in ['bachelor', 'bachelors', 'bachelor degree']:
+                        education_info['highest_degree'] = 'Bachelors'
+                    elif highest_degree_str.strip().lower() in ['master', 'masters', 'master degree']:
+                        education_info['highest_degree'] = 'Masters'
+                    elif highest_degree_str.strip().lower() in ['phd', 'doctorate', 'ph.d']:
+                        education_info['highest_degree'] = 'PhD'
+                    elif highest_degree_str.strip().lower() == 'diploma':
+                        education_info['highest_degree'] = 'Diploma'
+                    else:
+                        # Keep the full extracted string (preserves "BTech, Civil Engineering" or "B.Tech in CSE")
+                        education_info['highest_degree'] = highest_degree_str
+                
+                logger.info(f"EducationExtractor found {len(education_list)} degrees: {education_list}")
+                return education_info
+                
+            except Exception as e:
+                logger.warning(f"EducationExtractor failed: {e}, falling back to regex extraction")
+        
+        # Fallback to original regex-based extraction
         education_info = {
             'highest_degree': None,
             'education_details': []
@@ -1370,7 +1481,8 @@ Resume Text (look for name in FIRST FEW LINES):
                                                 break
                 email = ai_data.get('email') or self.extract_email(resume_text)
                 phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
-                # Always use custom extraction to prioritize explicit mentions and properly merge timelines
+                # ALWAYS use Python-based extraction (NO AI) - uses comprehensive ExperienceExtractor
+                # This ensures accurate date parsing, education exclusion, and range merging
                 experience = self.extract_experience(resume_text)
                 
                 # Get skills from AI
@@ -1502,26 +1614,31 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 domain = ', '.join(domain_list) if domain_list else ''
                 
-                # Get education (now returns single string for highest degree)
-                highest_degree = ai_data.get('education') or ai_data.get('education_details')
+                # ALWAYS prioritize Python extraction over AI for accuracy
+                # Python extraction is more reliable and doesn't add inferred specializations
+                logger.info("Extracting education using Python extraction (prioritized over AI)...")
+                education_info = self.extract_education(resume_text, use_ai_fallback=False)  # Python extraction only
                 
-                # Handle backward compatibility: if education_details is a list, extract first item
-                if isinstance(highest_degree, list):
-                    highest_degree = highest_degree[0] if highest_degree else None
-                elif not highest_degree:
-                    # Fallback to regex extraction if AI didn't return education
-                    education_info = self.extract_education(resume_text)
+                # Use Python extraction if it found valid education
+                if education_info['highest_degree'] and education_info['highest_degree'] != 'Unknown':
                     highest_degree = education_info['highest_degree']
-                
-                # For education_details, use highest_degree if available, otherwise extract full details
-                if highest_degree and highest_degree != 'Unknown':
-                    education_details = highest_degree
+                    education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else highest_degree
+                    logger.info(f"Using Python-extracted education: {highest_degree}")
                 else:
-                    # Fallback: extract full education details from text
-                    education_info = self.extract_education(resume_text)
-                    education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else ''
-                    if not highest_degree:
-                        highest_degree = education_info['highest_degree']
+                    # Fallback to AI extraction only if Python extraction failed
+                    ai_education = ai_data.get('education') or ai_data.get('education_details')
+                    if isinstance(ai_education, list):
+                        ai_education = ai_education[0] if ai_education else None
+                    
+                    if ai_education and ai_education != 'Unknown':
+                        highest_degree = ai_education
+                        education_details = ai_education
+                        logger.info(f"Python extraction failed, using AI-extracted education: {highest_degree}")
+                    else:
+                        # Last resort: use Python extraction even if it's Unknown
+                        highest_degree = education_info['highest_degree'] or 'Unknown'
+                        education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else highest_degree
+                        logger.warning(f"Both Python and AI extraction failed, using: {highest_degree}")
                 
                 # Get certifications
                 certifications = ai_data.get('certifications', [])
@@ -1542,6 +1659,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 name = self.extract_name(resume_text)
                 email = self.extract_email(resume_text)
                 phone = self.extract_phone(resume_text)
+                # Use Python-based extraction (NO AI) - uses comprehensive ExperienceExtractor
                 experience = self.extract_experience(resume_text)
                 
                 skills = self.extract_skills(resume_text)
@@ -1628,9 +1746,10 @@ Resume Text (look for name in FIRST FEW LINES):
                         domain_parts.insert(0, "Information Technology")
                         domain = ', '.join(domain_parts)
                         logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
-                education_info = self.extract_education(resume_text)
+                # Use enhanced EducationExtractor (Python extraction only, no AI)
+                education_info = self.extract_education(resume_text, use_ai_fallback=False)
                 highest_degree = education_info['highest_degree']
-                education_details = '\n'.join(education_info['education_details'])
+                education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else (highest_degree or '')
                 
                 # Extract current company and designation using regex
                 current_company = self._extract_current_company(resume_text)

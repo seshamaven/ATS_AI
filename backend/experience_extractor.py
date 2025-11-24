@@ -34,7 +34,7 @@ import logging
 import re
 from collections import namedtuple
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Match
 
 logger = logging.getLogger(__name__)
 
@@ -125,64 +125,95 @@ PROJECT_IGNORE_PATTERNS = [
 ]
 
 DIRECT_EXPERIENCE_PATTERNS = [
+    # ========== Pattern Group 1: "Years of Experience" Core Patterns ==========
+    # Pattern 0: "Having X years of [words] experience" (common resume format)
+    r"(?:having|with|over)\s+(?P<num>\d+)\s*(?:years?|yrs?)\s+(?:of\s+(?:\w+\s+){0,5})?(?:experience|expertise|exp)\b",
+
+    # Pattern 0b: Handles whitespace/newlines between tokens
+    r"(?:having|with|over)[\s\n]+(?P<num>\d+)[\s\n]*(?:years?|yrs?)[\s\n]+(?:of[\s\n]+(?:\w+[\s\n]+){0,5})?(?:experience|expertise|exp)\b",
+
+    # Pattern 1a: "Having/Over/More than/Around/Nearly/Approx X years of experience"
+    r"(?:having|over|more\s+than|around|nearly|approx(?:imately)?)\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+experience\b",
+
+    # Pattern 1b: same but allows adjectives between "of" and "experience"
+    r"(?:having|over|more\s+than|around|nearly|approx(?:imately)?)\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+(?:\w+\s+){0,5}experience\b",
+
+    # ========== Pattern Group 2: "Expertise" Based Patterns ==========
+    r"(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+expertise\s+in\b",
+    r"expertise\s+of\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+in\b",
+    r"(?P<num>\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)\s+of\s+expertise\b",
+    r"specializ(?:ing|ed)\s+with\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+experience\b",
+
+    # ========== Pattern Group 3: "IT / Industry Experience" ==========
+    r"(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+experience\s+in\s+(?:the\s+)?it\s+industry\b",
+    r"experience\s+in\s+(?:software|technology|it)\s+industry\s+for\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b",
+    r"(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+in\s+(?:the\s+)?(?:technology|software|it)\s+domain\b",
+    r"worked\s+in\s+(?:it|software|technology)\s+industry\s+for\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b",
+
+    # ========== Pattern Group 5: Variations for "Experience" Statements ==========
+    r"(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s*['\u2019]\s*hands-on\s+experience\b",
+    r"experience\s+of\s+(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+in\b",
+    r"(?P<num>\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)\s+of\s+experience\s+as\s+a\b",
+    r"(?P<num>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s+of\s+professional\s+experience\s+in\b",
+
     # Pattern 1: "Overall/Total Experience: X years Y months"
     r"(?:overall|total)\s+experience[:\s]+(?P<years>\d+)\s*(?:years?|yrs?)\s+(?P<months>\d+)\s*(?:months?|mths?)",
-    
-    # Pattern 2: "Overall/Total Experience: X.Y years" (decimal years)
+
+    # Pattern 2: "Overall/Total Experience: X.Y years"
     r"(?:overall|total)\s+experience[:\s]+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)",
-    
+
     # Pattern 3: "Total Exp: X.Y years"
     r"total\s+exp[:\s]+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)",
-    
-    # Pattern 4: "X.Y years" (standalone decimal years - MUST come before integer patterns)
+
+    # Pattern 4: "X.Y years" standalone decimal (before integer patterns)
     r"(?P<num>\d+\.\d+)\s*(?:years?|yrs?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?",
-    
-    # Pattern 5: "X.Y years of experience" (decimal years with "of experience")
-    r"(?P<num>\d+\.\d+)\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|expertise|exp)",
-    
+
+    # Pattern 5: "X.Y years of experience" with adjectives after "of"
+    r"(?P<num>\d+\.\d+)\s*(?:years?|yrs?)\s+(?:of\s+(?:\w+\s+){0,3})?(?:experience|expertise|exp)",
+
     # Pattern 6: "Over X.Y years of experience"
     r"over\s+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|expertise|exp)",
-    
+
     # Pattern 7: "Nearly/About/Approximately X.Y years"
     r"(?:nearly|about|approximately|around|almost)\s+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?",
-    
-    # Pattern 8: "X.Y+ years" (decimal with plus sign)
+
+    # Pattern 8: "X.Y+ years"
     r"(?P<num>\d+\.\d+)\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?",
-    
-    # Pattern 9: "X.Y YOE" or "X.Y years of experience" (YOE abbreviation)
+
+    # Pattern 9: "X.Y YOE" etc.
     r"(?P<num>\d+\.\d+)\s*(?:years?|yrs?|yoe)(?:\s+(?:of\s+)?(?:experience|expertise))?",
-    
-    # Pattern 10: "X.Y years in [field]" (experience in specific field)
+
+    # Pattern 10: "X.Y years in [field]"
     r"(?P<num>\d+\.\d+)\s*(?:years?|yrs?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?\s+in\s+",
-    
+
     # Pattern 11: "Experience: X.Y years"
     r"experience[:\s]+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)",
-    
-    # Pattern 12: "More than X.Y years" or "Less than X.Y years"
+
+    # Pattern 12: "More than X.Y years" / "Less than X.Y years"
     r"(?:more\s+than|less\s+than|greater\s+than)\s+(?P<num>\d+\.\d+)\s*(?:years?|yrs?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?",
-    
-    # Pattern 13: "X years Y months" (convert to decimal - must come after decimal patterns)
+
+    # Pattern 13: "X years Y months"
     r"(?P<years>\d+)\s*(?:years?|yrs?)\s+(?P<months>\d+)\s*(?:months?|mths?)(?:\s+(?:of\s+)?(?:experience|expertise|exp))?",
-    
-    # Pattern 14: "Since YYYY, working/serving/acting"
+
+    # Pattern 14: "Since YYYY..."
     r"since\s+(?P<year>\d{4})\s*,?\s*(?:working|serving|acting)",
-    
-    # Pattern 15: "X years" (integer years, with optional +) - MUST check for word boundary to avoid matching "6" from "2.6"
-    r"(?<!\d\.)(?P<num>\d+)\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|expertise|exp)",
-    
-    # Pattern 16: "X years' experience" (with apostrophe, including corrupted characters)
-    r"(?<!\d\.)(?P<num>\d+)\+?\s*(?:years?|yrs?)\s*['\u2019\uFFFD]\s*(?:experience|expertise|exp)",  # \uFFFD is replacement character for corrupted text
-    
-    # Pattern 17: "X years experience" (with corrupted characters between)
-    r"(?<!\d\.)(?P<num>\d+)\s*\+?\s*(?:years?|yrs?)\s*[^\w\s]{0,3}\s*(?:experience|expertise|exp)",  # Handles corrupted characters between years and experience
-    
-    # Pattern 18: "Overall/Total Experience: X years" (integer, fallback)
+
+    # Pattern 15: "X years" integers with adjectives between
+    r"(?<!\d\.)(?P<num>\d+)\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+(?:\w+\s+){0,5})?(?:experience|expertise|exp)\b",
+
+    # Pattern 16: "X years' experience"
+    r"(?<!\d\.)(?P<num>\d+)\+?\s*(?:years?|yrs?)\s*['\u2019\uFFFD]\s*(?:experience|expertise|exp)",
+
+    # Pattern 17: "X years experience" with corrupted separators
+    r"(?<!\d\.)(?P<num>\d+)\s*\+?\s*(?:years?|yrs?)\s*[^\w\s]{0,3}\s*(?:experience|expertise|exp)",
+
+    # Pattern 18: "Overall/Total Experience: X years"
     r"(?:overall|total)\s+experience[:\s]+(?P<num>\d+)\s*(?:years?|yrs?)",
-    
-    # Pattern 19: "Total Exp: X years" (integer, fallback)
+
+    # Pattern 19: "Total Exp: X years"
     r"total\s+exp[:\s]+(?P<num>\d+)\s*(?:years?|yrs?)",
-    
-    # Pattern 20: "Experience: X years" (integer, fallback)
+
+    # Pattern 20: "Experience: X years"
     r"experience[:\s]+(?P<num>\d+)\s*(?:years?|yrs?)",
 ]
 
@@ -191,8 +222,9 @@ class ExperienceExtractor:
     """Production-quality experience extractor."""
 
     def __init__(self, resume_text: str) -> None:
-        self.raw_text = resume_text
-        self.cleaned_text = self._clean_text(resume_text)
+        normalised_text = self._collapse_split_numbers(resume_text)
+        self.raw_text = normalised_text
+        self.cleaned_text = self._clean_text(normalised_text)
         self.lines = [ln.strip() for ln in self.cleaned_text.splitlines() if ln.strip()]
         self.current_date = datetime.now().date()
         self.ignored_entries: List[str] = []
@@ -204,6 +236,23 @@ class ExperienceExtractor:
         text = re.sub(r"[•\t]", " ", text)
         text = re.sub(r"[ ]{2,}", " ", text)
         return text
+
+    @staticmethod
+    def _collapse_split_numbers(text: str) -> str:
+        """
+        Merge digits that were separated by whitespace during PDF extraction.
+        Example: \"2 3 years\" -> \"23 years\".
+
+        We only collapse sequences that consist entirely of single digits that are
+        split by whitespace so legitimate multi-digit tokens such as \"2020 2021\"
+        remain untouched.
+        """
+
+        def _merge(match: re.Match[str]) -> str:
+            return re.sub(r"\s+", "", match.group(0))
+
+        pattern = re.compile(r"(?<!\d)(?:\d\s+){1,5}\d(?!\d)")
+        return pattern.sub(_merge, text)
 
     @staticmethod
     def _normalise_year(year_str: str) -> Optional[int]:

@@ -565,7 +565,7 @@ def determine_profile_types_enhanced(
     resume_text: str = "",
     ai_client=None,
     ai_model: str = None,
-    min_confidence: float = 0.4,  # Increased from 0.3 to 0.4 for stricter filtering
+    min_confidence: float = 0.01-0.1,  # Increased from 0.3 to 0.4 for stricter filtering
     equal_score_threshold: float = 0.15,
     max_profiles: int = 2  # Reduced from 3 to 2 to prevent too many profiles
 ) -> Tuple[List[str], float, Dict[str, Any]]:
@@ -974,13 +974,51 @@ def _detect_phrases(text: str) -> Dict[str, float]:
     return phrase_scores
 
 def _check_business_development(text: str) -> bool:
-    """Check if profile indicates Business Development role."""
-    text_lower = text.lower()
-    bd_keywords = [
-        "business development", "bd", "business dev", "bde",
-        "business development executive", "business development manager"
+    """
+    Check if profile indicates Business Development role using safe,
+    word-boundary-aware patterns. Requires multiple high-confidence signals
+    to prevent false positives from technical terms like "client acquisition"
+    in software contexts.
+    
+    Returns True only if:
+    - "business development" (exact phrase) is found, OR
+    - At least 2 BD-specific keywords are found (excluding ambiguous ones)
+    """
+    if not text:
+        return False
+
+    # High-confidence patterns (exact BD phrases)
+    high_confidence_patterns = [
+        r"\bbusiness\s+development\b",
+        r"\bbusiness\s+development\s+executive\b",
+        r"\bbusiness\s+development\s+manager\b",
+        r"\bbusiness\s+dev\b",
     ]
-    return any(keyword in text_lower for keyword in bd_keywords)
+    
+    # Medium-confidence patterns (require context - count these)
+    medium_confidence_patterns = [
+        r"\bb2b\s+sales\b",
+        r"\bpartnership\s+development\b",
+        r"\bstrategic\s+partnerships\b",
+        r"\baccount\s+development\b",
+    ]
+    
+    # Low-confidence patterns (ambiguous - only count if other signals present)
+    # Excluded: "client acquisition", "market expansion" - too common in technical contexts
+    # Excluded: "bd", "bde" - too short, can match in other words
+    
+    text_lower = text.lower()
+    
+    # Check high-confidence patterns first (if found, definitely BD)
+    for pattern in high_confidence_patterns:
+        if re.search(pattern, text_lower, re.IGNORECASE):
+            return True
+    
+    # Require at least 2 medium-confidence patterns to avoid false positives
+    medium_matches = sum(1 for pattern in medium_confidence_patterns 
+                         if re.search(pattern, text_lower, re.IGNORECASE))
+    
+    return medium_matches >= 2
 
 def _calculate_normalized_scores(
     text_blob: str,
@@ -1000,24 +1038,13 @@ def _calculate_normalized_scores(
     # Detect specific phrases
     phrase_scores = _detect_phrases(resume_text + " " + primary_skills)
     
-    # Check for Business Development - if present, prioritize it
+    # Check for Business Development (for logging/debugging, but don't short-circuit)
+    # All profiles will be scored normally, allowing BD to compete with other profiles
     is_business_dev = _check_business_development(resume_text + " " + primary_skills)
+    if is_business_dev:
+        logger.info("Business Development signals detected, but allowing all profiles to compete")
     
     for profile_type, keyword_weights in PROFILE_TYPE_RULES_ENHANCED:
-        # If Business Development detected, only process that profile type
-        if is_business_dev and profile_type != "Business Development":
-            continue
-        if is_business_dev and profile_type == "Business Development":
-            # Give very high score for Business Development
-            profile_scores.append(ProfileScore(
-                profile_type="Business Development",
-                raw_score=50.0,  # Very high score
-                normalized_score=1.0,
-                confidence=0.95,
-                matched_keywords=["business development"],
-                keyword_details=[("business development", 50.0, "resume")]
-            ))
-            continue
         
         raw_score = 0.0
         matched_keywords = []

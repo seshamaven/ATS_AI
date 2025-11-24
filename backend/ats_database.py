@@ -101,35 +101,45 @@ class ATSDatabase:
                 )
             """
             
-            # Prepare data with defaults
+            # Prepare data with defaults and validate/truncate VARCHAR fields
+            # Handle profile_type: if comma-separated (multi-profile), use as-is (already canonicalized)
+            # Otherwise, canonicalize single profile type
+            profile_type_value = resume_data.get('profile_type', DEFAULT_PROFILE_TYPE)
+            if ',' in str(profile_type_value):
+                # Multi-profile already formatted by format_profile_types_for_storage()
+                # No need to canonicalize again, but truncate to VARCHAR(100) limit
+                profile_type_final = str(profile_type_value).strip()[:100]
+            else:
+                # Single profile type - canonicalize it
+                profile_type_final = canonicalize_profile_type(profile_type_value)
+            
+            # Truncate VARCHAR fields to their schema limits to prevent "Data too long" errors
             data = {
-                'name': resume_data.get('name'),
-                'email': resume_data.get('email'),
-                'phone': resume_data.get('phone'),
+                'name': (resume_data.get('name') or '')[:255],
+                'email': (resume_data.get('email') or '')[:255],
+                'phone': (resume_data.get('phone') or '')[:50],
                 'total_experience': resume_data.get('total_experience', 0.0),
                 'primary_skills': resume_data.get('primary_skills'),
                 'secondary_skills': resume_data.get('secondary_skills'),
                 'all_skills': resume_data.get('all_skills'),
-                'profile_type': canonicalize_profile_type(
-                    resume_data.get('profile_type', DEFAULT_PROFILE_TYPE)
-                ),
-                'domain': resume_data.get('domain'),
-                'sub_domain': resume_data.get('sub_domain'),
-                'education': resume_data.get('education'),
+                'profile_type': profile_type_final,
+                'domain': (resume_data.get('domain') or '')[:255],
+                'sub_domain': (resume_data.get('sub_domain') or '')[:255],
+                'education': (resume_data.get('education') or '')[:500],
                 'education_details': resume_data.get('education_details'),
-                'current_location': resume_data.get('current_location'),
+                'current_location': (resume_data.get('current_location') or '')[:255],
                 'preferred_locations': resume_data.get('preferred_locations'),
-                'current_company': resume_data.get('current_company'),
-                'current_designation': resume_data.get('current_designation'),
-                'notice_period': resume_data.get('notice_period'),
-                'expected_salary': resume_data.get('expected_salary'),
-                'current_salary': resume_data.get('current_salary'),
+                'current_company': (resume_data.get('current_company') or '')[:255],
+                'current_designation': (resume_data.get('current_designation') or '')[:255],
+                'notice_period': (resume_data.get('notice_period') or '')[:100],
+                'expected_salary': (resume_data.get('expected_salary') or '')[:100],
+                'current_salary': (resume_data.get('current_salary') or '')[:100],
                 'resume_summary': resume_data.get('resume_summary'),
-                'file_name': resume_data.get('file_name'),
-                'file_type': resume_data.get('file_type'),
+                'file_name': (resume_data.get('file_name') or '')[:500],
+                'file_type': (resume_data.get('file_type') or '')[:50],
                 'file_size_kb': resume_data.get('file_size_kb'),
                 'file_base64': resume_data.get('file_base64'),
-                'status': resume_data.get('status', 'active')
+                'status': (resume_data.get('status') or 'active')[:50]
             }
             
             self.cursor.execute(query, data)
@@ -140,7 +150,20 @@ class ATSDatabase:
             return candidate_id
             
         except Error as e:
-            logger.error(f"Error inserting resume: {e}")
+            # Enhanced error logging to identify which column is too long
+            error_msg = str(e)
+            if "Data too long for column" in error_msg:
+                logger.error(f"Error inserting resume: {e}")
+                logger.error(f"Profile type value length: {len(str(profile_type_final))} chars, value: {profile_type_final[:100]}")
+                logger.error(f"Name length: {len(str(data.get('name', '')))} chars")
+                logger.error(f"Email length: {len(str(data.get('email', '')))} chars")
+                logger.error(f"Phone length: {len(str(data.get('phone', '')))} chars")
+                logger.error(f"File name length: {len(str(data.get('file_name', '')))} chars")
+                logger.error(f"File type length: {len(str(data.get('file_type', '')))} chars")
+                logger.error(f"Education length: {len(str(data.get('education', '')))} chars")
+                logger.error(f"Current designation length: {len(str(data.get('current_designation', '')))} chars")
+            else:
+                logger.error(f"Error inserting resume: {e}")
             if self.connection:
                 self.connection.rollback()
             return None
@@ -343,9 +366,16 @@ class ATSDatabase:
                 _listify(filters.get('profile_type') or filters.get('profile_types'))
             )
             if profile_types:
-                placeholders = ', '.join(['%s'] * len(profile_types))
-                conditions.append(f"profile_type IN ({placeholders})")
-                params.extend(profile_types)
+                # Support comma-separated profile types using FIND_IN_SET
+                # Handle both formats: "Type1,Type2" (new) and "Type1, Type2" (old/legacy)
+                # This allows matching "Microsoft Power Platform,Integration / APIs" when searching for "Microsoft Power Platform"
+                clauses = []
+                for pt in profile_types:
+                    # Try both formats: with space and without space
+                    # FIND_IN_SET works with comma-only format, so we normalize the stored value
+                    clauses.append(f"(FIND_IN_SET(%s, profile_type) > 0 OR FIND_IN_SET(%s, REPLACE(profile_type, ', ', ',')) > 0)")
+                    params.extend([pt, pt])
+                conditions.append(f"({' OR '.join(clauses)})")
             
             skill_terms = _listify(filters.get('primary_skills') or filters.get('skills'))
             if skill_terms:
@@ -373,7 +403,14 @@ class ATSDatabase:
         """Update resume fields."""
         try:
             if 'profile_type' in updates:
-                updates['profile_type'] = canonicalize_profile_type(updates['profile_type'])
+                # Handle multi-profile (comma-separated) vs single profile type
+                profile_type_value = updates['profile_type']
+                if ',' in str(profile_type_value):
+                    # Multi-profile already formatted - use as-is
+                    updates['profile_type'] = str(profile_type_value).strip()
+                else:
+                    # Single profile type - canonicalize it
+                    updates['profile_type'] = canonicalize_profile_type(profile_type_value)
             
             # Build dynamic UPDATE query
             set_clauses = []

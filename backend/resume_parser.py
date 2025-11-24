@@ -47,7 +47,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-from profile_type_utils import determine_primary_profile_type
+from profile_type_utils import determine_primary_profile_type, determine_profile_types_enhanced, format_profile_types_for_storage
 
 # Import the new EducationExtractor
 try:
@@ -1761,14 +1761,15 @@ Resume Text (look for name in FIRST FEW LINES):
             # Get file info
             file_size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
             
-            # Derive canonical profile type using NLM approach (analyzes overall content)
-            profile_type = determine_primary_profile_type(
+            # Derive canonical profile type using enhanced detection (supports multi-profile)
+            profile_types, confidence, metadata = determine_profile_types_enhanced(
                 primary_skills, 
                 secondary_skills_str, 
                 resume_text,
                 ai_client=self.ai_client if self.use_ai_extraction else None,
                 ai_model=self.ai_model if self.use_ai_extraction else None
             )
+            profile_type = format_profile_types_for_storage(profile_types)
             
             # Prepare parsed data
             parsed_data = {

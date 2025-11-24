@@ -56,6 +56,16 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = ATSConfig.MAX_FILE_SIZE_MB * 1024 * 1024
 
+# In-memory cache for latest profile ranking result (Option 1)
+# Stores the most recent output from /api/profileRankingByJD
+# Automatically overwritten on each new call
+_latest_ranking_cache = {
+    'ranked_profiles': [],
+    'job_requirements': {},
+    'timestamp': None,
+    'job_id': None
+}
+
 # Validate configuration
 if not ATSConfig.validate_config():
     logger.error("Configuration validation failed. Please check your environment variables.")
@@ -916,6 +926,9 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
     """
     Check if candidate text matches Boolean query.
     
+    Uses word boundary matching to ensure tech skills are matched as standalone words
+    or comma-separated terms, not as parts of other words (e.g., "net" in "outlook.com").
+    
     Args:
         candidate_text: Lowercased searchable text from candidate
         parsed_query: Parsed Boolean query structure
@@ -928,20 +941,102 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
     if not and_terms:
         return True  # No query terms means match all
     
+    def _is_valid_match(term: str, text: str) -> bool:
+        """
+        Check if term matches in text using word boundaries, excluding email/URL contexts.
+        
+        Args:
+            term: Search term (e.g., "net", ".net")
+            text: Text to search in
+            
+        Returns:
+            True if term is found as a valid tech skill (not in email/URL)
+        """
+        if not term:
+            return False
+        
+        term_lower = term.lower().strip().strip('"')
+        if not term_lower:
+            return False
+        
+        # Handle special cases like ".net" that start with dot
+        if term_lower.startswith('.'):
+            # For ".net", match at start, after comma, or after space
+            # Pattern: (start|comma|space) + ".net" + (word boundary or end)
+            escaped = re.escape(term_lower)
+            pattern = r'(?:^|[,;\s]+)' + escaped + r'(?:\b|$)'
+        else:
+            # For regular terms, use word boundaries
+            escaped = re.escape(term_lower)
+            pattern = r'\b' + escaped + r'\b'
+        
+        # Find all matches
+        matches = list(re.finditer(pattern, text, re.IGNORECASE))
+        if not matches:
+            return False
+        
+        # Check each match to exclude email/URL contexts
+        for match in matches:
+            start, end = match.span()
+            
+            # Extract context around the match (100 chars before and after for better detection)
+            context_start = max(0, start - 100)
+            context_end = min(len(text), end + 100)
+            context = text[context_start:context_end]
+            match_pos_in_context = start - context_start
+            
+            # Exclude if match is part of an email address
+            # Email pattern: [text]@[domain]
+            # Check if @ appears before our match and domain extension appears after
+            at_pos = context.find('@')
+            if at_pos != -1 and at_pos < match_pos_in_context:
+                # @ is before our match - check if domain extension is after
+                domain_pattern = r'\.(com|net|org|edu|gov|io|co|in|uk|au|ca|us|de|fr|jp)(?:\b|/|$)'
+                domain_match = re.search(domain_pattern, context[match_pos_in_context:], re.IGNORECASE)
+                if domain_match:
+                    # Match is between @ and domain extension - it's in an email
+                    continue
+            
+            # Exclude if match is part of an email address or domain name
+            # Get context around the match (50 chars before and after)
+            context_before = text[max(0, start - 50):start]
+            context_after = text[end:min(len(text), end + 50)]
+            
+            # Check 1: If @ appears before our match, it might be in an email
+            # Look for email pattern: [text]@[domain].[extension]
+            if '@' in context_before:
+                # Check if there's a domain extension after our match
+                domain_extensions = r'\.(com|net|org|edu|gov|io|co|in|uk|au|ca|us|de|fr|jp)(?:\b|/|$)'
+                if re.search(domain_extensions, context_after, re.IGNORECASE):
+                    # Pattern: @[something]...[our_match]...[extension] = email address
+                    continue  # Skip, it's in an email
+            
+            # Check 2: If match is within a domain pattern [word].[extension]
+            # Look for domain pattern that contains our match
+            # Pattern: [alphanumeric-dots].[extension]
+            domain_full_pattern = r'[a-z0-9.-]+\.(com|net|org|edu|gov|io|co|in|uk|au|ca|us|de|fr|jp)(?:\b|/|$)'
+            # Search in wider context (100 chars total)
+            wider_context = text[max(0, start - 50):min(len(text), end + 50)]
+            domain_matches = list(re.finditer(domain_full_pattern, wider_context, re.IGNORECASE))
+            for dm in domain_matches:
+                dm_start = max(0, start - 50) + dm.start()
+                dm_end = max(0, start - 50) + dm.end()
+                # If our match position is within the domain match, exclude it
+                if start >= dm_start and end <= dm_end:
+                    continue  # Skip, it's part of a domain name
+            
+            # Valid match found (not in email/URL context)
+            return True
+        
+        # All matches were in email/URL context
+        return False
+    
     # All AND groups must match
     for or_group in and_terms:
         # At least one term in OR group must match
         group_matched = False
         for term in or_group:
-            term_lower = term.lower().strip()
-            # Remove quotes if present
-            term_lower = term_lower.strip('"')
-            
-            if not term_lower:
-                continue
-            
-            # Check if term exists in candidate text (case-insensitive)
-            if term_lower in candidate_text:
+            if _is_valid_match(term, candidate_text):
                 group_matched = True
                 break
         
@@ -1081,7 +1176,13 @@ def search_resumes():
         chunk_size = int(data.get('vector_chunk_size', VECTOR_CHUNK_SIZE))
         chunk_size = max(chunk_size, 50)
         vector_top_k = max(top_k * 3, 60)
-        pinecone_metadata_filter = build_pinecone_metadata_filter(structured_filters)
+        # Don't use profile_type filter in Pinecone since we already filtered in SQL
+        # Pinecone stores profile_type as comma-separated string which doesn't work well with $in
+        # SQL filtering is more reliable for profile_type matching
+        pinecone_filters_for_vector = structured_filters.copy()
+        if 'profile_type' in pinecone_filters_for_vector:
+            del pinecone_filters_for_vector['profile_type']
+        pinecone_metadata_filter = build_pinecone_metadata_filter(pinecone_filters_for_vector)
         
         for chunk in chunk_list(candidate_ids, chunk_size):
             if not chunk:
@@ -1107,11 +1208,79 @@ def search_resumes():
                     }
         
         if not layer2_matches:
+            # Fallback: Return SQL-filtered candidates when vector search finds no matches
+            # This handles cases where candidates exist in SQL but:
+            # 1. Don't have embeddings in Pinecone
+            # 2. Pinecone metadata filter is too restrictive (e.g., comma-separated profile_type)
+            # 3. Vector similarity is below threshold
+            logger.warning(f"Vector search found 0 matches for {len(candidate_ids)} SQL-filtered candidates. Returning SQL results as fallback.")
+            fallback_results = []
+            
+            # Calculate match scores based on profile_type and skills overlap
+            search_profile_types = structured_filters.get('profile_type', [])
+            search_query_lower = user_query.lower() if user_query else ""
+            
+            for record in sql_candidates[:top_k]:
+                candidate_profile_types = record.get('profile_type', '')
+                candidate_skills = (record.get('primary_skills', '') or '').lower()
+                
+                # Calculate match score based on profile_type overlap
+                base_score = 0.5
+                profile_type_bonus = 0.0
+                profile_type_penalty = 0.0
+                skills_bonus = 0.0
+                
+                # Profile type matching bonus/penalty
+                if candidate_profile_types and search_profile_types:
+                    # Split candidate's profile types (handle both comma and comma+space formats)
+                    candidate_pts = [pt.strip() for pt in candidate_profile_types.replace(', ', ',').split(',')]
+                    has_match = False
+                    for search_pt in search_profile_types:
+                        if search_pt in candidate_pts:
+                            # Exact profile type match
+                            profile_type_bonus = 0.3
+                            has_match = True
+                            break
+                        elif any(search_pt in pt or pt in search_pt for pt in candidate_pts):
+                            # Partial match (e.g., "Microsoft Power Platform" in "Microsoft Power Platform,Integration / APIs")
+                            profile_type_bonus = 0.2
+                            has_match = True
+                            break
+                    
+                    # Penalty if profile_type filter exists but candidate doesn't match
+                    if not has_match and search_profile_types:
+                        profile_type_penalty = -0.2  # Reduce score for non-matching profile types
+                
+                # Skills matching bonus (check if query terms appear in skills)
+                if search_query_lower and candidate_skills:
+                    query_terms = search_query_lower.split()
+                    matched_terms = sum(1 for term in query_terms if term in candidate_skills and len(term) > 2)
+                    if matched_terms > 0:
+                        skills_bonus = min(0.2, matched_terms * 0.05)
+                
+                match_score = max(0.0, min(1.0, base_score + profile_type_bonus + profile_type_penalty + skills_bonus))
+                
+                fallback_results.append({
+                    'candidate_id': record.get('candidate_id'),
+                    'candidate_name': record.get('name'),
+                    'email': record.get('email'),
+                    'primary_skills': record.get('primary_skills', ''),
+                    'profile_type': record.get('profile_type', ''),
+                    'total_experience': record.get('total_experience', 0.0),
+                    'current_designation': record.get('current_designation', ''),
+                    'current_location': record.get('current_location', ''),
+                    'match_score': round(match_score, 3),
+                    'match_reason': f'SQL filter match (profile_type: {profile_type_bonus:.2f}{f", penalty: {profile_type_penalty:.2f}" if profile_type_penalty < 0 else ""}, skills: {skills_bonus:.2f})'
+                })
+            
+            # Sort by match_score descending
+            fallback_results.sort(key=lambda x: x['match_score'], reverse=True)
+            
             return jsonify({
-                'message': 'No semantic matches found within SQL-filtered candidates',
+                'message': f'Found {len(fallback_results)} candidates via SQL filtering (vector search found no matches)',
                 'query': user_query,
-                'search_results': [],
-                'total_matches': 0,
+                'search_results': fallback_results,
+                'total_matches': len(fallback_results),
                 'layer_counts': {
                     'sql_filtered': len(candidate_ids),
                     'vector_considered': 0,
@@ -1124,6 +1293,8 @@ def search_resumes():
             }), 200
         
         vector_ranked = []
+        search_profile_types = structured_filters.get('profile_type', [])
+        
         for cid, match_data in layer2_matches.items():
             db_record = candidate_map[cid]
             pinecone_meta = match_data.get('metadata') or {}
@@ -1136,12 +1307,34 @@ def search_resumes():
                 if db_record.get(field):
                     combined_metadata[field] = db_record[field]
             
+            # Calculate base match score from vector similarity
+            base_score = match_data['score']
+            
+            # Add profile_type matching bonus
+            profile_type_bonus = 0.0
+            candidate_profile_type = db_record.get('profile_type') or pinecone_meta.get('profile_type', '')
+            if candidate_profile_type and search_profile_types:
+                # Split candidate's profile types (handle both comma and comma+space formats)
+                candidate_pts = [pt.strip() for pt in candidate_profile_type.replace(', ', ',').split(',')]
+                for search_pt in search_profile_types:
+                    if search_pt in candidate_pts:
+                        # Exact profile type match - boost score
+                        profile_type_bonus = 0.1
+                        break
+                    elif any(search_pt in pt or pt in search_pt for pt in candidate_pts):
+                        # Partial match bonus
+                        profile_type_bonus = 0.05
+                        break
+            
+            # Final score with profile_type bonus (capped at 1.0)
+            final_score = min(1.0, base_score + profile_type_bonus)
+            
             candidate_info = {
                 'candidate_id': cid,
                 'name': db_record.get('name') or pinecone_meta.get('name'),
                 'email': db_record.get('email') or pinecone_meta.get('email'),
-                'match_score': match_data['score'],
-                'profile_type': db_record.get('profile_type') or pinecone_meta.get('profile_type'),
+                'match_score': round(final_score, 3),
+                'profile_type': candidate_profile_type,
                 'primary_skills': db_record.get('primary_skills'),
                 'total_experience': db_record.get('total_experience'),
                 'domain': db_record.get('domain'),
@@ -1521,6 +1714,23 @@ def profile_ranking_by_jd():
         else:
             logger.info("Ranking completed. No eligible candidates found (all candidates filtered out).")
         
+        # Store latest result in memory cache (overwrites previous)
+        global _latest_ranking_cache
+        _latest_ranking_cache = {
+            'ranked_profiles': eligible_profiles,
+            'job_requirements': {
+                'required_skills': required_skills_list,
+                'preferred_skills': preferred_skills_list,
+                'min_experience': min_experience,
+                'max_experience': max_experience,
+                'domain': domain,
+                'education_required': education_required
+            },
+            'timestamp': datetime.now().isoformat(),
+            'job_id': job_id
+        }
+        logger.info(f"Stored {len(eligible_profiles)} candidates in memory cache for comprehensive ranking")
+        
         return jsonify(response_data), 200
         
     except Exception as e:
@@ -1538,8 +1748,15 @@ def comprehensive_profile_ranking():
     """
     Comprehensive Profile Ranking Endpoint
     
-    Input: JSON with job requirements and optional profiles directory
+    Input: JSON with job requirements and either:
+    - Option 1: candidates array (from /api/profileRankingByJD output) - PRIORITY
+    - Option 2: profiles_directory (read from file system) - FALLBACK
+    
     Output: Ranked list of candidates with detailed analysis
+    
+    Workflow:
+    1. If 'candidates' provided: Use those directly (from profileRankingByJD)
+    2. If 'candidates' NOT provided: Read from profiles_directory (current behavior)
     """
     try:
         # Validate request
@@ -1548,91 +1765,227 @@ def comprehensive_profile_ranking():
         
         data = request.get_json()
         
-        # Extract job requirements
-        job_requirements = data.get('job_requirements', {})
+        # Get cached data from latest profileRankingByJD result
+        global _latest_ranking_cache
+        cached_job_requirements = _latest_ranking_cache.get('job_requirements', {})
+        cached_candidates = _latest_ranking_cache.get('ranked_profiles', [])
+        
+        # Extract job requirements with priority: request > cache
+        request_job_requirements = data.get('job_requirements', {})
+        
+        # Merge: Request overrides cache, cache fills missing fields
+        if cached_job_requirements:
+            # Start with cached job_requirements, then override with request values
+            job_requirements = {**cached_job_requirements, **request_job_requirements}
+            if request_job_requirements:
+                logger.info("Using job_requirements: cached values merged with request overrides")
+            else:
+                logger.info("Using job_requirements from latest profileRankingByJD result (cached)")
+        else:
+            # No cache, use request only
+            job_requirements = request_job_requirements
+            if request_job_requirements:
+                logger.info("Using job_requirements from request (no cache available)")
+        
+        # Validate job requirements (must have at least one source)
+        if not job_requirements:
+            return jsonify({
+                'error': 'job_requirements is required. Either provide in request or call /api/profileRankingByJD first to populate cache'
+            }), 400
+        
+        # Normalize job_requirements: Convert skills from lists to comma-separated strings
+        # The ranking engine expects required_skills and preferred_skills as strings, not lists
+        required_skills = job_requirements.get('required_skills', '')
+        if isinstance(required_skills, list):
+            required_skills = ', '.join(str(s).strip() for s in required_skills if s)
+        elif not isinstance(required_skills, str):
+            required_skills = ''
+        
+        preferred_skills = job_requirements.get('preferred_skills', '')
+        if isinstance(preferred_skills, list):
+            preferred_skills = ', '.join(str(s).strip() for s in preferred_skills if s)
+        elif not isinstance(preferred_skills, str):
+            preferred_skills = ''
+        
+        # Update job_requirements with normalized skills
+        job_requirements['required_skills'] = required_skills
+        job_requirements['preferred_skills'] = preferred_skills
+        
         profiles_dir = data.get('profiles_directory', os.path.join(os.getcwd(), 'profiles'))
         top_k = data.get('top_k', 10)
+        input_candidates = data.get('candidates', [])  # Candidates from profileRankingByJD (manual override)
         
-        # Validate job requirements
-        if not job_requirements:
-            return jsonify({'error': 'job_requirements is required'}), 400
-        
-        logger.info(f"Processing comprehensive ranking for directory: {profiles_dir}")
-        
-        # Read profiles from directory
         start_time = time.time()
-        profiles = read_profiles_from_directory(profiles_dir)
         
-        if not profiles:
-            return jsonify({
-                'status': 'success',
-                'message': 'No profiles found in directory',
-                'profiles_directory': profiles_dir,
-                'ranked_profiles': [],
-                'total_candidates_evaluated': 0,
-                'job_requirements': job_requirements,
-                'processing_time_ms': (time.time() - start_time) * 1000,
-                'timestamp': datetime.now().isoformat()
-            }), 200
+        if cached_candidates and len(cached_candidates) > 0:
+            logger.info(f"Using {len(cached_candidates)} candidates from latest profileRankingByJD result (stored at {_latest_ranking_cache.get('timestamp', 'unknown')})")
+            
+            # Normalize candidates from profileRankingByJD format to ranking engine format
+            candidates = []
+            for candidate_data in cached_candidates:
+                try:
+                    # Handle both string and list formats for skills
+                    primary_skills = candidate_data.get('primary_skills', '')
+                    if isinstance(primary_skills, list):
+                        primary_skills = ', '.join(primary_skills)
+                    
+                    secondary_skills = candidate_data.get('secondary_skills', '')
+                    if isinstance(secondary_skills, list):
+                        secondary_skills = ', '.join(secondary_skills)
+                    
+                    # Build candidate object in format expected by ranking engine
+                    candidate = {
+                        'candidate_id': candidate_data.get('candidate_id'),
+                        'name': candidate_data.get('name', 'Unknown'),
+                        'email': candidate_data.get('email', ''),
+                        'phone': candidate_data.get('phone', ''),
+                        'primary_skills': primary_skills,
+                        'secondary_skills': secondary_skills,
+                        'total_experience': candidate_data.get('total_experience', 0),
+                        'domain': candidate_data.get('domain', ''),
+                        'education': candidate_data.get('education', ''),
+                        'resume_text': candidate_data.get('resume_text', ''),
+                        'status': candidate_data.get('status', 'active')
+                    }
+                    candidates.append(candidate)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing candidate {candidate_data.get('candidate_id')}: {e}")
+                    # Skip invalid candidates
+                    continue
+            
+            if candidates:
+                logger.info(f"Successfully normalized {len(candidates)} candidates from cache")
+                source_info = f"latest profileRankingByJD result (cached, {len(candidates)} candidates)"
+            else:
+                logger.warning("Cached candidates found but none were valid, falling back to other sources")
         
-        logger.info(f"Found {len(profiles)} profiles")
+        # Priority 2: Use candidates from request (if provided manually and cache not used)
+        if ('candidates' not in locals() or not candidates) and input_candidates and isinstance(input_candidates, list) and len(input_candidates) > 0:
+            logger.info(f"Using {len(input_candidates)} candidates from request (from profileRankingByJD)")
+            
+            # Normalize candidates from profileRankingByJD format to ranking engine format
+            candidates = []
+            for candidate_data in input_candidates:
+                try:
+                    # Handle both string and list formats for skills
+                    primary_skills = candidate_data.get('primary_skills', '')
+                    if isinstance(primary_skills, list):
+                        primary_skills = ', '.join(primary_skills)
+                    
+                    secondary_skills = candidate_data.get('secondary_skills', '')
+                    if isinstance(secondary_skills, list):
+                        secondary_skills = ', '.join(secondary_skills)
+                    
+                    # Build candidate object in format expected by ranking engine
+                    candidate = {
+                        'candidate_id': candidate_data.get('candidate_id'),
+                        'name': candidate_data.get('name', 'Unknown'),
+                        'email': candidate_data.get('email', ''),
+                        'phone': candidate_data.get('phone', ''),
+                        'primary_skills': primary_skills,
+                        'secondary_skills': secondary_skills,
+                        'total_experience': candidate_data.get('total_experience', 0),
+                        'domain': candidate_data.get('domain', ''),
+                        'education': candidate_data.get('education', ''),
+                        'resume_text': candidate_data.get('resume_text', ''),
+                        'status': candidate_data.get('status', 'active')
+                    }
+                    candidates.append(candidate)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing candidate {candidate_data.get('candidate_id')}: {e}")
+                    # Skip invalid candidates
+                    continue
+            
+            if candidates:
+                logger.info(f"Successfully normalized {len(candidates)} candidates from manual request")
+                source_info = f"candidates from request ({len(candidates)} candidates)"
+            else:
+                logger.warning("Manual candidates provided but none were valid, falling back to directory")
         
-        # Initialize ranking engine
-        ranking_engine = create_ranking_engine()
+        # Priority 3: Read from directory (fallback - current behavior)
+        if 'candidates' not in locals() or not candidates:
+            logger.info(f"Reading profiles from directory: {profiles_dir}")
+            profiles = read_profiles_from_directory(profiles_dir)
+            
+            if not profiles:
+                return jsonify({
+                    'status': 'success',
+                    'message': 'No profiles found in directory',
+                    'profiles_directory': profiles_dir,
+                    'ranked_profiles': [],
+                    'total_candidates_evaluated': 0,
+                    'job_requirements': job_requirements,
+                    'processing_time_ms': (time.time() - start_time) * 1000,
+                    'timestamp': datetime.now().isoformat()
+                }), 200
+            
+            logger.info(f"Found {len(profiles)} profiles from directory")
+            
+            # Initialize ranking engine
+            ranking_engine = create_ranking_engine()
+            
+            # Convert profiles to the format expected by ranking engine
+            candidates = []
+            for profile in profiles:
+                try:
+                    # Extract skills and experience from content
+                    from resume_parser import extract_skills_from_text, extract_experience_from_text
+                    
+                    content = profile.get('content', '')
+                    logger.info(f"Processing profile {profile.get('candidate_id')} with content length: {len(content)}")
+                    
+                    extracted_skills = extract_skills_from_text(content)
+                    extracted_experience = extract_experience_from_text(content)
+                    
+                    logger.info(f"Extracted {len(extracted_skills)} skills and {extracted_experience} years experience")
+                    
+                    # Safely handle skills list slicing
+                    primary_skills = extracted_skills[:10] if len(extracted_skills) >= 10 else extracted_skills
+                    secondary_skills = extracted_skills[10:] if len(extracted_skills) > 10 else []
+                    
+                    candidate = {
+                        'candidate_id': profile.get('candidate_id'),
+                        'name': profile.get('name', 'Unknown'),
+                        'email': profile.get('email', ''),
+                        'phone': profile.get('phone', ''),
+                        'primary_skills': ', '.join(primary_skills),
+                        'secondary_skills': ', '.join(secondary_skills),
+                        'total_experience': extracted_experience,
+                        'domain': profile.get('domain', ''),
+                        'education': profile.get('education', ''),
+                        'resume_text': content,
+                        'status': 'active'
+                    }
+                    candidates.append(candidate)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing profile {profile.get('candidate_id')}: {e}")
+                    # Create a minimal candidate entry to avoid breaking the ranking
+                    candidate = {
+                        'candidate_id': profile.get('candidate_id'),
+                        'name': profile.get('name', 'Unknown'),
+                        'email': profile.get('email', ''),
+                        'phone': profile.get('phone', ''),
+                        'primary_skills': '',
+                        'secondary_skills': '',
+                        'total_experience': 0,
+                        'domain': profile.get('domain', ''),
+                        'education': profile.get('education', ''),
+                        'resume_text': profile.get('content', ''),
+                        'status': 'active'
+                    }
+                    candidates.append(candidate)
+            
+            source_info = f"profiles_directory ({profiles_dir}, {len(profiles)} files)"
         
-        # Convert profiles to the format expected by ranking engine
-        candidates = []
-        for profile in profiles:
-            try:
-                # Extract skills and experience from content
-                from resume_parser import extract_skills_from_text, extract_experience_from_text
-                
-                content = profile.get('content', '')
-                logger.info(f"Processing profile {profile.get('candidate_id')} with content length: {len(content)}")
-                
-                extracted_skills = extract_skills_from_text(content)
-                extracted_experience = extract_experience_from_text(content)
-                
-                logger.info(f"Extracted {len(extracted_skills)} skills and {extracted_experience} years experience")
-                
-                # Safely handle skills list slicing
-                primary_skills = extracted_skills[:10] if len(extracted_skills) >= 10 else extracted_skills
-                secondary_skills = extracted_skills[10:] if len(extracted_skills) > 10 else []
-                
-                candidate = {
-                    'candidate_id': profile.get('candidate_id'),
-                    'name': profile.get('name', 'Unknown'),
-                    'email': profile.get('email', ''),
-                    'phone': profile.get('phone', ''),
-                    'primary_skills': ', '.join(primary_skills),
-                    'secondary_skills': ', '.join(secondary_skills),
-                    'total_experience': extracted_experience,
-                    'domain': profile.get('domain', ''),
-                    'education': profile.get('education', ''),
-                    'resume_text': content,
-                    'status': 'active'
-                }
-                candidates.append(candidate)
-                
-            except Exception as e:
-                logger.error(f"Error processing profile {profile.get('candidate_id')}: {e}")
-                # Create a minimal candidate entry to avoid breaking the ranking
-                candidate = {
-                    'candidate_id': profile.get('candidate_id'),
-                    'name': profile.get('name', 'Unknown'),
-                    'email': profile.get('email', ''),
-                    'phone': profile.get('phone', ''),
-                    'primary_skills': '',
-                    'secondary_skills': '',
-                    'total_experience': 0,
-                    'domain': profile.get('domain', ''),
-                    'education': profile.get('education', ''),
-                    'resume_text': profile.get('content', ''),
-                    'status': 'active'
-                }
-                candidates.append(candidate)
+        # Initialize ranking engine (if not already initialized)
+        if 'ranking_engine' not in locals():
+            ranking_engine = create_ranking_engine()
         
         # Rank candidates using existing ranking engine
+        logger.info(f"Ranking {len(candidates)} candidates against job requirements...")
         ranked_profiles = ranking_engine.rank_candidates(
             candidates=candidates,
             job_requirements=job_requirements,
@@ -1647,9 +2000,9 @@ def comprehensive_profile_ranking():
         response_data = {
             'status': 'success',
             'message': 'Comprehensive profile ranking completed successfully',
-            'profiles_directory': profiles_dir,
+            'source': source_info,
             'ranked_profiles': ranked_profiles,
-            'total_candidates_evaluated': len(profiles),
+            'total_candidates_evaluated': len(candidates),
             'top_candidates_returned': len(ranked_profiles),
             'job_requirements': job_requirements,
             'ranking_criteria': {
@@ -1660,6 +2013,10 @@ def comprehensive_profile_ranking():
             'processing_time_ms': (time.time() - start_time) * 1000,
             'timestamp': datetime.now().isoformat()
         }
+        
+        # Include profiles_directory in response only if it was used
+        if 'profiles_dir' in locals() and not (input_candidates and len(input_candidates) > 0):
+            response_data['profiles_directory'] = profiles_dir
         
         if ranked_profiles:
             logger.info(f"Ranking completed. Top candidate: {ranked_profiles[0]['name']} with score {ranked_profiles[0]['total_score']}")

@@ -825,6 +825,42 @@ If uncertain, return "{DEFAULT_PROFILE_TYPE}".
     
     return None
 
+def get_all_profile_type_scores(
+    primary_skills: str = "",
+    secondary_skills: str = "",
+    resume_text: str = ""
+) -> Dict[str, float]:
+    """
+    Get raw scores for ALL profile types (not just top ones).
+    This is used to store scores in candidate_profile_scores table.
+    
+    Args:
+        primary_skills: Comma-separated primary skills
+        secondary_skills: Comma-separated secondary skills
+        resume_text: Full resume text content
+        
+    Returns:
+        Dictionary mapping profile_type -> raw_score (actual calculated values like 12, 25, 100)
+        Includes all profile types, even if score is 0.0
+    """
+    # Normalize text
+    text_blob = _normalize_text_blob(primary_skills, secondary_skills, resume_text)
+    if not text_blob:
+        # Return all zeros if no text
+        return {pt: 0.0 for pt, _ in PROFILE_TYPE_RULES_ENHANCED}
+    
+    # Calculate scores for all profile types
+    profile_scores = _calculate_normalized_scores(text_blob, primary_skills, secondary_skills, resume_text)
+    
+    # Create dictionary with all profile types
+    all_scores = {pt: 0.0 for pt, _ in PROFILE_TYPE_RULES_ENHANCED}
+    
+    # Update with calculated raw scores (not normalized)
+    for ps in profile_scores:
+        all_scores[ps.profile_type] = round(ps.raw_score, 2)  # Round to 2 decimal places for raw scores
+    
+    return all_scores
+
 def _determine_profile_type_with_llm(primary_skills: str, secondary_skills: str, resume_text: str, ai_client, ai_model: str) -> str:
     """
     Use LLM to analyze overall resume content and determine profile type.

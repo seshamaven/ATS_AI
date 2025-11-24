@@ -570,6 +570,80 @@ class ATSDatabase:
             logger.error(f"Error fetching rankings: {e}")
             return []
     
+    def insert_or_update_profile_scores(self, candidate_id: int, profile_scores: Dict[str, float]) -> bool:
+        """
+        Insert or update profile type scores for a candidate.
+        
+        Args:
+            candidate_id: Candidate ID
+            profile_scores: Dictionary mapping profile_type -> raw_score (actual calculated values like 12, 25, 100)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Mapping from profile type names to database column names
+            profile_type_to_column = {
+                "Java": "java_score",
+                ".Net": "dotnet_score",
+                "Python": "python_score",
+                "JavaScript": "javascript_score",
+                "Full Stack": "fullstack_score",
+                "DevOps": "devops_score",
+                "Data Engineering": "data_engineering_score",
+                "Data Science": "data_science_score",
+                "Testing / QA": "testing_qa_score",
+                "SAP": "sap_score",
+                "ERP": "erp_score",
+                "Cloud / Infra": "cloud_infra_score",
+                "Business Intelligence (BI)": "business_intelligence_score",
+                "Microsoft Power Platform": "microsoft_power_platform_score",
+                "RPA": "rpa_score",
+                "Cyber Security": "cyber_security_score",
+                "Mobile Development": "mobile_development_score",
+                "Salesforce": "salesforce_score",
+                "Low Code / No Code": "low_code_no_code_score",
+                "Database": "database_score",
+                "Integration / APIs": "integration_apis_score",
+                "UI/UX": "ui_ux_score",
+                "Support": "support_score",
+                "Business Development": "business_development_score",
+            }
+            
+            # Build the INSERT ... ON DUPLICATE KEY UPDATE query
+            columns = ["candidate_id"] + list(profile_type_to_column.values())
+            placeholders = ["%s"] * len(columns)
+            values = [candidate_id]
+            
+            # Add scores in the same order as columns (after candidate_id)
+            for profile_type, column_name in profile_type_to_column.items():
+                score = profile_scores.get(profile_type, 0.0)
+                values.append(score)
+            
+            # Build UPDATE clause for ON DUPLICATE KEY UPDATE
+            update_clauses = [f"{col} = VALUES({col})" for col in profile_type_to_column.values()]
+            
+            query = f"""
+                INSERT INTO candidate_profile_scores (
+                    {', '.join(columns)}
+                ) VALUES (
+                    {', '.join(placeholders)}
+                )
+                ON DUPLICATE KEY UPDATE
+                    {', '.join(update_clauses)},
+                    updated_at = CURRENT_TIMESTAMP
+            """
+            
+            self.cursor.execute(query, values)
+            self.connection.commit()
+            logger.info(f"Successfully stored profile scores for candidate_id={candidate_id}")
+            return True
+        except Error as e:
+            logger.error(f"Error inserting/updating profile scores: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+    
     def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics."""
         try:

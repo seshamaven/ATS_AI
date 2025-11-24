@@ -43,6 +43,7 @@ from profile_type_utils import (
     detect_profile_types_from_text,
     infer_profile_type_from_requirements,
     canonicalize_profile_type_list,
+    get_all_profile_type_scores,
 )
 
 # Configure logging
@@ -456,6 +457,19 @@ def process_resume():
                 
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
+                
+                # Store all profile type scores in candidate_profile_scores table
+                try:
+                    all_profile_scores = get_all_profile_type_scores(
+                        primary_skills=parsed_data.get('primary_skills', ''),
+                        secondary_skills=parsed_data.get('secondary_skills', ''),
+                        resume_text=parsed_data.get('resume_text', '')
+                    )
+                    db.insert_or_update_profile_scores(candidate_id, all_profile_scores)
+                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
+                except Exception as e:
+                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
+                    # Don't fail the entire request if profile score storage fails
             
             # Index in Pinecone if enabled
             pinecone_indexed = False

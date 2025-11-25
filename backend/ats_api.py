@@ -43,7 +43,6 @@ from profile_type_utils import (
     detect_profile_types_from_text,
     infer_profile_type_from_requirements,
     canonicalize_profile_type_list,
-    get_all_profile_type_scores,
 )
 
 # Configure logging
@@ -457,19 +456,6 @@ def process_resume():
                 
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
-                
-                # Store all profile type scores in candidate_profile_scores table
-                try:
-                    all_profile_scores = get_all_profile_type_scores(
-                        primary_skills=parsed_data.get('primary_skills', ''),
-                        secondary_skills=parsed_data.get('secondary_skills', ''),
-                        resume_text=parsed_data.get('resume_text', '')
-                    )
-                    db.insert_or_update_profile_scores(candidate_id, all_profile_scores)
-                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
-                except Exception as e:
-                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
-                    # Don't fail the entire request if profile score storage fails
             
             # Index in Pinecone if enabled
             pinecone_indexed = False
@@ -837,6 +823,57 @@ def index_existing_resumes():
         logger.error(f"Error in batch indexing: {e}")
         return jsonify({'error': str(e)}), 500
 
+def parse_comma_separated_query(query: str) -> Dict:
+    """
+    Parse comma-separated query into AND conditions.
+    
+    Handles queries like: "bhargavi, .net, mvc" or "python, java, django"
+    Treats comma-separated values as AND conditions.
+    Preserves quoted phrases that may contain commas.
+    
+    Args:
+        query: Query string with comma-separated values
+        
+    Returns:
+        Dict with 'and_terms' structure where each term is a separate AND condition
+    """
+    query = query.strip()
+    if not query:
+        return {'and_terms': []}
+    
+    # Extract quoted phrases first (preserve them, including commas inside quotes)
+    quoted_phrases = {}
+    quote_counter = 0
+    
+    def replace_quote(match):
+        nonlocal quote_counter
+        quote_counter += 1
+        key = f"__QUOTE_{quote_counter}__"
+        quoted_phrases[key] = match.group(1)
+        return key
+    
+    # Replace quoted phrases with placeholders
+    query_normalized = re.sub(r'"([^"]+)"', replace_quote, query)
+    
+    # Split by comma (but quoted phrases are already replaced, so commas inside quotes won't split)
+    parts = [part.strip() for part in query_normalized.split(',') if part.strip()]
+    
+    # Process each part and restore quoted phrases
+    and_terms = []
+    for part in parts:
+        # Restore quoted phrases if any placeholder is found
+        term = part
+        for placeholder, original in quoted_phrases.items():
+            if placeholder in term:
+                term = term.replace(placeholder, original)
+        
+        # Each comma-separated term becomes a separate AND condition
+        if term.strip():
+            and_terms.append([term.strip()])
+    
+    return {'and_terms': and_terms}
+
+
 def parse_boolean_query(query: str) -> Dict:
     """
     Parse Boolean query into structured format.
@@ -960,7 +997,7 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
         Check if term matches in text using word boundaries, excluding email/URL contexts.
         
         Args:
-            term: Search term (e.g., "net", ".net")
+            term: Search term (e.g., "net", ".net", "c#", "c++")
             text: Text to search in
             
         Returns:
@@ -973,15 +1010,18 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
         if not term_lower:
             return False
         
-        # Handle special cases like ".net" that start with dot
-        if term_lower.startswith('.'):
-            # For ".net", match at start, after comma, or after space
-            # Pattern: (start|comma|space) + ".net" + (word boundary or end)
-            escaped = re.escape(term_lower)
-            pattern = r'(?:^|[,;\s]+)' + escaped + r'(?:\b|$)'
+        escaped = re.escape(term_lower)
+        
+        # Handle special cases with non-word characters (., #, +, etc.)
+        # Word boundaries \b don't work properly with special characters
+        # So we use context-based matching (start, comma, semicolon, space)
+        if term_lower.startswith('.') or '#' in term_lower or '+' in term_lower:
+            # For ".net", "c#", "c++", "f#", etc.
+            # Match at start, after comma, semicolon, or space
+            # Pattern: (start|comma|semicolon|space) + term + (comma|semicolon|space|end)
+            pattern = r'(?:^|[,;\s]+)' + escaped + r'(?:[,;\s]+|$)'
         else:
             # For regular terms, use word boundaries
-            escaped = re.escape(term_lower)
             pattern = r'\b' + escaped + r'\b'
         
         # Find all matches
@@ -1128,13 +1168,23 @@ def search_resumes():
         
         # === Step 1: Parse Boolean Query (if enabled) ===
         parsed_query = None
-        if use_boolean_search and (' AND ' in user_query.upper() or ' OR ' in user_query.upper() or '(' in user_query):
-            parsed_query = parse_boolean_query(user_query)
-            logger.info(f"Parsed Boolean query: {parsed_query}")
+        if use_boolean_search:
+            # Check for explicit boolean operators (AND, OR, parentheses)
+            if ' AND ' in user_query.upper() or ' OR ' in user_query.upper() or '(' in user_query:
+                parsed_query = parse_boolean_query(user_query)
+                logger.info(f"Parsed Boolean query: {parsed_query}")
+            # Check for comma-separated values (treat as AND conditions)
+            elif ',' in user_query:
+                parsed_query = parse_comma_separated_query(user_query)
+                logger.info(f"Parsed comma-separated query: {parsed_query}")
+            else:
+                # Simple query - treat as single term
+                parsed_query = {'and_terms': [[user_query]]}
+                logger.info(f"Simple query detected, treating as single term")
         else:
-            # Simple query - treat as single term
+            # Boolean search disabled - treat as single term
             parsed_query = {'and_terms': [[user_query]]}
-            logger.info(f"Simple query detected, treating as single term")
+            logger.info(f"Boolean search disabled, treating as single term")
         
         # === Step 2: Generate Embedding Once ===
         query_embedding = embedding_service.generate_embedding(user_query)

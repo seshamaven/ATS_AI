@@ -48,6 +48,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 from profile_type_utils import determine_primary_profile_type, determine_profile_types_enhanced, format_profile_types_for_storage
+from phone_extractor import extract_phone_numbers
+from location_identifier import extract_location as extract_location_advanced
+from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
+from email_extractor import extract_email_and_provider
 
 # Import the new EducationExtractor
 try:
@@ -70,190 +74,7 @@ class ResumeParser:
     """Intelligent resume parser with NLP and AI capabilities."""
 
         # Comprehensive technical skills database - ONLY these should appear in primary_skills
-    TECHNICAL_SKILLS = {
-        # === Programming Languages ===
-        'python', 'py', 'java','core java','advanced java' 'javascript', 'js', 'ecmascript', 'typescript', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
-        'swift', 'kotlin', 'scala', 'r', 'perl', 'bash', 'shell scripting', 'objective-c', 'dart',
-        'lua', 'matlab', 'assembly', 'fortran', 'sas', 'haskell', 'clojure', 'visual basic', 'vb.net', 'abap',
-        
-        # === Frameworks / Libraries ===
-        'django', 'django rest framework', 'django-cors-headers', 'django-allauth', 'django-crispy-forms', 'django-channels', 'django-filter', 'django-storages', 'django-redis', 'django-debug-toolbar', 'django-ckeditor', 'django-rest-auth', 'django-simplejwt', 'django-haystack', 'django-elasticsearch-dsl', 'django-oauth-toolkit', 'django-extensions',
-        'flask', 'spring', 'react', 'react.js', 'reactjs', 'react framework', 'angular', 'vue', 'node.js', 'fastapi', 'express', 'express.js',
-        'next.js', 'nestjs', 'laravel', 'symfony', 'flutter', 'react native', 'svelte', 'pytorch', 'tensorflow',
-        'struts', 'play framework', 'koa', 'meteor', 'ember.js', 'backbone.js', 'codeigniter', 'cakephp', 'yii',
-        'nuxt.js', 'gatsby', 'blazor', 'qt', 'tornado', 'pyramid', 'bottle', 'falcon', 'aiohttp', 'hug', 'web2py',
-        'streamlit', 'gradio', 'dash', 'panel', 'plotly-dash', 'quart', 'starlette', 'connexion', 'masonite', 'sanic',
-        'remix', 'solid.js', 'preact', 'alpine.js', 'marko', 'lit', 'stencil', 'dojo', 'blitz.js',
-        'recoil', 'mobx', 'react query', 'tanstack query', 'react hook form', 'formik', 'yup', 'zustand', 'immer', 'rxjs', 'jotai', 'valtio', 'xstate',
-        'styled-components', 'emotion', 'stitches', 'vanilla extract', 'react router', 'react-router', 'react helmet', 'react intl', 'i18next', 'luxon',
-        'axios', 'lodash', 'moment.js', 'day.js', 'date-fns', 'immutable.js', 'chart.js', 'd3.js', 'highcharts', 'echarts', 'handsontable',
-        'three.js', 'pixi.js', 'greenSock (gsap)', 'gsap', 'anime.js', 'react three fiber', 'react spring', 'react table', 'react testing library',
-        'graphql', 'apollo client', 'urql', 'swr', 'material ui', 'chakra ui', 'ant design', 'mantine', 'recharts',
-        'classnames', 'uuid', 'ramda', 'prop-types', 'react-icons', 'react-toastify',
-        'hibernate', 'prisma', 'sequelize', 'typeorm', 'knex.js', 'peewee', 'sqlalchemy', 'mongoose', 'pymongo', 'motor', 'mongoengine', 'bson', 'mangum', 'beanie',
-        
-        # === .NET Framework ===
-        '.net', '.net core', '.net framework', 'asp.net', 'asp.net mvc', 'asp.net core', 'ado.net', 'entity framework', 'linq',
-        
-        # === Databases / Data Tools ===
-        'sql', 'sql server', 'mysql', 'postgresql', 'postgres', 'psql', 'postgres db', 'pg', 'mongodb', 'mongo', 'mongodb atlas', 'mongo db', 'redis', 'nosql', 'oracle', 'sqlite', 'elasticsearch', 'snowflake',
-        'firebase', 'dynamodb', 'cassandra', 'neo4j', 'bigquery', 'redshift', 'clickhouse', 'couchdb', 'hbase',
-        'influxdb', 'memcached', 'realm', 'timescaledb', 'duckdb', 'cosmos db', 'supabase', 'psycopg2', 'psycopg', 'pg-promise', 'asyncpg',
-        'pgvector', 'pgcli', 'pgx', 'pgbouncer', 'drizzle orm', 'alembic', 'tortoise orm', 'gino', 'odmantic', 'ormar', 'prisma client', 'objection.js', 'sqlmodel', 'pony orm', 'dataset',
-        'pgadmin', 'dbeaver', 'navicat', 'tableplus', 'data grip', 'datagrip', 'heidisql', 'pg_dump', 'pg_restore', 'aws rds', 'azure database for postgresql', 'gcp cloud sql', 'neon.tech', 'timescale cloud',
-        'docker postgres', 'kubernetes postgres operator', 'patroni', 'pgbackrest', 'wal-g', 'prometheus exporter', 'flyway', 'liquibase', 'pgbench', 'pg_stat_statements', 'pg_repack', 'pgbadger', 'pgloader', 'pg_upgrade',
-        'mongodb compass', 'atlas', 'robo 3t', 'mongo shell', 'studio 3t', 'nosqlbooster', 'mongosh', 'mongostat', 'mongodump', 'mongorestore', 'mongotop', 'mongos', 'mongoperf', 'mongotools',
-        'atlas cli', 'mongosh scripts', 'mlab', 'compose mongodb', 'azure cosmos db (mongo api)', 'aws documentdb', 'gcp firestore (mongo mode)', 'realm sync', 'mongo express', 'kubernetes mongo operator',
-        'docker mongo', 'helm charts', 'mongobackup', 'mongobenchmark', 'grafana-mongodb plugin', 'prometheus exporter', 'datadog integration', 'elastic beats mongodb module', 'db-migrate',
-        'mongoose', 'pymongo', 'motor', 'mongoengine', 'bson', 'mangum', 'gridfs', 'mtools', 'beanie', 'marshmallow', 'dnspython', 'mongo-hint', 'mongo-connector', 'mongoalchemy', 'mongoid', 'mongojs',
-        'mongoose-auto-increment', 'mongoose-paginate', 'mongoose-validator', 'mongoose-schema', 'mongoose-aggregate-paginate',
-        
-        # === Cloud / DevOps ===
-        'aws', 'amazon web services', 'aws cloud', 'azure', 'microsoft azure', 'azure cloud', 'gcp', 'docker', 'docker engine', 'containers', 'containerization', 'docker platform', 'docker compose', 'docker-compose', 'swarm', 'docker swarm', 'kubernetes', 'k8s', 'kube', 'kubernetes cluster', 'kubernetes engine', 'jenkins', 'terraform', 'hashicorp terraform', 'iac terraform', 'ansible', 'prometheus', 'grafana',
-        'circleci', 'github actions', 'gh actions', 'github workflows', 'gitlab ci', 'bitbucket pipelines', 'travis ci', 'openstack', 'cloudformation', 'helm', 'istio',
-        'argo cd', 'argo workflows', 'argo rollouts', 'vault', 'consul', 'packer', 'airflow', 'prefect', 'luigi', 'dagster', 'data pipeline', 'mlops', 'cloud run', 'lambda',
-        'chef', 'puppet', 'saltstack', 'vagrant', 'terraform cloud', 'terraform enterprise', 'terragrunt', 'google deployment manager',
-        'aws lambda', 'azure functions', 'azure app service', 'azure kubernetes service', 'aks', 'azure logic apps', 'azure data factory', 'azure synapse analytics', 'azure machine learning', 'azure cognitive services', 'azure devops', 'ado', 'azure active directory', 'azure sql database', 'azure cosmos db', 'azure storage', 'azure api management', 'azure service bus', 'event grid', 'event hubs', 'azure pipelines', 'bicep', 'arm templates', 'azure container instances', 'azure virtual machines', 'azure front door', 'azure application gateway', 'azure load balancer', 'azure monitor', 'azure sentinel', 'azure defender', 'azure databricks',
-        'gcp cloud run', 'ecs', 'eks', 'cloudwatch', 'serverless framework', 'sam framework', 'chalice', 'pulumi', 'copilot cli',
-        'azure-sdk-for-python', 'azure-sdk-for-js', 'azure-mgmt', 'azure-storage-blob', 'azure-identity', 'azure-keyvault', 'azure-cosmos', 'azure-eventhub', 'azure-functions-core-tools', 'msal', 'msrest', 'msgraph-core', 'adal', 'azureml-core', 'azureml-sdk',
-        'azure portal', 'azure cli', 'azure powershell', 'azure devops pipelines', 'azure storage explorer', 'azure resource explorer', 'bicep cli', 'azure data studio', 'log analytics workspace', 'azure advisor', 'azure cost management', 'azure security center', 'network watcher', 'azure policy', 'azure blueprints', 'azure arc', 'azure bastion', 'kudu', 'azure app insights',
-        'azure repos', 'azure boards', 'azure artifacts', 'azure test plans', 'azure-devops-python-api', 'pytest-azurepipelines', 'ado extensions marketplace',
-        'teamcity', 'nexus', 'elk stack', 'gitpython', 'psutil', 'jsonschema', 'requests-oauthlib', 'dotenv', 'windows terminal', 'git bash', 'nexus repository', 'jenkins ui', 'service hooks',
-        'pygithub', 'ghapi', 'octokit', 'actions-toolkit', 'shelljs', 'chalk', 'google-auth', 'gcloud-sdk',
-        'github cli', 'github desktop', 'dependabot', 'codeql', 'veracode', 'snyk', 'slack', 'discord', 'notion integrations',
-        'terraform aws provider', 'terraform azurerm provider', 'terraform google provider', 'terraform kubernetes provider', 'terraform helm provider', 'terraform cloudflare provider', 'terraform datadog provider', 'terraform github provider', 'terraform vault provider', 'terraform null provider', 'terraform local provider', 'terraform tls provider', 'python-hcl2', 'azure-mgmt-resource', 'google-api-python-client',
-        'terraform cli', 'terraform fmt', 'terraform plan', 'terraform apply', 'terraform destroy', 'terraform workspace', 'terraform import', 'terraform output', 'terraform graph', 'tflint', 'tfsec', 'checkov', 'infracost', 'terragrunt cli', 'spacelift', 'env0', 'atlantis',
-        'boto3', 'botocore', 'aws-sdk', 's3fs', 'aioboto3', 'awswrangler', 'aws cdk', 'cdk pipelines', 'amplify', 'aws cli', 'aws console', 'aws toolkit', 'aws sam cli',
-        'cloudtrail', 'codepipeline', 'codebuild', 'codecommit', 'codeartifact', 'eventbridge', 'appsync', 'ec2', 's3', 'rds', 'dynamodb', 'elasticache', 'vpc', 'route53', 'efs',
-        'cloudfront', 'alb', 'nlb', 'elb', 'aws config', 'aws shield', 'waf', 'guardduty', 'security hub', 'inspector', 'aws organizations', 'billing console', 'cost explorer', 'aws budgets', 'trusted advisor',
-        'aws secrets manager', 'kms', 'parameter store', 'cloud9', 'codeguru', 'aws amplify cli', 'appsync console', 'quickSight ui', 'aws glue studio', 'athena console',
-        'aws data exchange', 'aws data sync', 'snowball', 'outposts', 'localstack', 'eksctl', 'aws copilot', 'aws docker integration', 'aws fargate cli', 'aws lightsail ui', 'aws sso console',
-        'docker-py', 'compose-cli', 'docker-sdk', 'docker hub', 'portainer', 'rancher', 'minikube', 'microk8s', 'kind', 'k3s', 'k3d',
-        'kubectl', 'k9s', 'lens', 'podman', 'buildx', 'containerd', 'cri-o', 'nerdctl', 'colima', 'harbor', 'tekton', 'linkerd', 'linkerd2', 'knative', 'openshift', 'open shift',
-        'gke', 'skaffold', 'flux', 'flux cd', 'kustomize', 'tilt', 'velero', 'kubeseal', 'kubens', 'kubectx', 'stern', 'kubetail',
-        'dvc', 'mlflow', 'kubernetes-client', 'pykube', 'kube-api', 'client-go', 'fabric8', 'ansible-k8s', 'terraform-provider-kubernetes', 'helmfile', 'helm sdk', 'operator-sdk',
-        'argo', 'argo cd', 'spinnaker', 'nomad', 'mesos', 'tanzu', 'garden', 'crossplane', 'kubeflow', 'kubebuilder', 'prometheus operator', 'grafana tempo', 'grafana loki', 'jaeger', 'open telemetry', 'cert manager',
-        'calico', 'flannel', 'cilium', 'weave net', 'kube-router', 'traefik', 'nginx ingress controller', 'haproxy ingress', 'istio gateway', 'kong ingress', 'service mesh interface (smi)',
-        'docker desktop', 'docker stats', 'docker inspect', 'docker logs', 'docker exec', 'docker cp', 'docker build', 'docker run', 'docker ps', 'docker prune', 'docker context', 'docker network', 'docker volume', 'docker system prune', 'docker tag', 'docker push',
-        'compose up', 'compose down', 'compose logs', 'compose build', 'compose start', 'dive', 'ctop', 'cadvisor', 'datadog', 'new relic', 'elastic apm', 'splunk forwarder',
-        'semaphore ci', 'harness', 'octopus deploy', 'vercel cli', 'netlify cli', 'aws glue', 'athena', 'redshift', 'data pipeline', 'quickSight', 'aws batch', 'fargate', 'elastic beanstalk', 'elasticache', 'emr', 'dms', 'snow family', 'sagemaker', 'bedrock', 'comprehend',
-        'cloud computing', 'paas', 'iaas', 'saas', 'virtual networks', 'subnets', 'network security groups', 'private endpoints', 'load balancing', 'scaling', 'availability zones', 'resource groups', 'resource locks', 'identity and access management', 'rbac', 'service principals', 'managed identities', 'vnet peering', 'vpn gateway', 'expressroute', 'application insights', 'monitoring and alerting', 'disaster recovery', 'backup and restore', 'infrastructure as code', 'iac', 'immutable infrastructure', 'declarative configuration', 'cicd pipelines', 'devops automation', 'logging and metrics', 'data ingestion', 'data transformation', 'data pipelines', 'integration runtime', 'data lake architecture', 'data warehouse', 'big data analytics', 'machine learning models', 'model deployment', 'containerization', 'microservices architecture', 'serverless computing', 'function triggers', 'durable functions', 'api management', 'web apps', 'app gateways', 'ssl certificates', 'dns zones', 'custom domains', 'cost optimization', 'governance and compliance', 'zero trust security', 'threat protection',
-        'terraform modules', 'providers', 'resources', 'data sources', 'variables', 'locals', 'outputs', 'state file', 'remote backend', 'terraform cloud backend', 's3 backend', 'azure blob backend', 'gcs backend', 'workspaces', 'dependency locking', 'module versioning', 'terraform registry', 'terraform plan and apply', 'terraform destroy', 'terraform refresh', 'terraform validate', 'terraform fmt', 'terraform import', 'terraform output', 'terraform taint', 'terraform graph', 'terraform console', 'state management', 'state locking', 'drift detection', 'environment segregation', 'remote execution', 'cloud provisioning', 'multi-cloud deployment', 'aws infrastructure', 'azure infrastructure', 'gcp infrastructure', 'kubernetes provisioning', 'helm release management', 'network configuration', 'vpc setup', 'subnets', 'security groups', 'iam roles', 'key management', 'load balancers', 'auto scaling groups', 'vm instances', 'dns records', 'storage accounts', 'object storage', 'database provisioning', 'monitoring setup', 'log configuration', 'pipeline integration', 'terraform testing', 'policy as code', 'opa integration', 'sentinel policies', 'cost estimation', 'infracost integration', 'gitops', 'ci/cd integration', 'version control', 'automation pipelines', 'terraform best practices', 'reusable modules', 'monorepo structure', 'root module design', 'dynamic blocks', 'count and for_each', 'lifecycle rules', 'sensitive variables', 'secrets management', 'vault integration', 'output sanitization', 'error handling', 'terraform upgrade process',
-        
-        # === Security / Authentication ===
-        'oauth', 'oauth2', 'jwt', 'ssl', 'tls', 'saml', 'openid connect', 'mfa', 'iam', 'cybersecurity',
-        'network security', 'firewall', 'penetration testing', 'encryption', 'hashing',
-        
-        # === AI / ML / Data Science ===
-        'machine learning', 'ml', 'applied ml', 'data modeling', 'predictive modeling', 'ai', 'data science', 'analytics', 'nlp', 'computer vision', 'deep learning', 'dl', 'neural networks', 'deep neural networks', 'representation learning', 'pandas',
-        'numpy', 'scikit-learn', 'matplotlib', 'seaborn', 'plotly', 'bokeh', 'huggingface', 'huggingface transformers', 'openai api', 'llm', 'generative ai', 'langchain',
-        'autogen', 'rasa', 'spacy', 'transformers', 'text classification', 'sentiment analysis', 'data visualization',
-        'tableau', 'power bi', 'microsoft powerbi', 'bi tools', 'big data', 'hadoop', 'spark', 'pyspark', 'databricks', 'xgboost', 'lightgbm', 'keras',
-        'power query', 'dax', 'm language', 'azure synapse', 'azure data lake', 'sql server analysis services', 'dataflows', 'fabric data warehouse', 'excel powerpivot',
-        'powerbi-api', 'powerbi-rest-client', 'powerbi-embedded-sdk', 'pyodbc',
-        'power bi desktop', 'power bi service', 'power bi mobile', 'power bi report builder', 'data gateway', 'fabric workspace', 'azure data factory', 'dax studio', 'tabular editor',
-        'data modeling', 'relationships', 'measures', 'calculated columns', 'row level security', 'dashboards', 'reports', 'data refresh', 'directquery', 'import mode', 'workspaces', 'sharing & publishing', 'embedded analytics', 'data transformation', 'dax functions',
-        'fastai', 'catboost', 'mlflow', 'scipy', 'joblib', 'pickle', 'nltk', 'gensim', 'polars', 'colab', 'tensorboard', 'sagemaker',
-        'weights & biases', 'wandb', 'azure ml', 'google ai platform', 'vertex ai', 'onnx', 'mxnet', 'caffe', 'theano', 'jax',
-        'torchvision', 'torchaudio', 'tqdm', 'opencv', 'opencv-python', 'datasets', 'albumentations', 'neptune.ai', 'clearml',
-        'torch lightning', 'chainer', 'mindspore', 'deeplearning4j', 'dl4j', 'sonnet', 'paddlepaddle', 'detectron2', 'yolov8', 'mediapipe', 'mmcv', 'openvino', 'openml', 'mljar-supervised', 'pycaret', 'autokeras', 'h2o.ai',
-        'optuna', 'ray tune', 'tfx', 'sagemaker pipelines', 'vertex ai pipelines', 'kubeflow', 'dvc', 'zenml', 'mlrun', 'polyaxon', 'valohai', 'flyte',
-        'textblob', 'word2vec', 'sentence-transformers', 'faiss', 'llama-index', 'bertviz', 'shap', 'lime', 'yellowbrick', 'imbalanced-learn', 'category-encoders', 'featuretools', 'dask', 'modin', 'vaex',
-        'statsmodels', 'sympy', 'pymc', 'arviz', 'prophet', 'fbprophet', 'gluonts', 'tsfresh', 'river', 'scikit-time',
-        'imageio', 'pydub', 'speechbrain', 'timm', 'diffusers', 'accelerate', 'bitsandbytes', 'deepspeed', 'peft', 'sentencepiece', 'huggingface-hub', 'torchmetrics', 'pytorch-ignite', 'ignite', 'keras-tuner', 'tensorlayer', 'tensorflow-addons', 'tensorflow-datasets',
-        'jupyter', 'deepnote', 'polynote', 'nvidia-smi', 'pytorch profiler', 'tensorboard profiler', 'mlrun', 'aimstack', 'supervisely', 'roboflow', 'label studio', 'voxel51 fiftyone', 'metaflow',
-        'supervised learning', 'unsupervised learning', 'semi-supervised learning', 'reinforcement learning', 'transfer learning', 'active learning', 'federated learning', 'online learning', 'batch learning', 'ensemble learning',
-        'linear regression', 'logistic regression', 'decision trees', 'random forest', 'svm', 'naive bayes', 'k-means clustering', 'hierarchical clustering', 'dbscan', 'pca', 'lda', 'qda', 'knn', 'gbm',
-        'feature engineering', 'feature selection', 'data preprocessing', 'normalization', 'standardization', 'outlier detection', 'missing value imputation', 'dimensionality reduction', 'one-hot encoding', 'scaling', 'label encoding', 'feature importance',
-        'cross validation', 'train-test split', 'confusion matrix', 'roc-auc', 'precision recall', 'f1 score', 'mae', 'rmse', 'accuracy', 'r2 score', 'bias-variance tradeoff', 'model explainability', 'shap values', 'lime interpretation',
-        'grid search', 'random search', 'bayesian optimization', 'optuna tuning', 'hyperopt', 'ray tune', 'early stopping',
-        'cnn', 'rnn', 'lstm', 'gru', 'transformers', 'attention mechanism', 'autoencoders', 'gan', 'vae', 'reinforcement learning agents',
-        'tokenization', 'stemming', 'lemmatization', 'word embeddings', 'pos tagging', 'sentiment analysis', 'text classification', 'language modeling', 'seq2seq', 'encoder-decoder', 'bert', 'gpt', 't5', 'llm fine-tuning',
-        'image classification', 'object detection', 'segmentation', 'face recognition', 'ocr', 'data augmentation', 'cnn architectures', 'resnet', 'mobilenet', 'efficientnet', 'vision transformers',
-        'time series forecasting', 'arima', 'sarima', 'lstm forecasting', 'prophet forecasting', 'seasonal decomposition', 'anomaly detection', 'trend analysis', 'rolling averages', 'autocorrelation', 'stationarity',
-        'model deployment', 'api serving', 'model versioning', 'model registry', 'monitoring', 'model drift', 'feature store', 'pipeline orchestration', 'continuous training', 'cicd for ml', 'ml model packaging',
-        'data lakes', 'data warehouse', 'data pipelines', 'etl', 'elt', 'big data', 'distributed training', 'cloud ml services', 'gpu acceleration', 'tensorRT optimization', 'batch inference', 'real-time inference',
-        'meta learning', 'self-supervised learning', 'zero-shot learning', 'few-shot learning', 'contrastive learning', 'multi-modal learning', 'knowledge distillation', 'causal inference', 'explainable ai', 'ethical ai', 'ai fairness',
-        'tensorboard visualization', 'wandb dashboards', 'confusion matrix plotting', 'feature importance plotting', 'learning curves', 'residual plots', 'data drift visualization', 'distribution plots', 'embedding projection',
-        'recommendation systems', 'churn prediction', 'fraud detection', 'credit scoring', 'forecasting', 'image captioning', 'speech recognition', 'chatbots', 'document classification', 'automation pipelines',
-        'feedforward neural network', 'backpropagation', 'gradient descent', 'stochastic gradient descent', 'activation functions', 'relu', 'sigmoid', 'tanh', 'softmax', 'dropout', 'batch normalization', 'weight initialization',
-        'loss functions', 'cross entropy', 'mse loss', 'mae loss', 'hinge loss', 'optimizer', 'adam', 'sgd', 'rmsprop', 'adagrad',
-        'alexnet', 'vgg', 'inception', 'unet', 'yolo', 'faster rcnn', 'vit', 'llama', 'clip', 'detr', 'segment anything model', 'stable diffusion', 'dreambooth', 'controlnet',
-        'learning rate scheduling', 'regularization', 'gradient clipping', 'mixed precision training', 'distributed training', 'multi gpu training', 'tensor parallelism', 'pipeline parallelism',
-        'fine-tuning', 'transfer learning', 'zero-shot learning', 'few-shot learning', 'self-supervised learning', 'contrastive learning', 'meta learning', 'active learning', 'semi-supervised learning', 'reinforcement learning',
-        'instance segmentation', 'semantic segmentation', 'pose estimation', 'optical flow', 'image generation', 'super resolution', 'style transfer', 'gesture recognition', '3d vision', 'depth estimation', 'video processing', 'image preprocessing', 'augmentation pipeline', 'image embeddings',
-        'text generation', 'translation', 'summarization', 'question answering', 'named entity recognition', 'speech synthesis', 'audio classification', 'emotion detection', 'text embeddings', 'prompt tuning', 'instruction tuning', 'llm fine-tuning',
-        'transformer architecture', 'attention', 'self attention', 'multi-head attention', 'positional encoding', 'cross attention', 'diffusion models', 'score-based models', 'energy-based models', 'graph neural networks', 'gnn', 'graph convolution networks',
-        'capsule networks', 'neural architecture search', 'neural rendering', 'neural radiance fields', 'nerf', 'implicit representations', 'adversarial training', 'adversarial attacks', 'model robustness', 'explainable ai', 'interpretability', 'grad-cam',
-        'onnx export', 'tensorrt optimization', 'quantization', 'pruning', 'model compression', 'knowledge distillation', 'inference optimization', 'model serving', 'api deployment', 'torchscript', 'tf serving', 'mlflow model registry',
-        'containerization', 'gpu acceleration', 'cuda', 'cudnn', 'nvcc', 'opencl', 'distributed inference', 'batch inference', 'real-time inference', 'edge ai', 'tinyml', 'mobile deployment', 'tensorflow lite', 'coreml', 'onnx runtime',
-        'training curves', 'gradient flow', 'confusion matrix', 'feature maps', 'embedding visualization', 'activation visualization', 'model profiling', 'loss curve analysis',
-        'autonomous vehicles', 'medical imaging', 'recommendation systems', 'fraud detection', 'speech recognition', 'document processing', 'video analytics', 'industrial automation', 'ai assistants', 'image restoration',
-        
-        # === APIs, Architecture, Monitoring ===
-        'rest api', 'graphql', 'graphql api', 'restful api', 'restful services', 'soap', 'rpc', 'grpc', 'openapi',
-        'swagger', 'swagger ui', 'api testing', 'load testing', 'jmeter', 'new relic', 'datadog', 'sentry',
-        'application monitoring', 'performance tuning', 'microservices', 'websockets', 'api gateway',
-        'message queues', 'rabbitmq', 'kafka', 'celery', 'redis streams', 'event-driven architecture',
-        'service mesh', 'load balancer',
-        
-        # === CI/CD & Testing ===
-        'git', 'github', 'gitlab', 'agile', 'scrum', 'devops', 'pytest', 'jest',
-        'mocha', 'cypress', 'postman', 'newman', 'swagger', 'jira', 'confluence', 'maven', 'gradle', 'ant', 'sonarqube',
-        'selenium', 'selenium-webdriver', 'playwright', 'puppeteer', 'testng', 'junit', 'mockito', 'karma', 'chai', 'enzyme', 'vitest', 'pytest-django',
-        'sinon.js', 'ava', 'tape', 'supertest', 'nightwatch', 'testing library', 'qUnit', 'protractor', 'webdriverio',
-        'pytest-docker', 'pytest-ansible', 'pytest-kubernetes', 'pytest-helm', 'pytest-operator', 'pytest-yaml', 'pytest-parallel', 'pytest-mock',
-        'ci/cd pipelines', 'continuous integration', 'continuous deployment', 'build pipelines', 'release pipelines', 'yaml templates', 'yaml pipelines', 'stages', 'jobs', 'steps', 'variables', 'environments', 'agents', 'self-hosted agents', 'deployment groups', 'service connections', 'artifact feeds', 'code versioning', 'branch policies', 'merge requests', 'pull requests', 'work items', 'agile boards', 'kanban', 'scrum sprints', 'test management', 'build automation', 'deployment automation', 'approvals and gates', 'integration testing', 'docker build and push', 'kubernetes deploy', 'multi-stage pipelines', 'variable groups', 'secrets management', 'key vault integration', 'notifications and alerts', 'release rollback', 'blue-green deployment', 'canary deployment', 'code coverage', 'quality gates', 'unit testing', 'security scanning', 'artifact retention', 'pipeline caching', 'dependency management', 'governance policies', 'cost optimization', 'workflow automation', 'repository branching', 'git flow', 'version tagging', 'pipeline triggers', 'manual approvals', 'task groups', 'templates reuse', 'yaml reuse', 'cross-platform builds', 'docker-compose integration', 'test results publishing', 'parallel execution', 'scheduled builds', 'infrastructure provisioning', 'monitoring and logging', 'incident management', 'sla tracking', 'service hooks', 'webhooks', 'azure monitor integration', 'azure security compliance', 'enterprise policy enforcement',
-        'workflows', 'runners', 'self-hosted runners', 'matrix builds', 'on push triggers', 'on pull_request triggers', 'manual dispatch', 'scheduled workflows', 'cron syntax', 'repository dispatch', 'composite actions', 'reusable workflows', 'workflow templates', 'caching dependencies', 'build artifacts', 'test automation', 'environment protection rules', 'branch protection', 'required reviews', 'pull request checks', 'multi-environment deployment', 'canary releases', 'terraform deployment', 'container registry', 'helm release', 'npm publish', 'pypi publish', 'package versioning', 'semantic versioning', 'tagging', 'release creation', 'github environments', 'job dependencies', 'parallel jobs', 'artifact retention', 'workflow logs', 'monitoring and alerts', 'status checks', 'test result publishing', 'linting', 'static code analysis', 'snyk integration', 'dependabot alerts', 'codeql scanning', 'secret scanning', 'workflow permissions', 'fine-grained tokens', 'oidc authentication', 'aws oidc federation', 'azure oidc integration', 'gcp service accounts', 'cross-cloud deployment', 'slack notifications', 'teams notifications', 'email alerts', 'ci optimization', 'caching strategies', 'container workflows', 'monorepo support', 'matrix strategy', 'build speed optimization', 'test parallelization', 'custom action creation', 'dockerfile actions', 'javascript actions', 'composite actions', 'version pinning', 'marketplace actions', 'open source contribution workflows', 'github pages deploy', 'static site deploy', 'serverless deployment', 'cloud function triggers', 'pull request automation', 'issue automation', 'auto merge', 'auto label', 'release draft', 'changelog generation',
-        
-        # === Frontend / UI / UX ===
-        'html', 'html5', 'css', 'css3', 'bootstrap', 'tailwind css', 'jquery', 'tailwind', 'chakra ui', 'material ui', 'ant design', 'semantic ui', 'foundation', 'bulma', 'daisy ui', 'uikit', 'redux', 'zustand',
-        'framer motion', 'figma', 'ux design', 'responsive design', 'pwa', 'webpack', 'vite', 'babel', 'webpack-cli',
-        'babel-cli', 'grunt', 'gulp', 'parcel', 'rollup', 'snowpack', 'storybook', 'chromatic', 'bit.dev',
-        'sass', 'less', 'postcss', 'styled components', 'emotion', 'gsap', 'anime.js', 'three.js', 'pixi.js',
-        'webpack-dev-server', 'browserify', 'swc', 'postcss', 'tailwind cli', 'husky', 'lint-staged', 'commitlint', 'git hooks',
-        
-        # === Mobile / Cross-Platform ===
-        'android', 'ios', 'xcode', 'swiftui', 'jetpack compose', 'ionic', 'capacitor', 'cordova',
-        'unity', 'unreal engine', 'electron', 'nw.js', 'expo', 'deno', 'bun',
-        
-        # === ERP / CRM / Low-Code ===
-        'sap', 'sap abap', 'sap hana', 'salesforce', 'salesforce crm', 'salesforce apex', 'salesforce lightning',
-        'lwc', 'visualforce', 'force.com', 'heroku', 'tableau crm', 'muleSoft', 'sales cloud', 'service cloud',
-        'apex classes', 'soql', 'sosl', 'aura components', 'api sdk', 'salesforce dx', 'trigger handlers',
-        'metadata api', 'salesforce cli', 'workbench', 'data loader', 'developer console', 'vs code extension',
-        'sandbox', 'trailhead',
-        'power apps', 'microsoft powerapps', 'power platform', 'power automate', 'microsoft flow', 'powerflow', 'power bi', 'dataverse', 'power fx', 'model-driven apps',
-        'canvas apps', 'power pages', 'power virtual agents', 'sharepoint integration', 'teams apps', 'ai builder', 'connectors', 'power platform connectors',
-        'desktop flows', 'business process flows', 'approval workflows', 'teams integration', 'logic apps',
-        'dataverse api', 'office365 api', 'microsoft graph api', 'graph api', 'excel connectors', 'sql connectors', 'flow api', 'azure functions', 'custom connector sdk',
-        'office365 connectors', 'sharepoint connectors', 'http requests', 'json',
-        'power apps studio', 'make.powerapps.com', 'power automate portal', 'flow designer', 'power platform admin center', 'power platform cli', 'solution explorer', 'environment variables', 'microsoft teams',
-        'desktop flow recorder', 'monitoring dashboard', 'make.powerautomate.com', 'sharepoint', 'azure portal', 'onedrive', 'power automate desktop', 'microsoft dynamics 365', 'business central', 'navision',
-        'triggers', 'actions', 'conditions', 'loops', 'approvals', 'data connections', 'scheduled flows', 'instant flows', 'automated flows', 'desktop automation', 'rpa', 'integration', 'custom connectors', 'security roles', 'governance & compliance',
-        
-        # === Python Tools & Libraries ===
-        'beautifulsoup', 'pydantic', 'dataclasses', 'attrs', 'jupyter', 'notebook', 'jupyterlab', 'virtualenv', 'pip', 'conda', 'black', 'flake8', 'mypy', 'poetry', 'tox',
-        'isort', 'pre-commit', 'pytest-cov', 'pytest-xdist', 'gunicorn', 'uvicorn', 'hypercorn', 'celery', 'kombu', 'channels', 'crispy forms', 'jinja2', 'whitenoise', 'drf-yasg', 'manage.py', 'pipenv',
-        'pgadmin', 'nginx', 'supervisor', 'requests', 'httpx', 'fabric', 'redis-py', 'pika', 'paramiko', 'click', 'typer', 'rich', 'loguru',
-        'unittest', 'doctest', 'factory-boy', 'faker', 'coverage.py', 'sqlite browser', 'heroku cli', 'aws elastic beanstalk cli', 'celery beat', 'redis', 'ngrok',
-        'turbogears', 'falconry', 'morepath', 'responder', 'nameko', 'cherrypy', 'drf-nested-routers', 'pillow', 'mysqlclient',
-        
-        # === JavaScript/Node Tools ===
-        'npm', 'yarn', 'pnpm', 'npx', 'eslint', 'prettier', 'vite', 'webpack-cli', 'babel-cli', 'grunt', 'gulp', 'rollup', 'parcel', 'snowpack', 'ts-node', 'nodemon', 'browserify', 'esbuild', 'vercel cli', 'netlify cli',
-        'node.js runtime', 'v8 engine', 'chrome devtools', 'firefox devtools', 'cloudflare workers', 'aws lambda (nodejs)', 'azure functions (nodejs)', 'google cloud functions', 'deno runtime',
-        'github actions', 'gitlab ci', 'circleci', 'travis ci', 'jenkins', 'docker', 'vercel', 'netlify', 'heroku', 'aws amplify', 'digital ocean apps', 'railway', 'render', 'surge', 'cloudflare pages', 'firebase hosting', 's3 static hosting', 'nginx',
-        'jest', 'mocha', 'chai', 'cypress', 'playwright', 'puppeteer', 'selenium-webdriver', 'storybook', 'vitepress', 'astro',
-        
-        
-        # === Other / Emerging Tech ===
-        'blockchain', 'solidity', 'smart contracts', 'web3', 'nft', 'metaverse', 'edge computing',
-        'quantum computing', 'robotics', 'iot', 'raspberry pi', 'arduino', 'automation',
-        
-        # === IDE / Development Tools ===
-        'visual studio', 'visual studio code', 'vscode', 'eclipse', 'intellij idea', 'netbeans', 'xcode', 'android studio',
-        'pycharm', 'anaconda', 'miniconda', 'jupyterhub', 'google colab', 'kaggle', 'streamlit cloud', 'huggingface hub'
-    }
+
     
     DOMAINS = {
   "Information Technology","Software Development","Cloud Computing","Cybersecurity","Data Science","Blockchain",
@@ -329,93 +150,26 @@ Examples:
 ✅ Correct: Daniel Mindlin, VARRE DHANA LAKSHMI DURGA
 ❌ Incorrect: Education, Infosys, B.Tech in EEE
 
-2. email
+NOTE: The following fields are extracted separately using Python-based extraction and should NOT be included in AI response:
+- email (extracted by email_extractor.py)
+- phone_number (extracted by phone_extractor.py)
+- total_experience (extracted by experience_extractor.py)
+- education (extracted by education_extractor.py)
+- technical_skills (extracted by skill_extractor.py)
+- secondary_skills (extracted by skill_extractor.py)
+- all_skills (extracted by skill_extractor.py)
 
-Extract the primary and valid email address.
+Do NOT extract these fields - they will be ignored.
 
-Must be RFC-compliant.
-
-Never omit if present.
-
-3. phone_number
-
-Extract a valid phone number, including country code if available.
-
-4. total_experience
-
-total_experience — Extraction Rules
-
-Primary Calculation Method
-
-Always compute total professional experience using the earliest employment start date and the latest employment end date (or “Present”).
-
-Experience = (latest date – earliest date).
-
-Ignore employment gaps.
-
-Ignore job overlaps (do not double count).
-
-Explicit Mentions Are Secondary
-
-If explicit text (e.g., “5 years experience”) conflicts with computed experience, always use the computed value.
-
-Role Coverage
-
-Include all roles listed under Experience / Work History, regardless of job titles.
-
-Exclude: education, certifications, projects without dates.
-
-Handling Missing Dates
-
-If end date is “Present”, “Current”, or missing → assume today’s date.
-
-If start date is missing but other roles have valid dates → use earliest available date.
-
-Overlapping Periods
-
-Count overlapping employment only once.
-
-Overlap should not inflate total experience.
-
-Internships & Part-time Roles
-
-Count them ONLY if they appear inside the main experience section with valid dates.
-
-Do NOT count student/academic roles.
-
-Date Format Flexibility
-
-Recognize formats like:
-“Aug 2015”, “August 2015”, “08/2015”, “2015-08”, “2015”, etc.
-
-Output Format
-
-Return total experience as a float rounded to one decimal (e.g., 10.1).
-
-If the number is whole, return an integer (e.g., 10).
-
-5. current_company
+3. current_company
 
 Extract the current or most recent employer name.
 
-6. current_designation
+4. current_designation
 
 Extract the most recent job title.
 
-7. technical_skills
-
-Capture all technical skills (programming languages, frameworks, databases, cloud, DevOps, tools).
-Use your internal technical skill dictionary for normalization and matching, also use the sample skills from the sample skills {{TECHNICAL_SKILLS}} if it is present.
-
-8. secondary_skills
-
-Extract non-technical or complementary skills (communication, leadership, project management, mentoring).
-
-9. all_skills
-
-Combine technical and secondary skills into one unified list.
-
-10. domain
+5. domain
 
 Extract professional domains or industries (not education fields).
 Use the sample list as reference :
@@ -429,62 +183,11 @@ Include multiple relevant business domains (e.g., "Banking", "Finance").
 
 Ignore educational degrees — only professional domains count.
 
-11. education
-
-Education Section Detection
-Consider any of the following headings as education:
-“Education”, “Academic Details”, “Academics”, “Qualification / Qualifications”,
-“Educational Background”, “Academic Summary”, “Scholastic Profile”,
-“Educational Credentials”, “Education Summary”, “Education & Training”
-(extract only actual degrees; ignore trainings/certifications).
-
-Identify All Degrees and Academic Qualifications
-Detect structured or unstructured formats, including tables with columns like:
-“Qualification”, “Course”, “Board/University”, “Year”, “Percentage/CGPA”.
-
-Degree Ranking (Choose Only the Highest Level)
-When multiple items appear, return only the highest by this order:
-
-PhD / Doctorate
-
-Master's Degrees (M.S, M.Sc, M.Tech, MBA, MCA, MA, etc.)
-
-Bachelor's Degrees (B.Tech, B.E, B.Sc, BCA, BBA, etc.)
-
-Diploma
-
-Intermediate / 12th / HSC / PUC / Pre-University
-
-SSC / 10th / Matriculation
-
-Specialization Extraction
-Include specialization if mentioned (e.g., “Electronics and Communication Engineering”).
-Ignore percentages, GPA, board names, and years unless needed to identify the degree.
-
-Exclusions
-Do NOT treat the following as degrees:
-Certifications, training programs, online courses, bootcamps, workshops, nanodegrees.
-
-Interpretation Rules
-
-“Intermediate”, “12th”, “HSC”, “PUC” → Pre-university level
-
-“SSC”, “10th”, “Matriculation” → Secondary level
-
-If no bachelor's/master's degree exists, return the next highest valid academic qualification.
-
-Output Format
-Return a single string in this format:
-"B.Tech in Electronics and Communication Engineering"
-"M.S. in Computer Science"
-"MBA in Finance"
-If nothing is found → "Unknown".
-
-12. certifications
+6. certifications
 
 Capture all professional or vendor certifications (e.g., AWS Certified Developer, PMP).
 
-13. summary
+7. summary
 
 Provide a concise 2–3 line professional summary describing:
 
@@ -524,26 +227,18 @@ Example:
 
 {
   "full_name": "John M. Smith",
-  "email": "john.smith@gmail.com",
-  "phone_number": "+1-9876543210",
-  "total_experience": 6,
   "current_company": "Infosys",
   "current_designation": "Software Engineer",
-  "technical_skills": ["Java", "Spring Boot", "ReactJS"],
-  "secondary_skills": ["Leadership", "Team Management"],
-  "all_skills": ["Java", "Spring Boot", "ReactJS", "Leadership", "Team Management"],
   "domain": ["Information Technology", "Banking"],
-  "education": "B.Tech in Computer Science",
   "certifications": ["AWS Certified Developer"],
-  "summary": "6 years of experience in Java and ReactJS with strong exposure to banking domain."
+  "summary": "Software Engineer with strong experience in Java and ReactJS with exposure to banking domain."
 }
 
 🧮 EVALUATION CRITERIA
 Criterion	Weight	Description
-Accuracy	35%	All fields correctly extracted
-Completeness	25%	All major fields present
+Accuracy	40%	All fields correctly extracted
+Completeness	30%	All major fields present
 JSON Validity	20%	Output is machine-parseable
-Skill Categorization	10%	Technical vs. soft skills are separated correctly
 Neutrality	10%	No added commentary or inferred data
 🧭 TONE AND STYLE
 
@@ -555,9 +250,7 @@ Output must be clean JSON, no markdown formatting.
 
 🧰 ADDITIONAL REFERENCE DICTIONARIES
 
-TECHNICAL_SKILLS → your full skill taxonomy (programming, cloud, databases, etc.)
-DOMAINS → pre-defined industry domain list
-EDUCATION_KEYWORDS → used to identify degrees and specializations
+DOMAINS → pre-defined industry domain list (use {{DOMAINS}} provided above)
 
 Resume Text (look for name in FIRST FEW LINES):
 {resume_text}
@@ -817,24 +510,28 @@ Resume Text (look for name in FIRST FEW LINES):
         return "Unknown"
     
     def extract_email(self, text: str) -> Optional[str]:
-        """Extract email address."""
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        matches = re.findall(email_pattern, text)
-        return matches[0] if matches else None
+        """
+        Extract email address using pure Python regex (NO AI).
+        
+        Uses email_extractor.py for email extraction and provider identification.
+        """
+        result = extract_email_and_provider(text)
+        return result.get('email')
     
     def extract_phone(self, text: str) -> Optional[str]:
-        """Extract phone number."""
-        # Various phone formats
-        patterns = [
-            r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-            r'\b\d{10}\b',
-            r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'
-        ]
+        """
+        Extract phone number using pure Python regex (NO AI).
         
-        for pattern in patterns:
-            matches = re.findall(pattern, text)
-            if matches:
-                return matches[0]
+        Uses phone_extractor.py for comprehensive phone number extraction
+        supporting international formats, various separators, and common prefixes.
+        """
+        # Use the dedicated phone extractor (pure Python, no AI)
+        phone_numbers = extract_phone_numbers(text)
+        
+        # Return the first extracted phone number if any found
+        if phone_numbers:
+            return phone_numbers[0]
+        
         return None
     
     def extract_comprehensive_data_with_ai(self, text: str) -> Dict[str, Any]:
@@ -1018,12 +715,12 @@ Resume Text (look for name in FIRST FEW LINES):
         return None
     
     def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: Optional[int] = None) -> List[str]:
-        """Extract skills from resume text using word-boundary matching with TECHNICAL_SKILLS."""
+        """Extract skills from resume text using word-boundary matching with TECH_SKILLS from skill_extractor.py."""
         logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
         resume_text_lower = resume_text.lower()
         
-        # Use case-insensitive whole-word matching for each skill in TECHNICAL_SKILLS
-        for skill in sorted(self.TECHNICAL_SKILLS, key=len, reverse=True):  # Check longer skills first
+        # Use case-insensitive whole-word matching for each skill in TECH_SKILLS (imported from skill_extractor.py)
+        for skill in sorted(TECH_SKILLS, key=len, reverse=True):  # Check longer skills first
             skill_lower = skill.lower()
             # Match whole words only (case-insensitive) using word boundaries
             pattern = r'\b' + re.escape(skill_lower) + r'\b'
@@ -1049,48 +746,33 @@ Resume Text (look for name in FIRST FEW LINES):
         return existing_skills
     
     def extract_skills(self, text: str) -> Dict[str, List[str]]:
-        """Extract technical and soft skills."""
-        text_lower = text.lower()
+        """
+        Extract technical and soft skills using the enhanced skill_extractor module.
         
-        found_skills = set()
+        This method now uses the production-ready skill_extractor.py which provides:
+        - 2000+ technical skills
+        - 50+ soft skills
+        - Smart section detection
+        - Multiple format support (comma-separated, bullets, etc.)
+        - Special character handling (C#, C++, .NET)
+        - Alias support (JS->JavaScript, ML->Machine Learning)
+        - Overlap prevention for multi-word skills
+        """
+        # Use the comprehensive skill extractor
+        result = extract_skills_advanced(text, return_categories=True)
         
-        # CRITICAL: Only look for skills in the Skills section
-        skills_section = self.extract_skills_section(text)
+        # Convert to the expected format
+        tech_skills = result.get('tech_skills', [])
+        soft_skills = result.get('soft_skills', [])
+        all_skills = result.get('all_skills', [])
         
-        if skills_section:
-            # Only extract skills that appear in the Skills section
-            skills_section_lower = skills_section.lower()
-            
-            # Extract technical skills that are in TECHNICAL_SKILLS AND in the Skills section
-            for skill in self.TECHNICAL_SKILLS:
-                pattern = r'\b' + re.escape(skill) + r'\b'
-                if re.search(pattern, skills_section_lower, re.IGNORECASE):
-                    found_skills.add(skill)
-            
-            # Extract all potential skills from the Skills section
-            potential_skills = re.split(r'[,;•\n•]', skills_section)
-            for skill in potential_skills:
-                skill = skill.strip()
-                if skill and len(skill) < 50:
-                    skill_lower = skill.lower()
-                    # Only keep if it's in TECHNICAL_SKILLS
-                    if skill_lower in self.TECHNICAL_SKILLS:
-                        found_skills.add(skill_lower)
-        else:
-            # Fallback: extract from entire text if no Skills section found
-            for skill in self.TECHNICAL_SKILLS:
-                pattern = r'\b' + re.escape(skill) + r'\b'
-                if re.search(pattern, text_lower, re.IGNORECASE):
-                    found_skills.add(skill)
+        logger.info(f"Skill extractor found {len(tech_skills)} technical skills, {len(soft_skills)} soft skills")
         
-        # Categorize as primary/secondary (simple heuristic)
-        all_skills = list(found_skills)
-        primary_count = min(10, len(all_skills) // 2)
-        
+        # Return in the expected format
         return {
-            'primary_skills': all_skills[:primary_count] if all_skills else [],
-            'secondary_skills': all_skills[primary_count:] if len(all_skills) > primary_count else [],
-            'all_skills': all_skills
+            'primary_skills': tech_skills,  # All technical skills
+            'secondary_skills': soft_skills,  # Soft skills
+            'all_skills': all_skills  # Combined
         }
     
     def extract_experience(self, text: str) -> float:
@@ -1394,20 +1076,19 @@ Resume Text (look for name in FIRST FEW LINES):
         return education_info
     
     def extract_location(self, text: str) -> Optional[str]:
-        """Extract current location."""
-        # Look for location patterns
-        location_pattern = r'(?i)(?:location|based in|residing in|current location)[:\s]+([A-Za-z\s,]+?)(?:\n|$)'
-        matches = re.findall(location_pattern, text)
+        """
+        Extract current location using pure Python regex (NO AI/NLP).
         
-        if matches:
-            return matches[0].strip()
+        Uses location_identifier.py for comprehensive location extraction
+        supporting multiple formats: City/State/ZIP, international locations,
+        multi-line addresses, and various noisy resume formats.
+        """
+        # Use the dedicated location extractor (pure Python, no AI/NLP)
+        location = extract_location_advanced(text)
         
-        # Use NLP to find GPE (Geopolitical Entity)
-        if self.nlp:
-            doc = self.nlp(text[:1000])
-            locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-            if locations:
-                return locations[0]
+        # Return the extracted location if valid
+        if location and location != "Unknown":
+            return location
         
         return None
     
@@ -1480,67 +1161,29 @@ Resume Text (look for name in FIRST FEW LINES):
                                                 logger.info(f"Found name via heuristic (line {idx+1}): {name}")
                                                 break
                 email = ai_data.get('email') or self.extract_email(resume_text)
-                phone = ai_data.get('phone_number') or self.extract_phone(resume_text)
+                # ALWAYS use Python-based extraction for phone (NO AI) - uses phone_extractor.py
+                phone = self.extract_phone(resume_text)
                 # ALWAYS use Python-based extraction (NO AI) - uses comprehensive ExperienceExtractor
                 # This ensures accurate date parsing, education exclusion, and range merging
                 experience = self.extract_experience(resume_text)
                 
-                # Get skills from AI
-                ai_technical_skills = ai_data.get('technical_skills', [])
-                ai_secondary_skills = ai_data.get('secondary_skills', [])
-                all_skills_list = ai_data.get('all_skills', [])
+                # SKILL EXTRACTION: Use ONLY Python-based extraction (NO AI)
+                # Uses skill_extractor.py module (2000+ technical skills, 50+ soft skills)
+                logger.info("Extracting skills using Python-only approach (skill_extractor.py)...")
+                python_skills = self.extract_skills(resume_text)
                 
-                logger.info(f"AI extracted {len(ai_technical_skills)} technical skills")
+                # Get technical and soft skills from Python extraction
+                technical_skills_list = python_skills.get('primary_skills', [])  # Technical skills
+                secondary_skills_list = python_skills.get('secondary_skills', [])  # Soft skills
                 
-                # Ensure we have lists
-                if isinstance(ai_technical_skills, str):
-                    ai_technical_skills = [s.strip() for s in ai_technical_skills.split(',') if s.strip()] if ai_technical_skills else []
-                if isinstance(ai_secondary_skills, str):
-                    ai_secondary_skills = [s.strip() for s in ai_secondary_skills.split(',') if s.strip()] if ai_secondary_skills else []
+                logger.info(f"Python skill_extractor found {len(technical_skills_list)} technical skills, {len(secondary_skills_list)} soft skills")
                 
                 # Collect all valid technical skills
                 technical_skills = []
                 technical_skills_lower = set()
                 
-                # First, process AI-extracted skills
-                for skill in ai_technical_skills:
-                    if not skill or not isinstance(skill, str):
-                        continue
-                    skill_stripped = skill.strip()
-                    skill_lower = skill_stripped.lower()
-                    
-                    # Filter out single-letter skills (like "r" from "r," or from splitting issues)
-                    if len(skill_stripped) <= 1:
-                        logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
-                        continue
-                    
-                    # Check if exact match in TECHNICAL_SKILLS
-                    if skill_lower in self.TECHNICAL_SKILLS:
-                        if skill_lower not in technical_skills_lower:
-                            technical_skills.append(skill_stripped)
-                            technical_skills_lower.add(skill_lower)
-                            logger.info(f"✓ Added AI skill: {skill_stripped}")
-                    else:
-                        # Try fuzzy/partial matching
-                        matched = False
-                        for tech_skill in self.TECHNICAL_SKILLS:
-                            if skill_lower in tech_skill or tech_skill in skill_lower:
-                                if tech_skill not in technical_skills_lower:
-                                    technical_skills.append(tech_skill)
-                                    technical_skills_lower.add(tech_skill)
-                                    logger.info(f"✓ Added AI skill (fuzzy): {tech_skill} (matched {skill})")
-                                    matched = True
-                                break
-                        if not matched:
-                            logger.debug(f"AI skill not matched: {skill}")
-                
-                # Then, try regex fallback for additional skills
-                logger.info(f"Trying regex fallback for additional skills...")
-                regex_skills = self.extract_skills(resume_text)
-                all_extracted_skills = regex_skills.get('all_skills', [])
-                logger.info(f"Regex extracted {len(all_extracted_skills)} potential skills")
-                
-                for skill in all_extracted_skills:
+                # Process Python-extracted technical skills
+                for skill in technical_skills_list:
                     if not skill or not isinstance(skill, str):
                         continue
                     skill_stripped = skill.strip()
@@ -1551,30 +1194,23 @@ Resume Text (look for name in FIRST FEW LINES):
                         logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
                         continue
                     
-                    # Only add if not already found
-                    if skill_lower in self.TECHNICAL_SKILLS and skill_lower not in technical_skills_lower:
+                    if skill_lower not in technical_skills_lower:
                         technical_skills.append(skill_stripped)
                         technical_skills_lower.add(skill_lower)
-                        logger.info(f"✓ Added regex skill: {skill_stripped}")
                 
-                # Secondary skills: everything that's NOT in TECHNICAL_SKILLS
+                # Process secondary skills
                 secondary_skills = []
-                
-                # Process AI secondary skills
-                for skill in ai_secondary_skills:
+                for skill in secondary_skills_list:
                     if not skill or not isinstance(skill, str):
                         continue
                     skill_stripped = skill.strip()
-                    skill_lower = skill_stripped.lower()
                     
                     # Filter out single-letter skills
                     if len(skill_stripped) <= 1:
-                        logger.debug(f"Skipping single-letter secondary skill: '{skill_stripped}'")
                         continue
                     
-                    if skill_lower not in self.TECHNICAL_SKILLS and skill_lower not in [s.lower() for s in secondary_skills]:
+                    if skill_stripped not in secondary_skills:
                         secondary_skills.append(skill_stripped)
-                        logger.info(f"✓ Added secondary skill: {skill_stripped}")
                 
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
@@ -1594,7 +1230,7 @@ Resume Text (look for name in FIRST FEW LINES):
                 logger.info(f"✓ Secondary skills ({len(secondary_skills)}): {secondary_skills_str[:80]}...")
                 logger.info(f"✓ All skills ({len(all_skills_combined)}): {all_skills_str[:80]}...")
                 
-                logger.info(f"✓ AI extraction completed: {len(technical_skills)} technical skills")
+                logger.info(f"✓ Python-only extraction completed: {len(technical_skills)} technical skills, {len(secondary_skills)} soft skills")
                 
                 # Get domains (handle both single and multiple)
                 domain_list = ai_data.get('domain', [])
@@ -1691,20 +1327,20 @@ Resume Text (look for name in FIRST FEW LINES):
                         logger.debug(f"Skipping single-letter skill: '{skill_stripped}'")
                         continue
                     
-                    # Reject responsibility-like phrases unless they're explicitly in TECHNICAL_SKILLS
-                    if skill_lower in responsibility_phrases and skill_lower not in self.TECHNICAL_SKILLS:
+                    # Reject responsibility-like phrases unless they're explicitly in TECH_SKILLS
+                    if skill_lower in responsibility_phrases and skill_lower not in TECH_SKILLS:
                         logger.warning(f"Rejected responsibility phrase as skill: '{skill_stripped}'")
                         continue
                     
-                    # Check if this skill is in our TECHNICAL_SKILLS list
-                    if skill_lower in self.TECHNICAL_SKILLS:
+                    # Check if this skill is in our TECH_SKILLS list (from skill_extractor.py)
+                    if skill_lower in TECH_SKILLS:
                         if skill_lower not in technical_skills_set:
                             technical_skills_list.append(skill_stripped)
                             technical_skills_set.add(skill_lower)
                     else:
                         # Try partial match
                         found_match = False
-                        for tech_skill in self.TECHNICAL_SKILLS:
+                        for tech_skill in TECH_SKILLS:
                             if skill_lower in tech_skill or tech_skill in skill_lower:
                                 if tech_skill not in technical_skills_set:
                                     technical_skills_list.append(tech_skill)
@@ -1857,10 +1493,12 @@ Resume Text (look for name in FIRST FEW LINES):
 
 
 def extract_skills_from_text(text: str) -> List[str]:
-    """Standalone function to extract skills from any text."""
-    parser = ResumeParser()
-    skills = parser.extract_skills(text)
-    return skills['all_skills']
+    """
+    Standalone function to extract skills from any text.
+    Uses the enhanced skill_extractor module for comprehensive extraction.
+    """
+    result = extract_skills_advanced(text, return_categories=False)
+    return result.get('all_skills', [])
 
 
 def extract_experience_from_text(text: str) -> float:

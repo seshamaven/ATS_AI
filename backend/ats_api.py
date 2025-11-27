@@ -456,6 +456,19 @@ def process_resume():
                 
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
+                
+                # Calculate and store profile scores
+                try:
+                    from profile_type_utils import get_all_profile_type_scores
+                    profile_scores = get_all_profile_type_scores(
+                        primary_skills=parsed_data.get('primary_skills', ''),
+                        secondary_skills=parsed_data.get('secondary_skills', ''),
+                        resume_text=parsed_data.get('resume_text', '')
+                    )
+                    db.insert_or_update_profile_scores(candidate_id, profile_scores)
+                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
+                except Exception as e:
+                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
             
             # Index in Pinecone if enabled
             pinecone_indexed = False
@@ -513,6 +526,7 @@ def process_resume():
                 'candidate_id': candidate_id,
                 'candidate_name': parsed_data.get('name'),
                 'email': parsed_data.get('email'),
+                'phone': parsed_data.get('phone'),
                 'total_experience': parsed_data.get('total_experience'),
                 'primary_skills': parsed_data.get('primary_skills'),
                 'domain': parsed_data.get('domain'),
@@ -1196,18 +1210,149 @@ def search_resumes():
             sql_candidates = db.filter_candidates(structured_filters, limit=sql_limit)
         
         if not sql_candidates:
+            # SQL returned 0 results - run two-step search directly (skip Pinecone)
+            logger.info(f"SQL filter returned 0 results, running two-step search directly...")
+            
+            # Mapping from query to score column
+            query_to_score_column = {
+                "java": "java_score",
+                ".net": "dotnet_score",
+                "dotnet": "dotnet_score",
+                "python": "python_score",
+                "javascript": "javascript_score",
+                "js": "javascript_score",
+                "full stack": "fullstack_score",
+                "fullstack": "fullstack_score",
+                "devops": "devops_score",
+                "data engineering": "data_engineering_score",
+                "data science": "data_science_score",
+                "testing": "testing_qa_score",
+                "qa": "testing_qa_score",
+                "sap": "sap_score",
+                "erp": "erp_score",
+                "cloud": "cloud_infra_score",
+                "infra": "cloud_infra_score",
+                "bi": "business_intelligence_score",
+                "business intelligence": "business_intelligence_score",
+                "power platform": "microsoft_power_platform_score",
+                "rpa": "rpa_score",
+                "cyber security": "cyber_security_score",
+                "security": "cyber_security_score",
+                "mobile": "mobile_development_score",
+                "salesforce": "salesforce_score",
+                "low code": "low_code_no_code_score",
+                "no code": "low_code_no_code_score",
+                "database": "database_score",
+                "sql": "database_score",
+                "integration": "integration_apis_score",
+                "api": "integration_apis_score",
+                "ui/ux": "ui_ux_score",
+                "ux": "ui_ux_score",
+                "support": "support_score",
+                "business development": "business_development_score",
+            }
+            
+            # Determine score column based on query
+            query_lower = user_query.lower()
+            score_column = "python_score"  # Default
+            for key, col in query_to_score_column.items():
+                if key in query_lower or query_lower in key:
+                    score_column = col
+                    break
+            
+            logger.info(f"Two-step search using score column: {score_column}")
+            
+            two_step_results = []
+            two_step_stats = {'step1_count': 0, 'step2_count': 0}
+            
+            with create_ats_database() as db:
+                # Step 1: Search by skill only
+                step1_results = db.search_by_skill(user_query, limit=100)
+                two_step_stats['step1_count'] = len(step1_results)
+                logger.info(f"Two-step Step 1: Found {len(step1_results)} candidates")
+                
+                # Step 2: Search by score
+                step2_results = db.search_by_skill_with_score(user_query, score_column=score_column, limit=100)
+                two_step_stats['step2_count'] = len(step2_results)
+                logger.info(f"Two-step Step 2: Found {len(step2_results)} candidates")
+                
+                # Helper function to build candidate object
+                def build_candidate_obj(r, match_score, search_source):
+                    cid = r['candidate_id']
+                    metadata = {
+                        'candidate_id': cid,
+                        'name': r.get('name', ''),
+                        'email': r.get('email', ''),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'secondary_skills': r.get('secondary_skills', ''),
+                        'all_skills': r.get('all_skills', '') or r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'total_experience': r.get('total_experience', 0),
+                        'current_designation': r.get('current_designation', '') or 'Unknown',
+                        'current_location': r.get('current_location', '') or 'Unknown',
+                        'current_company': r.get('current_company', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
+                        'created_at': str(r.get('created_at', '')),
+                        'source': search_source
+                    }
+                    return {
+                        'candidate_id': cid,
+                        'name': r.get('name', ''),
+                        'email': r.get('email', ''),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'total_experience': r.get('total_experience', 0),
+                        'current_designation': r.get('current_designation', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
+                        'match_score': round(match_score, 3),
+                        'layer_scores': {'vector': None},
+                        'metadata': metadata
+                    }
+                
+                # Merge results (deduplicate)
+                seen_ids = set()
+                
+                # Add Step 1 results
+                for r in step1_results:
+                    cid = r['candidate_id']
+                    if cid not in seen_ids:
+                        seen_ids.add(cid)
+                        two_step_results.append(build_candidate_obj(r, 0.5, 'two_step_primary'))
+                
+                # Add Step 2 results
+                for r in step2_results:
+                    cid = r['candidate_id']
+                    if cid not in seen_ids:
+                        seen_ids.add(cid)
+                        skill_score = r.get('skill_match_score', 0)
+                        match_score = min(0.8, (skill_score / 100)) if skill_score else 0.4
+                        two_step_results.append(build_candidate_obj(r, match_score, 'two_step_fallback'))
+            
+            # Sort by match_score DESC
+            two_step_results.sort(key=lambda x: (x.get('match_score', 0), x.get('total_experience', 0)), reverse=True)
+            
             return jsonify({
-                'message': 'No matching resumes found after SQL filtering',
+                'message': f'Found {len(two_step_results)} candidates via two-step search (SQL filter returned 0)',
                 'query': user_query,
-                'search_results': [],
-                'total_matches': 0,
+                'search_results': two_step_results,
+                'total_matches': len(two_step_results),
                 'layer_counts': {
                     'sql_filtered': 0,
                     'vector_considered': 0,
                     'boolean_passed': 0,
-                    'llm_evaluated': 0
+                    'llm_evaluated': 0,
+                    'two_step_step1': two_step_stats['step1_count'],
+                    'two_step_step2': two_step_stats['step2_count'],
+                    'two_step_new': len(two_step_results)
                 },
                 'profile_type_filter': structured_filters.get('profile_type'),
+                'two_step_search_applied': True,
                 'processing_time_ms': int((time.time() - start_time) * 1000),
                 'timestamp': datetime.now().isoformat()
             }), 200
@@ -1324,17 +1469,43 @@ def search_resumes():
                 
                 match_score = max(0.0, min(1.0, base_score + profile_type_bonus + profile_type_penalty + skills_bonus))
                 
+                # Build metadata object (same structure as Pinecone results)
+                cid = record.get('candidate_id')
+                metadata = {
+                    'candidate_id': cid,
+                    'name': record.get('name', ''),
+                    'email': record.get('email', ''),
+                    'primary_skills': record.get('primary_skills', ''),
+                    'secondary_skills': record.get('secondary_skills', ''),
+                    'all_skills': record.get('all_skills', '') or record.get('primary_skills', ''),
+                    'profile_type': record.get('profile_type', ''),
+                    'total_experience': record.get('total_experience', 0),
+                    'current_designation': record.get('current_designation', '') or 'Unknown',
+                    'current_location': record.get('current_location', '') or 'Unknown',
+                    'current_company': record.get('current_company', ''),
+                    'domain': record.get('domain', ''),
+                    'education': record.get('education', ''),
+                    'resume_summary': record.get('resume_summary', ''),
+                    'created_at': str(record.get('created_at', '')),
+                    'source': 'sql_fallback'
+                }
+                
                 fallback_results.append({
-                    'candidate_id': record.get('candidate_id'),
-                    'candidate_name': record.get('name'),
-                    'email': record.get('email'),
+                    'candidate_id': cid,
+                    'name': record.get('name', ''),
+                    'email': record.get('email', ''),
                     'primary_skills': record.get('primary_skills', ''),
                     'profile_type': record.get('profile_type', ''),
                     'total_experience': record.get('total_experience', 0.0),
                     'current_designation': record.get('current_designation', ''),
                     'current_location': record.get('current_location', ''),
+                    'current_company': record.get('current_company', ''),
+                    'domain': record.get('domain', ''),
+                    'education': record.get('education', ''),
+                    'resume_summary': record.get('resume_summary', ''),
                     'match_score': round(match_score, 3),
-                    'match_reason': f'SQL filter match (profile_type: {profile_type_bonus:.2f}{f", penalty: {profile_type_penalty:.2f}" if profile_type_penalty < 0 else ""}, skills: {skills_bonus:.2f})'
+                    'layer_scores': {'vector': None},
+                    'metadata': metadata
                 })
             
             # Sort by match_score descending
@@ -1458,12 +1629,161 @@ def search_resumes():
         
         response_candidates = final_candidates[:top_k]
         
+        # === Layer 4: Two-Step Skill Search (Auto-fallback if results < 20) ===
+        two_step_applied = False
+        two_step_stats = {'step1_count': 0, 'step2_count': 0, 'new_from_two_step': 0}
+        
+        if len(response_candidates) < 20:
+            logger.info(f"Results ({len(response_candidates)}) < 20, running two-step skill search fallback...")
+            
+            # Mapping from query to score column
+            query_to_score_column = {
+                "java": "java_score",
+                ".net": "dotnet_score",
+                "dotnet": "dotnet_score",
+                "python": "python_score",
+                "javascript": "javascript_score",
+                "js": "javascript_score",
+                "full stack": "fullstack_score",
+                "fullstack": "fullstack_score",
+                "devops": "devops_score",
+                "data engineering": "data_engineering_score",
+                "data science": "data_science_score",
+                "testing": "testing_qa_score",
+                "qa": "testing_qa_score",
+                "sap": "sap_score",
+                "erp": "erp_score",
+                "cloud": "cloud_infra_score",
+                "infra": "cloud_infra_score",
+                "bi": "business_intelligence_score",
+                "business intelligence": "business_intelligence_score",
+                "power platform": "microsoft_power_platform_score",
+                "rpa": "rpa_score",
+                "cyber security": "cyber_security_score",
+                "security": "cyber_security_score",
+                "mobile": "mobile_development_score",
+                "salesforce": "salesforce_score",
+                "low code": "low_code_no_code_score",
+                "no code": "low_code_no_code_score",
+                "database": "database_score",
+                "sql": "database_score",
+                "integration": "integration_apis_score",
+                "api": "integration_apis_score",
+                "ui/ux": "ui_ux_score",
+                "ux": "ui_ux_score",
+                "support": "support_score",
+                "business development": "business_development_score",
+            }
+            
+            # Determine score column based on query
+            query_lower = user_query.lower()
+            score_column = "python_score"  # Default
+            
+            # Find best matching score column
+            for key, col in query_to_score_column.items():
+                if key in query_lower or query_lower in key:
+                    score_column = col
+                    break
+            
+            logger.info(f"Two-step search using score column: {score_column}")
+            
+            # Track existing candidate IDs
+            existing_ids = {c.get('candidate_id') for c in response_candidates if c.get('candidate_id')}
+            
+            with create_ats_database() as db:
+                # Step 1: Primary Search (skillset only)
+                step1_results = db.search_by_skill(user_query, limit=100)
+                two_step_stats['step1_count'] = len(step1_results)
+                logger.info(f"Two-step Step 1: Found {len(step1_results)} candidates")
+                
+                # Step 2: Fallback Search (score > 0 AND skillset LIKE query)
+                step2_results = db.search_by_skill_with_score(user_query, score_column=score_column, limit=100)
+                two_step_stats['step2_count'] = len(step2_results)
+                logger.info(f"Two-step Step 2: Found {len(step2_results)} candidates")
+                
+                # Merge new candidates from two-step search
+                new_candidates = []
+                
+                # Helper function to build Pinecone-style candidate object
+                def build_candidate_object(r, match_score, search_source):
+                    """Build candidate object with same structure as Pinecone results."""
+                    cid = r['candidate_id']
+                    
+                    # Build metadata object (same as Pinecone)
+                    metadata = {
+                        'candidate_id': cid,
+                        'name': r.get('name', ''),
+                        'email': r.get('email', ''),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'secondary_skills': r.get('secondary_skills', ''),
+                        'all_skills': r.get('all_skills', '') or r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'total_experience': r.get('total_experience', 0),
+                        'current_designation': r.get('current_designation', '') or 'Unknown',
+                        'current_location': r.get('current_location', '') or 'Unknown',
+                        'current_company': r.get('current_company', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
+                        'created_at': str(r.get('created_at', '')),
+                        'source': search_source
+                    }
+                    
+                    return {
+                        'candidate_id': cid,
+                        'name': r.get('name', ''),
+                        'email': r.get('email', ''),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'total_experience': r.get('total_experience', 0),
+                        'current_designation': r.get('current_designation', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
+                        'match_score': round(match_score, 3),
+                        'layer_scores': {
+                            'vector': None
+                        },
+                        'metadata': metadata
+                    }
+                
+                # Add from Step 1 (not already in results)
+                for r in step1_results:
+                    cid = r['candidate_id']
+                    if cid not in existing_ids:
+                        existing_ids.add(cid)
+                        new_candidates.append(build_candidate_object(r, 0.5, 'two_step_primary'))
+                
+                # Add from Step 2 (not already in results)
+                for r in step2_results:
+                    cid = r['candidate_id']
+                    if cid not in existing_ids:
+                        existing_ids.add(cid)
+                        skill_score = r.get('skill_match_score', 0)
+                        match_score = min(0.8, (skill_score / 100)) if skill_score else 0.4
+                        new_candidates.append(build_candidate_object(r, match_score, 'two_step_fallback'))
+                
+                two_step_stats['new_from_two_step'] = len(new_candidates)
+                
+                if new_candidates:
+                    two_step_applied = True
+                    # Sort new candidates by skill_match_score DESC
+                    new_candidates.sort(key=lambda x: (x.get('skill_match_score') or 0, x.get('total_experience') or 0), reverse=True)
+                    # Append to response_candidates
+                    response_candidates.extend(new_candidates)
+                    logger.info(f"Added {len(new_candidates)} new candidates from two-step search")
+        
         processing_time = int((time.time() - start_time) * 1000)
         layer_counts = {
             'sql_filtered': len(candidate_ids),
             'vector_considered': len(vector_ranked),
             'boolean_passed': len(boolean_filtered),
-            'llm_evaluated': len(response_candidates) if llm_applied else 0
+            'llm_evaluated': len(final_candidates) if llm_applied else 0,
+            'two_step_step1': two_step_stats['step1_count'],
+            'two_step_step2': two_step_stats['step2_count'],
+            'two_step_new': two_step_stats['new_from_two_step']
         }
         
         message = 'Hybrid SQL + vector search completed'
@@ -1471,6 +1791,8 @@ def search_resumes():
             message += ' with LLM refinement'
         elif use_llm_refinement:
             message += ' (LLM refinement unavailable)'
+        if two_step_applied:
+            message += f' + two-step fallback (+{two_step_stats["new_from_two_step"]} candidates)'
         
         return jsonify({
             'message': message,
@@ -1481,6 +1803,7 @@ def search_resumes():
             'total_before_boolean_filter': len(vector_ranked) if use_boolean_search else None,
             'boolean_filter_applied': use_boolean_search and parsed_query is not None,
             'llm_refinement_applied': llm_applied,
+            'two_step_search_applied': two_step_applied,
             'profile_type_filter': structured_filters.get('profile_type'),
             'processing_time_ms': processing_time,
             'timestamp': datetime.now().isoformat()
@@ -1488,6 +1811,210 @@ def search_resumes():
         
     except Exception as e:
         logger.error(f"Error in hybrid search: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/searchResumesBySkill', methods=['POST'])
+def search_resumes_by_skill():
+    """
+    Two-step skill-based resume search.
+    
+    Step 1 (Primary Search):
+    - Search candidates where profile_type matches/relates to query AND skillset contains query
+    - If result count >= 20, return immediately
+    
+    Step 2 (Fallback Search):
+    - If Step 1 < 20 results, search candidate_profile_scores WHERE score > 0 AND skillset LIKE query
+    - Combine results (deduplicated), sorted by skill_match_score DESC
+    
+    Input: {"query": "<skill_name>"}
+    Output: Combined candidates from both steps (deduplicated)
+    """
+    try:
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        if 'query' not in data:
+            return jsonify({'error': 'Missing query field'}), 400
+        
+        query = data['query'].strip()
+        if not query:
+            return jsonify({'error': 'Query cannot be empty'}), 400
+        
+        logger.info(f"Skill-based search for: {query}")
+        start_time = time.time()
+        
+        # Mapping from query to score column
+        query_to_score_column = {
+            "java": "java_score",
+            ".net": "dotnet_score",
+            "dotnet": "dotnet_score",
+            "python": "python_score",
+            "javascript": "javascript_score",
+            "js": "javascript_score",
+            "full stack": "fullstack_score",
+            "fullstack": "fullstack_score",
+            "devops": "devops_score",
+            "data engineering": "data_engineering_score",
+            "data science": "data_science_score",
+            "testing": "testing_qa_score",
+            "qa": "testing_qa_score",
+            "sap": "sap_score",
+            "erp": "erp_score",
+            "cloud": "cloud_infra_score",
+            "infra": "cloud_infra_score",
+            "bi": "business_intelligence_score",
+            "business intelligence": "business_intelligence_score",
+            "power platform": "microsoft_power_platform_score",
+            "rpa": "rpa_score",
+            "cyber security": "cyber_security_score",
+            "security": "cyber_security_score",
+            "mobile": "mobile_development_score",
+            "salesforce": "salesforce_score",
+            "low code": "low_code_no_code_score",
+            "no code": "low_code_no_code_score",
+            "database": "database_score",
+            "sql": "database_score",
+            "integration": "integration_apis_score",
+            "api": "integration_apis_score",
+            "ui/ux": "ui_ux_score",
+            "ux": "ui_ux_score",
+            "support": "support_score",
+            "business development": "business_development_score",
+        }
+        
+        # Determine score column based on query
+        query_lower = query.lower()
+        score_column = query_to_score_column.get(query_lower, "python_score")  # Default to python_score
+        
+        # Find best matching score column if exact match not found
+        if query_lower not in query_to_score_column:
+            for key, col in query_to_score_column.items():
+                if key in query_lower or query_lower in key:
+                    score_column = col
+                    break
+        
+        logger.info(f"Using score column: {score_column}")
+        
+        with create_ats_database() as db:
+            # Step 1: Primary Search (profile_type + skillset)
+            step1_results = db.search_by_skill(query, limit=100)
+            step1_count = len(step1_results)
+            logger.info(f"Step 1 (Primary Search): Found {step1_count} candidates")
+            
+            # Track candidate IDs from Step 1
+            step1_ids = {r['candidate_id'] for r in step1_results}
+            
+            # If Step 1 has >= 20 results, return immediately
+            if step1_count >= 20:
+                # Format results
+                results = []
+                for r in step1_results:
+                    results.append({
+                        'candidate_id': r['candidate_id'],
+                        'name': r['name'],
+                        'email': r['email'],
+                        'phone': r.get('phone'),
+                        'total_experience': r.get('total_experience', 0),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'current_designation': r.get('current_designation', ''),
+                        'skill_match_score': None,  # Not from score table
+                        'search_step': 'primary'
+                    })
+                
+                return jsonify({
+                    'message': f'Found {len(results)} candidates via primary search',
+                    'query': query,
+                    'search_results': results,
+                    'total_matches': len(results),
+                    'step1_count': step1_count,
+                    'step2_count': 0,
+                    'search_type': 'primary_only',
+                    'processing_time_ms': int((time.time() - start_time) * 1000),
+                    'timestamp': datetime.now().isoformat()
+                }), 200
+            
+            # Step 2: Fallback Search (score > 0 AND skillset LIKE query)
+            step2_results = db.search_by_skill_with_score(query, score_column=score_column, limit=100)
+            step2_count = len(step2_results)
+            logger.info(f"Step 2 (Fallback Search): Found {step2_count} candidates")
+            
+            # Combine results (deduplicate by candidate_id)
+            combined_results = []
+            seen_ids = set()
+            
+            # Add Step 1 results first (they matched profile_type)
+            for r in step1_results:
+                cid = r['candidate_id']
+                if cid not in seen_ids:
+                    seen_ids.add(cid)
+                    combined_results.append({
+                        'candidate_id': cid,
+                        'name': r['name'],
+                        'email': r['email'],
+                        'phone': r.get('phone'),
+                        'total_experience': r.get('total_experience', 0),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'current_designation': r.get('current_designation', ''),
+                        'skill_match_score': None,
+                        'search_step': 'primary'
+                    })
+            
+            # Add Step 2 results (deduplicated)
+            for r in step2_results:
+                cid = r['candidate_id']
+                if cid not in seen_ids:
+                    seen_ids.add(cid)
+                    combined_results.append({
+                        'candidate_id': cid,
+                        'name': r['name'],
+                        'email': r['email'],
+                        'phone': r.get('phone'),
+                        'total_experience': r.get('total_experience', 0),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'current_designation': r.get('current_designation', ''),
+                        'skill_match_score': r.get('skill_match_score', 0),
+                        'search_step': 'fallback'
+                    })
+            
+            # Sort by skill_match_score DESC (None values go last), then by experience
+            combined_results.sort(
+                key=lambda x: (x['skill_match_score'] or 0, x['total_experience'] or 0),
+                reverse=True
+            )
+            
+            return jsonify({
+                'message': f'Found {len(combined_results)} candidates (Step1: {step1_count}, Step2: {step2_count - len(step1_ids & {r["candidate_id"] for r in step2_results})} new)',
+                'query': query,
+                'search_results': combined_results,
+                'total_matches': len(combined_results),
+                'step1_count': step1_count,
+                'step2_count': step2_count,
+                'search_type': 'combined',
+                'score_column_used': score_column,
+                'processing_time_ms': int((time.time() - start_time) * 1000),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Error in skill-based search: {e}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 

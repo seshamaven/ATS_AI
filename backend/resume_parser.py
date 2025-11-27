@@ -324,17 +324,65 @@ Resume Text (look for name in FIRST FEW LINES):
         self.matcher.add("PHONE", [phone_pattern])
     
     def parse_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file."""
+        """Extract text from PDF file using multiple extractors for best results."""
+        extracted_text = ""
+        
+        # Try PyMuPDF (fitz) first - best quality for complex layouts
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(file_path)
+            text = ""
+            for page in doc:
+                text += page.get_text() + "\n"
+            doc.close()
+            if text.strip() and len(text.strip()) > 100:
+                logger.info("PDF extracted using PyMuPDF (fitz)")
+                return text.strip()
+            extracted_text = text.strip()
+        except ImportError:
+            logger.debug("PyMuPDF not available, trying pdfplumber")
+        except Exception as e:
+            logger.warning(f"PyMuPDF extraction failed: {e}")
+        
+        # Try pdfplumber - good for tables and columns
+        try:
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ""
+                    text += page_text + "\n"
+            if text.strip() and len(text.strip()) > len(extracted_text):
+                logger.info("PDF extracted using pdfplumber")
+                return text.strip()
+            if len(text.strip()) > len(extracted_text):
+                extracted_text = text.strip()
+        except ImportError:
+            logger.debug("pdfplumber not available, trying PyPDF2")
+        except Exception as e:
+            logger.warning(f"pdfplumber extraction failed: {e}")
+        
+        # Fallback to PyPDF2
         try:
             text = ""
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 for page in pdf_reader.pages:
                     text += page.extract_text() + "\n"
-            return text.strip()
+            if text.strip() and len(text.strip()) > len(extracted_text):
+                logger.info("PDF extracted using PyPDF2")
+                return text.strip()
+            if len(text.strip()) > len(extracted_text):
+                extracted_text = text.strip()
         except Exception as e:
-            logger.error(f"Error parsing PDF: {e}")
-            raise ValueError(f"Failed to parse PDF: {str(e)}")
+            logger.warning(f"PyPDF2 extraction failed: {e}")
+        
+        # Return best result we got
+        if extracted_text:
+            logger.info(f"PDF extracted with {len(extracted_text)} characters")
+            return extracted_text
+        
+        raise ValueError("Failed to extract text from PDF using any available method")
     
     def parse_docx(self, file_path: str) -> str:
         """Extract text from DOCX file."""
@@ -981,13 +1029,12 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
-    def extract_education(self, text: str, use_ai_fallback: bool = False, store_in_db: bool = False, candidate_id: Optional[int] = None) -> Dict[str, Any]:
+    def extract_education(self, text: str, store_in_db: bool = False, candidate_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Extract education information using the enhanced EducationExtractor.
         
         Args:
             text: Resume text to parse
-            use_ai_fallback: If True, use AI when Python extraction fails
             store_in_db: If True, store extracted education in database
             candidate_id: Candidate ID for database storage (required if store_in_db=True)
         
@@ -999,7 +1046,6 @@ Resume Text (look for name in FIRST FEW LINES):
             try:
                 extractor = EducationExtractor(
                     text,
-                    use_ai_fallback=use_ai_fallback and self.use_ai_extraction,  # Only use AI if enabled in parser
                     store_in_db=store_in_db,
                     candidate_id=candidate_id
                 )
@@ -1252,8 +1298,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # ALWAYS prioritize Python extraction over AI for accuracy
                 # Python extraction is more reliable and doesn't add inferred specializations
-                logger.info("Extracting education using Python extraction (prioritized over AI)...")
-                education_info = self.extract_education(resume_text, use_ai_fallback=False)  # Python extraction only
+                logger.info("Extracting education using Python extraction...")
+                education_info = self.extract_education(resume_text)
                 
                 # Use Python extraction if it found valid education
                 if education_info['highest_degree'] and education_info['highest_degree'] != 'Unknown':
@@ -1382,8 +1428,8 @@ Resume Text (look for name in FIRST FEW LINES):
                         domain_parts.insert(0, "Information Technology")
                         domain = ', '.join(domain_parts)
                         logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
-                # Use enhanced EducationExtractor (Python extraction only, no AI)
-                education_info = self.extract_education(resume_text, use_ai_fallback=False)
+                # Use enhanced EducationExtractor (Python extraction only)
+                education_info = self.extract_education(resume_text)
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else (highest_degree or '')
                 

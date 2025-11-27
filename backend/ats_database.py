@@ -644,6 +644,97 @@ class ATSDatabase:
                 self.connection.rollback()
             return False
     
+    def search_by_skill(self, query: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Step 1 (Primary Search): Search candidates where primary_skills contains the query.
+        
+        Args:
+            query: Skill name to search (e.g., "Django", "Flask", "Python")
+            limit: Maximum results to return
+            
+        Returns:
+            List of matching candidates
+        """
+        try:
+            search_query = f"%{query}%"
+            sql = """
+                SELECT 
+                    rm.candidate_id,
+                    rm.name,
+                    rm.email,
+                    rm.phone,
+                    rm.total_experience,
+                    rm.primary_skills,
+                    rm.secondary_skills,
+                    rm.all_skills,
+                    rm.profile_type,
+                    rm.domain,
+                    rm.education,
+                    rm.current_location,
+                    rm.current_company,
+                    rm.current_designation,
+                    rm.resume_summary,
+                    rm.created_at
+                FROM resume_metadata rm
+                WHERE rm.status = 'active'
+                AND rm.primary_skills LIKE %s
+                ORDER BY rm.total_experience DESC
+                LIMIT %s
+            """
+            self.cursor.execute(sql, (search_query, limit))
+            return self.cursor.fetchall()
+        except Error as e:
+            logger.error(f"Error in search_by_skill: {e}")
+            return []
+    
+    def search_by_skill_with_score(self, query: str, score_column: str = "python_score", limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Step 2 (Fallback Search): Search candidates from candidate_profile_scores
+        where score > 0 AND skillset contains the query.
+        
+        Args:
+            query: Skill name to search (e.g., "Python", "Java")
+            score_column: Score column to check (e.g., "python_score", "java_score")
+            limit: Maximum results to return
+            
+        Returns:
+            List of matching candidates with scores
+        """
+        try:
+            search_query = f"%{query}%"
+            sql = f"""
+                SELECT 
+                    rm.candidate_id,
+                    rm.name,
+                    rm.email,
+                    rm.phone,
+                    rm.total_experience,
+                    rm.primary_skills,
+                    rm.secondary_skills,
+                    rm.all_skills,
+                    rm.profile_type,
+                    rm.domain,
+                    rm.education,
+                    rm.current_location,
+                    rm.current_company,
+                    rm.current_designation,
+                    rm.resume_summary,
+                    rm.created_at,
+                    cps.{score_column} as skill_match_score
+                FROM resume_metadata rm
+                INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id
+                WHERE rm.status = 'active'
+                AND cps.{score_column} > 0
+                AND rm.primary_skills LIKE %s
+                ORDER BY cps.{score_column} DESC, rm.total_experience DESC
+                LIMIT %s
+            """
+            self.cursor.execute(sql, (search_query, limit))
+            return self.cursor.fetchall()
+        except Error as e:
+            logger.error(f"Error in search_by_skill_with_score: {e}")
+            return []
+    
     def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics."""
         try:

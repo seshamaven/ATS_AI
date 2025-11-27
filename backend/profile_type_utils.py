@@ -102,8 +102,10 @@ PROFILE_TYPE_RULES = [
         "low code platform", "citizen developer", "bubble", "zapier"
     }),
     ("Database", {
-        "database", "database administrator", "dba", "mysql", "postgresql", "oracle db",
-        "oracle database", "sql server", "mongodb", "redis", "cassandra", "database design", "sql", "nosql"
+        "database administrator", "dba", "database engineer", "database developer",
+        "mysql", "postgresql", "oracle db", "oracle database", "sql server", 
+        "mongodb", "redis", "cassandra", "database design", "nosql",
+        "pl/sql", "plsql", "t-sql", "tsql", "sql developer", "database architect"
     }),
     ("Integration / APIs", {
         "integration", "api", "apis", "rest api", "restful api", "soap", "graphql",
@@ -123,7 +125,10 @@ PROFILE_TYPE_RULES = [
     ("Business Development", {
         "business development", "bd", "business dev", "bde", "business development executive",
         "business development manager", "b2b sales", "client acquisition", "market expansion",
-        "partnership development", "strategic partnerships", "account development"
+        "partnership development", "strategic partnerships", "account development",
+        "lead generation", "lead generation specialist", "sales development", "sales executive",
+        "marketing executive", "email marketing", "e-mail marketing", "market research",
+        "identifying prospects", "cold calling", "prospecting", "mba marketing"
     }),
 ]
 
@@ -321,10 +326,18 @@ PROFILE_TYPE_RULES_ENHANCED: List[Tuple[str, Dict[str, float]]] = [
     (
         "Database",
         {
-            "database": 4.0, "database administrator": 4.5, "dba": 4.0,
-            "mysql": 3.5, "postgresql": 3.5, "oracle db": 3.5, "oracle database": 3.5,
-            "sql server": 3.5, "mongodb": 3.0, "redis": 2.5, "cassandra": 2.5,
-            "database design": 3.0, "sql": 2.5, "nosql": 2.5,
+            # High-confidence technical database terms
+            "database administrator": 5.0, "dba": 5.0, "database engineer": 5.0,
+            "database developer": 4.5, "database design": 4.0, "database architect": 4.5,
+            "mysql": 4.0, "postgresql": 4.0, "oracle db": 4.0, "oracle database": 4.0,
+            "sql server": 4.0, "mongodb": 3.5, "redis": 3.0, "cassandra": 3.0,
+            "pl/sql": 4.0, "plsql": 4.0, "t-sql": 4.0, "tsql": 4.0,
+            "sql query": 3.5, "sql developer": 4.0, "nosql": 3.0,
+            "database management": 3.5, "database optimization": 4.0,
+            "database tuning": 4.0, "query optimization": 3.5,
+            # Low score for standalone "database" to avoid false positives
+            # (e.g., "lead database", "prospect database" in sales context)
+            "database": 1.5, "sql": 2.0,
         }
     ),
     (
@@ -366,6 +379,16 @@ PROFILE_TYPE_RULES_ENHANCED: List[Tuple[str, Dict[str, float]]] = [
             "client acquisition": 3.5, "market expansion": 3.5,
             "partnership development": 3.5, "strategic partnerships": 3.5,
             "account development": 3.0,
+            # Sales & Marketing keywords
+            "lead generation": 5.0, "lead generation specialist": 5.0,
+            "sales development": 4.5, "sales development executive": 4.5,
+            "sales executive": 4.0, "marketing executive": 4.0,
+            "email marketing": 4.0, "e-mail marketing": 4.0,
+            "market research": 3.5, "identifying prospects": 4.0,
+            "cold calling": 3.5, "prospecting": 3.5,
+            "crm": 3.0, "salesforce crm": 3.0, "hubspot": 3.0,
+            "linkedin sales": 3.5, "zoominfo": 3.5,
+            "mba marketing": 4.0, "sales and marketing": 4.5,
         }
     ),
 ]

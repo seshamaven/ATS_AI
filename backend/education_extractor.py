@@ -1,22 +1,12 @@
 import re
-import json
 import logging
-from typing import List, Optional, Dict, Any
-
-# AI client imports
-try:
-    from openai import OpenAI, AzureOpenAI
-except ImportError:
-    OpenAI = None
-    AzureOpenAI = None
+from typing import List, Optional
 
 # Database imports
 try:
     from ats_database import ATSDatabase
-    from ats_config import ATSConfig
 except ImportError:
     ATSDatabase = None
-    ATSConfig = None
 
 logger = logging.getLogger(__name__)
 
@@ -52,56 +42,55 @@ class EducationExtractor:
         r'technical expertise', r'technologies', r'programming languages', r'competencies', r'proficiencies'
     ]
     
-    def __init__(self, resume_text: str, use_ai_fallback: bool = False, store_in_db: bool = False, candidate_id: Optional[int] = None):
+    # Education priority order (lower number = higher priority)
+    EDUCATION_PRIORITY = {
+        # PhD / Doctorate - Highest (Priority 1)
+        'phd': 1, 'ph.d': 1, 'ph d': 1, 'doctorate': 1, 'doctor of philosophy': 1,
+        
+        # Master's (Priority 2)
+        'm.tech': 2, 'mtech': 2, 'm tech': 2, 'm.e': 2, 'me': 2,
+        'm.sc': 2, 'msc': 2, 'm sc': 2, 'm.a': 2, 'ma': 2,
+        'm.com': 2, 'mcom': 2, 'mba': 2, 'm.b.a': 2, 'mca': 2, 'm.c.a': 2,
+        'ms': 2, 'master': 2, 'master of technology': 2, 'master of engineering': 2,
+        'master of science': 2, 'master of arts': 2, 'master of commerce': 2,
+        'master of business administration': 2, 'master of computer applications': 2,
+        
+        # Bachelor's (Priority 3)
+        'b.tech': 3, 'btech': 3, 'b tech': 3, 'b.e': 3, 'be': 3,
+        'b.sc': 3, 'bsc': 3, 'b sc': 3, 'b.a': 3, 'ba': 3,
+        'b.com': 3, 'bcom': 3, 'bba': 3, 'b.b.a': 3, 'bca': 3, 'b.c.a': 3,
+        'bachelor': 3, 'bachelor of technology': 3, 'bachelor of engineering': 3,
+        'bachelor of science': 3, 'bachelor of arts': 3, 'bachelor of commerce': 3,
+        'bachelor of business administration': 3, 'bachelor of computer applications': 3,
+        'bachelor of computer science': 3, 'bachelor of electrical': 3, 'bachelor of electronics': 3,
+        'bachelor of mechanical': 3, 'bachelor of civil': 3, 'bachelor of information technology': 3,
+        
+        # Diploma / Polytechnic (Priority 4)
+        'diploma': 4, 'polytechnic': 4, 'pgdca': 4, 'pg diploma': 4,
+        'post graduate diploma': 4,
+        
+        # 12th / Intermediate (Priority 5)
+        '12th': 5, 'hsc': 5, 'intermediate': 5, '10+2': 5,
+        'a-levels': 5, 'a levels': 5, 'cbse 12': 5, 'icse 12': 5,
+        
+        # 10th / SSC - Lowest (Priority 6)
+        '10th': 6, 'ssc': 6, 'sslc': 6, 'cbse 10': 6, 'icse 10': 6,
+        'o-levels': 6, 'o levels': 6, 'igcse': 6,
+    }
+    
+    def __init__(self, resume_text: str, store_in_db: bool = False, candidate_id: Optional[int] = None):
         """
         Initialize the education extractor with resume text.
         
         Args:
             resume_text: The resume text to parse
-            use_ai_fallback: If True, use AI when Python extraction fails
             store_in_db: If True, store extracted education in database
             candidate_id: Candidate ID for database storage (required if store_in_db=True)
         """
         self.resume_text = resume_text
         self.lines = [line.strip() for line in resume_text.split('\n') if line.strip()]
-        self.use_ai_fallback = use_ai_fallback
         self.store_in_db = store_in_db
         self.candidate_id = candidate_id
-        self.ai_client = None
-        self.ai_model = None
-        
-        if use_ai_fallback:
-            self._initialize_ai_client()
-    
-    def _initialize_ai_client(self):
-        """Initialize OpenAI or Azure OpenAI client for AI fallback."""
-        try:
-            if not ATSConfig:
-                logger.warning("ATSConfig not available. AI fallback disabled.")
-                self.use_ai_fallback = False
-                return
-            
-            # Try Azure OpenAI first
-            if ATSConfig.AZURE_OPENAI_ENDPOINT and ATSConfig.AZURE_OPENAI_API_KEY:
-                self.ai_client = AzureOpenAI(
-                    api_key=ATSConfig.AZURE_OPENAI_API_KEY,
-                    api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
-                    azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
-                )
-                self.ai_model = ATSConfig.AZURE_OPENAI_DEPLOYMENT_NAME
-                logger.info("Initialized Azure OpenAI client for education extraction")
-            # Fallback to OpenAI
-            elif ATSConfig.OPENAI_API_KEY:
-                self.ai_client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
-                self.ai_model = ATSConfig.OPENAI_MODEL
-                logger.info("Initialized OpenAI client for education extraction")
-            else:
-                logger.warning("No OpenAI API key found. AI fallback disabled.")
-                self.use_ai_fallback = False
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize AI client: {e}")
-            self.use_ai_fallback = False
     
     def _is_extraction_valid(self, education_list: List[str]) -> bool:
         """
@@ -141,251 +130,49 @@ class EducationExtractor:
         logger.warning(f"Python extraction invalid: No valid degree patterns found in {education_list}")
         return False
     
-    def _extract_with_ai(self) -> Optional[List[Dict[str, Any]]]:
+    def _get_education_priority(self, education: str) -> int:
         """
-        Extract education using AI as fallback with comprehensive structured extraction.
+        Get priority rank for an education entry.
+        Lower number = higher priority (PhD=1, 10th=6).
+        
+        Args:
+            education: Education string to check
+            
+        Returns:
+            Priority number (1-6), or 99 if not found
+        """
+        edu_lower = education.lower()
+        
+        # Check each priority keyword
+        for keyword, priority in self.EDUCATION_PRIORITY.items():
+            if keyword in edu_lower:
+                return priority
+        
+        return 99  # Unknown education type
+    
+    def _sort_by_priority(self, education_list: List[str]) -> List[str]:
+        """
+        Sort education list by priority (highest degree first).
+        
+        Args:
+            education_list: List of education strings
+            
+        Returns:
+            Sorted list with highest education first
+        """
+        return sorted(education_list, key=lambda x: self._get_education_priority(x))
+    
+    def get_highest_education(self) -> Optional[str]:
+        """
+        Extract and return only the highest education degree.
         
         Returns:
-            List of education dictionaries with structured data, or None if extraction fails
+            Highest education string, or None if not found
         """
-        if not self.ai_client or not self.use_ai_fallback:
-            logger.warning("AI client not available for education extraction")
-            return None
-        
-        try:
-            prompt = f"""You are an expert Resume Education Extractor.
-
-Your task:
-Given ONLY the raw resume text, extract clean, structured education details.
-Return results ONLY in JSON format exactly as specified.
-
-================================================================================
-SECTION 1 — EDUCATION SECTION DETECTION
-================================================================================
-
-Detect the education block using ANY of the following headings (case-insensitive):
-
-"Education"
-"Educational Background"
-"Education Details"
-"Education Qualification"
-"Education Qualifications"
-"Educational Qualifications"
-"Educational Experience"
-"Education Summary"
-"Education & Training"
-"Academic Details"
-"Academics"
-"Academic Background"
-"Academic Summary"
-"Scholastic Profile"
-"Qualifications"
-"Qualification"
-"Profile – Academic"
-"Education Highlights"
-
-Stop extraction when a new unrelated section begins:
-- Experience / Professional Experience / Employment / Work History
-- Skills / Technical Skills
-- Projects / Academic Projects
-- Certifications / Achievements
-- Summary / Objective / Personal Info
-- Security Contests (Pattern 5 case)
-- Extracurriculars
-
-================================================================================
-SECTION 2 — WHAT TO EXTRACT
-================================================================================
-
-Extract **each education entry** with:
-
-- `degree` → Exact degree name (e.g., B.Tech, M.Tech, B.Sc, MS, MA, Diploma, 10+2, SSC)
-- `specialization` → Branch/major (ECE, CSE, Geography, MPC, etc.)
-- `institution` → College/University/School name
-- `start_year` → YYYY (when present)
-- `end_year` → YYYY (when present)
-- `percentage_or_cgpa` → 75%, 9.3 CGPA, etc.
-- `raw_text` → Full matched text for debugging
-
-================================================================================
-SECTION 3 — DEGREE IDENTIFICATION PATTERNS
-================================================================================
-
-You must detect degrees in **any format**, including:
-
------------- UNDERGRADUATE ------------
-B.Tech / Bachelor of Technology  
-B.E / Bachelor of Engineering  
-B.Sc / Bachelor of Science  
-B.Com / Bachelor of Commerce  
-BBA / BCA / BSW  
-Bachelor of Arts (BA)
-
------------- POSTGRADUATE ------------
-M.Tech / Master of Technology  
-M.E / Master of Engineering  
-M.Sc / Master of Science  
-Master of Computer Science (pattern 2)  
-Master of Arts / MA  
-Master of Business Administration / MBA  
-MS (Computer Science)  
-MCA
-
------------- SCHOOLING ------------
-10+2  
-Intermediate / Inter (MPC / BiPC / CEC)  
-PUC / HSC  
-SSC / SSLC / CBSE 10th  
-SCC (Pattern 1)
-
------------- DIPLOMAS ------------
-Diploma in <specialization>  
-Polytechnic Diploma
-
-================================================================================
-SECTION 4 — SUPPORTED PATTERN STYLES
-================================================================================
-
-The extractor MUST correctly handle ALL of the following formats:
-
------------------------------ PATTERN 1 STYLE -----------------------------
-• Bullet list with degree, year, institution, and percentage in same line  
-Example:
-● B.Tech in ECE (2017) from GITAM University with 77%
-
------------------------------ PATTERN 2 STYLE -----------------------------
-• Multi-line educational entries with:
-  - University name (single line)
-  - Degree (separate line)
-  - Duration (separate line)
-Example:
-Colorado Technical University
-Master of Computer Science  
-Aug 2019 – Current
-
------------------------------ PATTERN 3 STYLE -----------------------------
-• Very short bullet-style entries without institution or year  
-Example:
-• Diploma in Computer Science
-
------------------------------ PATTERN 4 STYLE -----------------------------
-• Degree on one line
-• Specialization on next line
-• University + year on next line
-
------------------------------ PATTERN 5 STYLE -----------------------------
-• "Educational Experience" heading
-• Degrees on separate lines
-• Institutions repeated
-• YEARS APPEAR BELOW SEPARATELY under SECURITY CONTESTS (IGNORE THESE)
-
------------------------------ PATTERN 6 STYLE -----------------------------
-• Mixed bullet format + duration in "from … to …" form  
-Example:
-Bachelor of Technology in CSE from 2014 to 2018 in Anurag University
-
------------------------------ ADDITIONAL REAL-WORLD PATTERNS SUPPORTED -----------------------------
-
-• Inline pattern:
-B.Tech (CSE), 2016–2020, JNTU
-
-• Table-like aligned entries:
-Course        Institute         Year     CGPA  
-B.Tech (CSE)  VIT Chennai       2020     8.7
-
-• Reversed format:
-University of Texas  
-BSc Computer Science  
-2015 – 2019
-
-• Specialization in brackets:
-B.Tech (Mechanical Engineering)
-
-• Percentage/CGPA anywhere:
-CGPA: 9.1/10  
-Scored 85%
-
-• School style:
-SSC – 2012 – Narayana School – 9.3 CGPA
-
-================================================================================
-OUTPUT FORMAT
-================================================================================
-
-Return a JSON object with this exact structure:
-{{
-  "education_entries": [
-    {{
-      "degree": "B.Tech",
-      "specialization": "Computer Science",
-      "institution": "XYZ University",
-      "start_year": 2018,
-      "end_year": 2022,
-      "percentage_or_cgpa": "8.5 CGPA",
-      "raw_text": "B.Tech in Computer Science from XYZ University, 2018-2022, CGPA: 8.5/10"
-    }},
-    {{
-      "degree": "SSC",
-      "specialization": null,
-      "institution": "ABC School",
-      "start_year": 2016,
-      "end_year": 2017,
-      "percentage_or_cgpa": "85%",
-      "raw_text": "SSC from ABC School, 2016-2017, 85%"
-    }}
-  ]
-}}
-
-IMPORTANT:
-- Return ALL education entries found, not just the highest
-- If a field is not found, use null (not empty string)
-- Years should be integers (YYYY format)
-- Return ONLY valid JSON, no markdown, no explanations
-- If no education found, return: {{"education_entries": []}}
-
-Resume text:
-{self.resume_text[:12000]}
-
-Return ONLY the JSON object:"""
-
-            response = self.ai_client.chat.completions.create(
-                model=self.ai_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=2000,
-                response_format={"type": "json_object"}  # Ensure JSON output
-            )
-            
-            response_content = response.choices[0].message.content.strip()
-            
-            # Try to parse JSON
-            try:
-                # Remove markdown code blocks if present
-                if response_content.startswith('```'):
-                    # Extract JSON from code block
-                    import re
-                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_content, re.DOTALL)
-                    if json_match:
-                        response_content = json_match.group(1)
-                
-                ai_result = json.loads(response_content)
-                education_entries = ai_result.get('education_entries', [])
-                
-                if not education_entries:
-                    logger.warning("AI returned empty education entries")
-                    return None
-                
-                logger.info(f"AI extracted {len(education_entries)} education entries")
-                return education_entries
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse AI JSON response: {e}")
-                logger.debug(f"Response content: {response_content[:500]}")
-                return None
-            
-        except Exception as e:
-            logger.error(f"AI education extraction failed: {e}")
-            return None
+        education_list = self.extract()
+        if education_list:
+            return education_list[0]  # Already sorted by priority
+        return None
     
     def _store_in_database(self, education: str, education_details: str):
         """
@@ -451,7 +238,6 @@ Return ONLY the JSON object:"""
         Extract only REAL degrees with full degree names and specializations.
         Ignores trainings, certifications, workshops.
         
-        Uses Python extraction first, then AI fallback if extraction is invalid.
         Optionally stores result in database.
         
         Returns:
@@ -477,28 +263,89 @@ Return ONLY the JSON object:"""
             # Extract education from this section
             education_lines = self.lines[section_start + 1:section_end]
             
-            # Common degree patterns (including space after period)
-            # Test pattern: should match "B. Tech", "B.Tech", "B Tech"
+            # Advanced degree patterns - handles various formats with/without spaces and periods
             degree_patterns = [
-                r'\bB\.?\s*Tech\b',
-                r'\bB\.?Tech\b',
-                r'\bB\.?E\.?\b',
-                r'\bBachelor of Technology\b',
-                r'\bBachelor of Engineering\b',
-                r'\b(M\.?\s*Tech|M\.?Tech|M\.?E\.?|Master of Technology|Master of Engineering)\b',
-                r'\b(B\.?\s*Sc\.?|B\.?Sc\.?|Bachelor of Science)\b',
-                r'\b(M\.?\s*Sc\.?|M\.?Sc\.?|Master of Science)\b',
-                r'\b(B\.?\s*Com\.?|B\.?Com\.?|Bachelor of Commerce)\b',
-                r'\b(M\.?\s*Com\.?|M\.?Com\.?|Master of Commerce)\b',
-                r'\b(B\.?\s*A\.?|B\.?A\.?|Bachelor of Arts)\b',
-                r'\b(M\.?\s*A\.?|M\.?A\.?|Master of Arts)\b',
-                r'\b(M\.?\s*C\.?\s*A\.?|M\.?C\.?A\.?|Master of Computer Applications)\b',
-                r'\b(B\.?\s*C\.?\s*A\.?|B\.?C\.?A\.?|Bachelor of Computer Applications)\b',
-                r'\b(M\.?\s*B\.?\s*A\.?|M\.?B\.?A\.?|Master of Business Administration)\b',
-                r'\b(B\.?\s*B\.?\s*A\.?|B\.?B\.?A\.?|Bachelor of Business Administration)\b',
-                r'\b(Ph\.?\s*D\.?|Ph\.?D\.?|Doctor of Philosophy)\b',
-                r'\b(Diploma)\b',
-                r'\b(P\.?\s*G\.?\s*D\.?\s*C\.?\s*A\.?|P\.?G\.?D\.?C\.?A\.?|Post Graduate Diploma)\b'
+                # Full form degrees with specialization (MUST BE FIRST - more specific patterns)
+                r'\bBachelor\s+of\s+[A-Za-z][A-Za-z\s&]+(?:Engineering|Science|Technology|Arts|Commerce|Applications|Administration|Studies)\b',
+                r'\bMaster\s+of\s+[A-Za-z][A-Za-z\s&]+(?:Engineering|Science|Technology|Arts|Commerce|Applications|Administration|Studies)\b',
+                r'\bBachelor\s+of\s+(?:Computer\s+Science|Electrical|Electronics|Mechanical|Civil|Information\s+Technology)\b',
+                r'\bMaster\s+of\s+(?:Computer\s+Science|Electrical|Electronics|Mechanical|Civil|Information\s+Technology)\b',
+                # Engineering Variants
+                r'\bB\s*\.?\s*Tech\b',
+                r'\bB\s*\.?\s*E\b',
+                r'\bM\s*\.?\s*Tech\b',
+                r'\bM\s*\.?\s*E\b',
+                # Full form engineering degrees
+                r'\bBachelor\s+of\s+Technology\b',
+                r'\bBachelor\s+of\s+Engineering\b',
+                r'\bMaster\s+of\s+Technology\b',
+                r'\bMaster\s+of\s+Engineering\b',
+                # Science degrees
+                r'\bB\s*\.?\s*Sc\b',
+                r'\bM\s*\.?\s*Sc\b',
+                r'\bBachelor\s+of\s+Science\b',
+                r'\bMaster\s+of\s+Science\b',
+                # Commerce degrees
+                r'\bB\s*\.?\s*Com\b',
+                r'\bM\s*\.?\s*Com\b',
+                r'\bBachelor\s+of\s+Commerce\b',
+                r'\bMaster\s+of\s+Commerce\b',
+                # Arts degrees
+                r'\bB\s*\.?\s*A\b',
+                r'\bM\s*\.?\s*A\b',
+                r'\bBachelor\s+of\s+Arts\b',
+                r'\bMaster\s+of\s+Arts\b',
+                # Computer applications
+                r'\bB\s*\.?\s*C\s*\.?\s*A\b',
+                r'\bM\s*\.?\s*C\s*\.?\s*A\b',
+                r'\bBachelor\s+of\s+Computer\s+Applications\b',
+                r'\bMaster\s+of\s+Computer\s+Applications\b',
+                # Management
+                r'\bM\s*\.?\s*B\s*\.?\s*A\b',
+                r'\bB\s*\.?\s*B\s*\.?\s*A\b',
+                r'\bMaster\s+of\s+Business\s+Administration\b',
+                r'\bBachelor\s+of\s+Business\s+Administration\b',
+                # Doctorate
+                r'\bP\s*\.?\s*h\s*\.?\s*D\b',
+                r'\bDoctor\s+of\s+Philosophy\b',
+                # Diploma Patterns
+                r'\bDiploma\s+in\s+[A-Za-z &]+\b',
+                r'\bPost\s+Graduate\s+Diploma\b',
+                r'\bPG\s*\.?\s*Diploma\b',
+                r'\bP\s*\.?\s*G\s*\.?\s*D\s*\.?\s*C\s*\.?\s*A\b',
+                r'\bPolytechnic\b',
+                # Schooling
+                r'\b10\+2\b',
+                r'\b12th\b',
+                r'\bHSC\b',
+                r'\bSSC\b',
+                r'\bSSLC\b',
+                r'\bCBSE\b',
+                r'\bICSE\b',
+                r'\bIntermediate\b',
+                # Abroad Boards
+                r'\bIGCSE\b',
+                r'\bA-Levels\b',
+                r'\bO-Levels\b',
+                # Generic catch-all
+                r'\bBachelor\b',
+                r'\bMaster\b',
+                r'\bDiploma\b',
+            ]
+            
+            # Specialization patterns for branch/major detection
+            specialization_patterns = [
+                r'\bCSE\b|Computer\s*Science',
+                r'\bECE\b|Electronics\s*and\s*Communication',
+                r'\bEEE\b|Electrical\s*and\s*Electronics',
+                r'\bME\b|Mechanical',
+                r'\bCE\b|Civil',
+                r'\bIT\b|Information\s*Technology',
+                r'\bAI\b|Artificial\s*Intelligence',
+                r'\bDS\b|Data\s*Science',
+                r'\bML\b|Machine\s*Learning',
+                r'\bCyber\b|Cyber\s*Security',
+                r'\bCloud\b|Cloud\s*Computing',
             ]
             
             current_degree = []
@@ -609,9 +456,10 @@ Return ONLY the JSON object:"""
             edu = re.sub(r'[,\s]+[A-Z][A-Za-z\s]*(?:University|College|Institute|School)[,\s]*.*$', '', edu, flags=re.IGNORECASE)
             edu = re.sub(r',\s*[A-Z][A-Za-z\s]*(?:University|College|Institute|School)[,\s]*.*', '', edu, flags=re.IGNORECASE)
             # Remove standalone university abbreviations like "JNTU" at the end
-            # But only if it's not part of a specialization (e.g., don't remove "Engineering" from "Civil Engineering")
-            # Only remove if it's a short acronym (2-6 letters) at the very end
-            edu = re.sub(r'\s+[A-Z]{2,6}\s*$', '', edu)  # Remove 2-6 letter acronyms at end
+            # But preserve "Bachelor of X" and "Master of X" patterns
+            # Only remove short acronyms (2-6 letters) that are NOT part of degree name
+            if not re.search(r'\b(?:Bachelor|Master)\s+of\s+', edu, re.IGNORECASE):
+                edu = re.sub(r'\s+[A-Z]{2,6}\s*$', '', edu)  # Remove 2-6 letter acronyms at end
             # Remove everything after "Career objectives" or similar sections
             edu = re.sub(r'\s+Career objectives.*$', '', edu, flags=re.IGNORECASE)
             edu = re.sub(r'\s+Objective.*$', '', edu, flags=re.IGNORECASE)
@@ -638,50 +486,10 @@ Return ONLY the JSON object:"""
             if edu and len(edu) > 3 and alnum_payload and edu not in cleaned:  # Filter out very short/punctuation artifacts
                 cleaned.append(edu)
         
-        # Step 2: Validate Python extraction
-        is_valid = self._is_extraction_valid(cleaned)
+        # Step 2: Sort by priority (highest education first)
+        cleaned = self._sort_by_priority(cleaned)
         
-        # Step 3: Use AI fallback if Python extraction is invalid
-        if not is_valid and self.use_ai_fallback:
-            logger.info("Python extraction invalid, trying AI fallback...")
-            ai_education_entries = self._extract_with_ai()
-            
-            if ai_education_entries and isinstance(ai_education_entries, list) and len(ai_education_entries) > 0:
-                # Convert AI structured entries to simple degree strings
-                ai_cleaned = []
-                for entry in ai_education_entries:
-                    if isinstance(entry, dict):
-                        degree = entry.get('degree', '')
-                        specialization = entry.get('specialization', '')
-                        
-                        # Build degree string
-                        if degree:
-                            degree_str = degree
-                            if specialization:
-                                degree_str = f"{degree} in {specialization}"
-                            elif 'in ' in entry.get('raw_text', ''):
-                                # Try to extract specialization from raw_text if not provided
-                                raw = entry.get('raw_text', '')
-                                if ' in ' in raw.lower():
-                                    parts = raw.split(' in ', 1)
-                                    if len(parts) > 1:
-                                        spec_part = parts[1].split(' from ')[0].split(',')[0].strip()
-                                        if spec_part and len(spec_part) < 50:  # Reasonable specialization length
-                                            degree_str = f"{degree} in {spec_part}"
-                            
-                            if degree_str not in ai_cleaned:
-                                ai_cleaned.append(degree_str)
-                
-                if ai_cleaned:
-                    # Replace cleaned list with AI results
-                    cleaned = ai_cleaned
-                    logger.info(f"Using AI-extracted education: {cleaned}")
-                else:
-                    logger.warning("AI extraction returned entries but couldn't parse degrees")
-            else:
-                logger.warning("AI extraction also failed or returned invalid result")
-        
-        # Step 4: Store in database if requested
+        # Step 3: Store in database if requested
         if self.store_in_db and cleaned:
             highest_degree = cleaned[0] if cleaned else None
             education_details = '\n'.join(cleaned) if cleaned else ''
@@ -692,7 +500,6 @@ Return ONLY the JSON object:"""
 
 def extract_education(
     resume_text: str, 
-    use_ai_fallback: bool = False, 
     store_in_db: bool = False, 
     candidate_id: Optional[int] = None
 ) -> List[str]:
@@ -701,7 +508,6 @@ def extract_education(
     
     Args:
         resume_text: The resume text to parse
-        use_ai_fallback: If True, use AI when Python extraction fails
         store_in_db: If True, store extracted education in database
         candidate_id: Candidate ID for database storage (required if store_in_db=True)
         
@@ -720,7 +526,6 @@ def extract_education(
     """
     extractor = EducationExtractor(
         resume_text, 
-        use_ai_fallback=use_ai_fallback,
         store_in_db=store_in_db,
         candidate_id=candidate_id
     )
@@ -753,21 +558,15 @@ if __name__ == "__main__":
     Python, Django, React, SQL, AWS, Docker
     """
     
-    # Using the class - Python extraction only (default, no AI)
+    # Using the class
     extractor = EducationExtractor(sample_resume)
     education = extractor.extract()
-    print("Using class (Python extraction only - default):")
+    print("Using class:")
     print(education)
     
-    # Using the class - with AI fallback (only if explicitly enabled)
-    extractor_with_ai = EducationExtractor(sample_resume, use_ai_fallback=True)
-    education_ai = extractor_with_ai.extract()
-    print("\nUsing class (with AI fallback - explicitly enabled):")
-    print(education_ai)
-    
-    # Using the convenience function (Python extraction only by default)
+    # Using the convenience function
     education2 = extract_education(sample_resume)
-    print("\nUsing function (Python extraction only - default):")
+    print("\nUsing function:")
     print(education2)
     
     # Example with database storage (requires candidate_id)

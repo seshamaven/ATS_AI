@@ -165,6 +165,7 @@ class PhoneExtractor:
         - Must have at least 6 digits
         - Must not exceed 15 digits (international standard)
         - Should not be all same digit (like 000000, 111111)
+        - Should not be concatenated years (like 200820122017)
         
         Args:
             phone_str: Normalized phone number string
@@ -179,7 +180,7 @@ class PhoneExtractor:
         digits = phone_str.replace('+', '')
         
         # Check length
-        if len(digits) < 6 or len(digits) > 15:
+        if len(digits) < 9 or len(digits) > 15:
             return False
         
         # Reject if all digits are the same (like 000000, 111111)
@@ -190,7 +191,53 @@ class PhoneExtractor:
         if digits in ['123456', '234567', '345678', '456789', '567890']:
             return False
         
+        # Reject concatenated years pattern (e.g., 200820122017, 201520182021)
+        # Years are typically 19xx or 20xx
+        if self._is_concatenated_years(digits):
+            return False
+        
         return True
+    
+    def _is_concatenated_years(self, digits: str) -> bool:
+        """
+        Check if the number looks like concatenated years.
+        
+        Examples of rejected patterns:
+        - 200820122017 (2008, 2012, 2017)
+        - 201520182021 (2015, 2018, 2021)
+        - 19952000 (1995, 2000)
+        
+        Args:
+            digits: String of digits only
+            
+        Returns:
+            True if looks like concatenated years, False otherwise
+        """
+        if len(digits) < 8:
+            return False
+        
+        # Check if string can be split into valid years (4 digits each starting with 19 or 20)
+        # Try to find year patterns
+        year_pattern = re.compile(r'(19\d{2}|20\d{2})')
+        years_found = year_pattern.findall(digits)
+        
+        # If we find 2+ years and they cover most of the string, it's likely concatenated years
+        if len(years_found) >= 2:
+            total_year_digits = len(years_found) * 4
+            # If years cover 80%+ of the digits, reject as concatenated years
+            if total_year_digits >= len(digits) * 0.8:
+                return True
+        
+        # Also check for exact matches of common concatenated year lengths
+        # 8 digits = 2 years, 12 digits = 3 years, 16 digits = 4 years
+        if len(digits) in [8, 12, 16]:
+            # Check if all 4-digit chunks are valid years
+            chunks = [digits[i:i+4] for i in range(0, len(digits), 4)]
+            valid_year_chunks = sum(1 for chunk in chunks if chunk.startswith(('19', '20')) and chunk.isdigit())
+            if valid_year_chunks == len(chunks):
+                return True
+        
+        return False
     
     def extract_phone_numbers_detailed(self, text: str) -> List[dict]:
         """

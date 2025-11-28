@@ -196,6 +196,18 @@ class PhoneExtractor:
         if self._is_concatenated_years(digits):
             return False
         
+        # Reject 9-digit numbers that look like profile/account IDs (not phone numbers)
+        # Valid 9-digit phone numbers typically start with specific patterns
+        # Profile IDs like "357756472" don't follow phone number patterns
+        if len(digits) == 9:
+            # US phone numbers (without country code) are 10 digits, not 9
+            # 9-digit numbers are likely IDs, not phone numbers
+            # Exception: some international formats might be 9 digits
+            # Check if it looks like a valid phone pattern (area code + number)
+            # Most valid 9-digit phones start with 2-9 (not 0 or 1)
+            if not digits[0] in '23456789':
+                return False
+        
         return True
     
     def _is_concatenated_years(self, digits: str) -> bool:

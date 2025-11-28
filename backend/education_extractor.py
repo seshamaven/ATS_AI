@@ -1,6 +1,14 @@
+"""
+Education Extractor for Resumes
+Keyword-Based Section Extraction approach
+Optimized for 180k+ resumes with various formats (PDF, DOCX, DOC)
+"""
+
+import os
 import re
 import logging
-from typing import List, Optional
+from typing import Optional, Dict, List, Tuple
+from dataclasses import dataclass
 
 # Database imports
 try:
@@ -11,169 +19,436 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ExtractionResult:
+    filename: str
+    education: Optional[str] = None  # Simple string like "BSC computers"
+    error: Optional[str] = None
+
+
 class EducationExtractor:
-    """
-    Standalone Education Extractor - Extracts only real degrees with full degree names and specializations.
-    Ignores trainings, certifications, workshops.
+    """Extract education information from resumes using keyword-based section extraction."""
     
-    Usage:
-        extractor = EducationExtractor(resume_text)
-        education_list = extractor.extract()
-    """
-    
-    # Valid education section headings
-    EDUCATION_HEADINGS = [
-        r'education', r'educational background', r'academics', r'qualification',
-        r'qualifications', r'academic details', r'academic summary',
-        r'scholastic profile', r'educational credentials', r'education summary',
-        r'education & training'
+    # Section start keywords (education section headers)
+    EDUCATION_HEADERS = [
+        r'\beducation\b',
+        r'\beducational\s*(background|details|qualification|qualifications)?\b',
+        r'\bacademic\s*(background|credentials|qualifications?)?\b',
+        r'\bscholastic\s*record\b',
+        r'\beducation\s*(&|and)\s*(training|certifications?)\b',
     ]
     
-    # Valid experience section headings (used to find section boundaries)
-    VALID_EXPERIENCE_HEADINGS = [
-        r'work experience', r'professional experience', r'experience', 
-        r'employment history', r'job history', r'internships', 
-        r'apprenticeship', r'freelance work', r'contract work'
+    # Section end keywords (next section headers)
+    SECTION_ENDS = [
+        r'\b(professional\s+)?experience\b',
+        r'\bwork\s*(history|experience)\b',
+        r'\bemployment\s*(history)?\b',
+        r'\bcareer\s*(experience|history)?\b',
+        r'\bskills?\b',
+        r'\btechnical\s+skills?\b',
+        r'\bcore\s+competenc(y|ies)\b',
+        r'\bprojects?\b',
+        r'\bcertification[s]?\b',
+        r'\bprofessional\s+summary\b',
+        r'\bsummary\b',
+        r'\bobjective\b',
+        r'\bachievements?\b',
+        r'\bawards?\b',
+        r'\bpublications?\b',
+        r'\breferences?\b',
+        r'\bpersonal\s*(details|information)?\b',
+        r'\bdeclaration\b',
+        r'\bvolunteer\b',
+        r'\bactivities\b',
+        r'\binterests?\b',
+        r'\blanguages?\b',
+        r'\baffiliations?\b',
+        r'\bwork\s+preferences\b',
+        r'\bprofile\s+sources\b',
+        r'\bcontact\s+information\b',
     ]
     
-    # Skills section headings (used to find section boundaries)
-    SKILLS_HEADINGS = [
-        r'skills', r'key skills', r'technical skills', r'technical skill', r'core skills', r'skill set',
-        r'technical expertise', r'technologies', r'programming languages', r'competencies', r'proficiencies'
+    # Degree patterns with hierarchy level (higher number = higher education)
+    # Level: PhD=7, Master=6, Bachelor=5, Associate=4, Diploma=3, Certificate=2, HighSchool=1
+    DEGREE_PATTERNS = [
+        # Doctorates (Level 7)
+        (r'\b(Ph\.?D\.?|Doctorate|Doctor\s+of\s+Philosophy)\b', 'PhD', 7),
+        # Masters (Level 6)
+        (r'\b(M\.?S\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Science)\b', 'M.S.', 6),
+        (r'\b(M\.?A\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Arts)\b', 'M.A.', 6),
+        (r'\b(M\.?B\.?A\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Business\s+Administration)\b', 'MBA', 6),
+        (r'\b(M\.?Tech\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Technolog?y?)\b', 'M.Tech', 6),
+        (r'\b(M\.?E\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Engineering)\b', 'M.E.', 6),
+        (r'\b(M\.?C\.?A\.?|Master\s*(?:\'?s)?\s*(?:of\s+)?Computer\s+Applications?)\b', 'MCA', 6),
+        (r'\bMaster(?:\'?s)?\s+(?:of\s+|in\s+)?(\w+(?:\s+\w+)*)', 'Master', 6),
+        # Bachelors (Level 5)
+        (r'\b(B\.?S\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Science)\b', 'B.S.', 5),
+        (r'\b(B\.?A\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Arts)\b', 'B.A.', 5),
+        (r'\b(B\.?Tech\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Technolog?y?)\b', 'B.Tech', 5),
+        (r'\b(B\.?E\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Engineering)\b', 'B.E.', 5),
+        (r'\b(B\.?C\.?A\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Computer\s+Applications?)\b', 'BCA', 5),
+        (r'\b(B\.?B\.?A\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Business\s+Administration)\b', 'BBA', 5),
+        (r'\b(B\.?Com\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Commerce)\b', 'B.Com', 5),
+        (r'\b(B\.?Sc\.?|Bachelor\s*(?:\'?s)?\s*(?:of\s+)?Science)\b', 'B.Sc', 5),
+        (r'\bBachelor(?:\'?s)?\s+(?:of\s+|in\s+)?(\w+(?:\s+\w+)*)', 'Bachelor', 5),
+        # Associates (Level 4)
+        (r'\b(A\.?S\.?|Associate\s*(?:\'?s)?\s*(?:of\s+)?Science)\b', 'A.S.', 4),
+        (r'\b(A\.?A\.?|Associate\s*(?:\'?s)?\s*(?:of\s+)?Arts)\b', 'A.A.', 4),
+        (r'\bAssociate(?:\'?s)?\s+(?:of\s+|in\s+)?(\w+(?:\s+\w+)*)', 'Associate', 4),
+        # Diploma (Level 3)
+        (r'\b(Diploma)\s+(?:in\s+)?(\w+(?:\s+\w+)*)', 'Diploma', 3),
+        (r'\b(Post\s+Graduate\s+Diploma|PG\s*Diploma|PGDCA)\b', 'PG Diploma', 3),
+        # Certificate (Level 2) - from colleges/institutions
+        (r'\b([\w\s]+Certification)\b', 'Certification', 2),
+        (r'\b(Certificate\s+in\s+[\w\s]+)\b', 'Certificate', 2),
+        # High School (Level 1)
+        (r'\b(High\s+School\s+Diploma|HSC|SSC|Intermediate|12th|10th)\b', 'High School', 1),
     ]
     
-    # Education priority order (lower number = higher priority)
-    EDUCATION_PRIORITY = {
-        # PhD / Doctorate - Highest (Priority 1)
-        'phd': 1, 'ph.d': 1, 'ph d': 1, 'doctorate': 1, 'doctor of philosophy': 1,
-        
-        # Master's (Priority 2)
-        'm.tech': 2, 'mtech': 2, 'm tech': 2, 'm.e': 2, 'me': 2,
-        'm.sc': 2, 'msc': 2, 'm sc': 2, 'm.a': 2, 'ma': 2,
-        'm.com': 2, 'mcom': 2, 'mba': 2, 'm.b.a': 2, 'mca': 2, 'm.c.a': 2,
-        'ms': 2, 'master': 2, 'master of technology': 2, 'master of engineering': 2,
-        'master of science': 2, 'master of arts': 2, 'master of commerce': 2,
-        'master of business administration': 2, 'master of computer applications': 2,
-        
-        # Bachelor's (Priority 3)
-        'b.tech': 3, 'btech': 3, 'b tech': 3, 'b.e': 3, 'be': 3,
-        'b.sc': 3, 'bsc': 3, 'b sc': 3, 'b.a': 3, 'ba': 3,
-        'b.com': 3, 'bcom': 3, 'bba': 3, 'b.b.a': 3, 'bca': 3, 'b.c.a': 3,
-        'bachelor': 3, 'bachelor of technology': 3, 'bachelor of engineering': 3,
-        'bachelor of science': 3, 'bachelor of arts': 3, 'bachelor of commerce': 3,
-        'bachelor of business administration': 3, 'bachelor of computer applications': 3,
-        'bachelor of computer science': 3, 'bachelor of electrical': 3, 'bachelor of electronics': 3,
-        'bachelor of mechanical': 3, 'bachelor of civil': 3, 'bachelor of information technology': 3,
-        
-        # Diploma / Polytechnic (Priority 4)
-        'diploma': 4, 'polytechnic': 4, 'pgdca': 4, 'pg diploma': 4,
-        'post graduate diploma': 4,
-        
-        # 12th / Intermediate (Priority 5)
-        '12th': 5, 'hsc': 5, 'intermediate': 5, '10+2': 5,
-        'a-levels': 5, 'a levels': 5, 'cbse 12': 5, 'icse 12': 5,
-        
-        # 10th / SSC - Lowest (Priority 6)
-        '10th': 6, 'ssc': 6, 'sslc': 6, 'cbse 10': 6, 'icse 10': 6,
-        'o-levels': 6, 'o levels': 6, 'igcse': 6,
+    # Degree level mapping for quick lookup
+    DEGREE_LEVELS = {
+        'PhD': 7, 'Doctorate': 7,
+        'M.S.': 6, 'M.A.': 6, 'MBA': 6, 'M.Tech': 6, 'M.E.': 6, 'MCA': 6, 'Master': 6,
+        'B.S.': 5, 'B.A.': 5, 'B.Tech': 5, 'B.E.': 5, 'BCA': 5, 'BBA': 5, 'B.Com': 5, 'B.Sc': 5, 'Bachelor': 5,
+        'A.S.': 4, 'A.A.': 4, 'Associate': 4,
+        'Diploma': 3, 'PG Diploma': 3,
+        'Certificate': 2, 'Certification': 2,
+        'High School': 1,
     }
     
-    def __init__(self, resume_text: str, store_in_db: bool = False, candidate_id: Optional[int] = None):
+    # Institution indicators
+    INSTITUTION_INDICATORS = [
+        r'\buniversity\b',
+        r'\bcollege\b',
+        r'\binstitute\b',
+        r'\bschool\b',
+        r'\bacademy\b',
+        r'\bpolytechnic\b',
+    ]
+    
+    # Year pattern
+    YEAR_PATTERN = r'\b(19|20)\d{2}\b'
+    
+    # GPA/CGPA patterns
+    GPA_PATTERNS = [
+        r'\b(GPA|CGPA|Grade)\s*[:\-]?\s*(\d+\.?\d*)\s*(?:/\s*\d+\.?\d*)?\b',
+        r'\b(\d+\.?\d*)\s*(?:/\s*\d+\.?\d*)?\s*(GPA|CGPA)\b',
+        r'\b(\d{1,2}(?:\.\d+)?)\s*%\b',
+    ]
+
+    def __init__(self, resume_text: str = None, store_in_db: bool = False, candidate_id: Optional[int] = None):
         """
-        Initialize the education extractor with resume text.
+        Initialize the education extractor.
         
         Args:
-            resume_text: The resume text to parse
+            resume_text: The resume text to parse (optional, can be set later)
             store_in_db: If True, store extracted education in database
             candidate_id: Candidate ID for database storage (required if store_in_db=True)
         """
         self.resume_text = resume_text
-        self.lines = [line.strip() for line in resume_text.split('\n') if line.strip()]
         self.store_in_db = store_in_db
         self.candidate_id = candidate_id
-    
-    def _is_extraction_valid(self, education_list: List[str]) -> bool:
-        """
-        Validate if Python extraction is correct.
         
-        Args:
-            education_list: List of extracted education degrees
-            
-        Returns:
-            True if extraction is valid, False otherwise
-        """
-        if not education_list:
-            logger.warning("Python extraction returned empty list")
-            return False
+        # Compile regex patterns for performance
+        self.edu_header_pattern = re.compile(
+            '|'.join(self.EDUCATION_HEADERS), 
+            re.IGNORECASE | re.MULTILINE
+        )
+        self.section_end_pattern = re.compile(
+            '|'.join(self.SECTION_ENDS), 
+            re.IGNORECASE | re.MULTILINE
+        )
+        self.year_pattern = re.compile(self.YEAR_PATTERN)
+        self.gpa_patterns = [re.compile(p, re.IGNORECASE) for p in self.GPA_PATTERNS]
+        self.degree_patterns = [(re.compile(p, re.IGNORECASE), name, level) for p, name, level in self.DEGREE_PATTERNS]
+        self.institution_pattern = re.compile(
+            '|'.join(self.INSTITUTION_INDICATORS), 
+            re.IGNORECASE
+        )
+
+    def find_education_section(self, text: str) -> Optional[str]:
+        """Find and extract the education section from resume text."""
+        if not text:
+            return None
         
-        # Check if any entry contains valid degree patterns
-        degree_patterns = [
-            r'\bB\.?\s*Tech\b', r'\bM\.?\s*Tech\b', r'\bB\.?E\.?\b', r'\bM\.?E\.?\b',
-            r'\bBachelor\b', r'\bMaster\b', r'\bB\.?\s*Sc\.?\b', r'\bM\.?\s*Sc\.?\b',
-            r'\bB\.?\s*Com\.?\b', r'\bM\.?\s*Com\.?\b', r'\bB\.?\s*A\.?\b', r'\bM\.?\s*A\.?\b',
-            r'\bM\.?\s*C\.?\s*A\.?\b', r'\bB\.?\s*C\.?\s*A\.?\b', r'\bM\.?\s*B\.?\s*A\.?\b',
-            r'\bB\.?\s*B\.?\s*A\.?\b', r'\bPh\.?\s*D\.?\b', r'\bDiploma\b', r'\bP\.?\s*G\.?\s*D\.?\s*C\.?\s*A\.?\b'
+        # Find education section start - look for standalone header
+        # Pattern for section header (usually on its own line or followed by newline)
+        # Also handles markdown headers (## Education)
+        header_patterns = [
+            r'(?:^|\n)\s*(?:#{1,3}\s*)?(EDUCATION|Education)\s*(?:\n|:|\s*$)',
+            r'(?:^|\n)\s*(?:#{1,3}\s*)?(EDUCATIONAL\s+(?:BACKGROUND|DETAILS|QUALIFICATIONS?))\s*(?:\n|:|\s*$)',
+            r'(?:^|\n)\s*(?:#{1,3}\s*)?(ACADEMIC\s+(?:BACKGROUND|CREDENTIALS|QUALIFICATIONS?))\s*(?:\n|:|\s*$)',
+            r'(?:^|\n)\s*(?:#{1,3}\s*)?(EDUCATION\s*(?:&|AND)\s*(?:TRAINING|CERTIFICATIONS?))\s*(?:\n|:|\s*$)',
         ]
         
-        for edu in education_list:
-            edu_lower = edu.lower()
-            # Check if it's too short (likely invalid)
-            if len(edu.strip()) < 5:
-                continue
+        match = None
+        for pattern in header_patterns:
+            m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+            if m:
+                match = m
+                break
+        
+        if not match:
+            # Fallback to simple search
+            match = self.edu_header_pattern.search(text)
+            if not match:
+                return None
+        
+        start_pos = match.start()
+        
+        # Find the next section header after education
+        # Look for uppercase headers or common section patterns
+        remaining_text = text[match.end():]
+        
+        # Patterns for next section (must be on new line, typically uppercase or title case)
+        # Also handles markdown headers (## Section)
+        next_section_patterns = [
+            r'\n\s*(?:#{1,3}\s*)?(EXPERIENCE|PROFESSIONAL\s+EXPERIENCE|WORK\s+EXPERIENCE|WORK\s+HISTORY|EMPLOYMENT)',
+            r'\n\s*(?:#{1,3}\s*)?(SKILLS|TECHNICAL\s+SKILLS|CORE\s+COMPETENCIES)',
+            r'\n\s*(?:#{1,3}\s*)?(PROJECTS?|CERTIFICATIONS?|CERTIFICATES?)',
+            r'\n\s*(?:#{1,3}\s*)?(PROFESSIONAL\s+SUMMARY|SUMMARY|OBJECTIVE|CAREER\s+OBJECTIVES?)',
+            r'\n\s*(?:#{1,3}\s*)?(ACHIEVEMENTS?|AWARDS?|PUBLICATIONS?)',
+            r'\n\s*(?:#{1,3}\s*)?(PERSONAL\s+(?:DETAILS|INFORMATION)|DECLARATION)',
+            r'\n\s*(?:#{1,3}\s*)?(REFERENCES?|VOLUNTEER|ACTIVITIES|INTERESTS?|LANGUAGES?)',
+            r'\n\s*(?:#{1,3}\s*)?(AFFILIATIONS?|WORK\s+PREFERENCES|PROFILE\s+SOURCES|CONTACT\s+INFORMATION)',
+            r'\n[A-Z][A-Z\s]{3,}(?:\n|:)',  # Any uppercase header
+        ]
+        
+        end_pos = None
+        for pattern in next_section_patterns:
+            end_match = re.search(pattern, remaining_text, re.IGNORECASE)
+            if end_match:
+                if end_pos is None or end_match.start() < end_pos:
+                    end_pos = end_match.start()
+        
+        if end_pos is not None:
+            end_pos = match.end() + end_pos
+        else:
+            # If no next section found, take next 1500 characters
+            end_pos = min(start_pos + 1500, len(text))
+        
+        education_section = text[start_pos:end_pos].strip()
+        
+        # Ensure we got meaningful content
+        if len(education_section) < 20:
+            return None
             
-            # Check if it contains a valid degree pattern
-            for pattern in degree_patterns:
-                if re.search(pattern, edu, re.IGNORECASE):
-                    logger.info(f"Python extraction validated: Found valid degree in '{edu}'")
-                    return True
+        return education_section
+
+    def extract_degrees(self, text: str) -> List[Tuple[str, int, str]]:
+        """Extract degree names from text with their levels and original text."""
+        degrees = []
         
-        logger.warning(f"Python extraction invalid: No valid degree patterns found in {education_list}")
-        return False
-    
-    def _get_education_priority(self, education: str) -> int:
-        """
-        Get priority rank for an education entry.
-        Lower number = higher priority (PhD=1, 10th=6).
-        
-        Args:
-            education: Education string to check
+        # Comprehensive degree patterns - covers US, UK, Indian formats
+        # Level: PhD=7, Master=6, Bachelor=5, Associate=4, Diploma=3, Certificate=2, HighSchool=1
+        full_degree_patterns = [
+            # ==================== PhD / Doctorate (Level 7) ====================
+            (r'\b(Ph\.?D\.?(?:\s+(?:in|of)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 7),
+            (r'\b(Doctorate\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 7),
+            (r'\b(Doctor\s+of\s+(?:Philosophy|Science|Engineering)[A-Za-z\s&/\-\.]*)', 7),
             
-        Returns:
-            Priority number (1-6), or 99 if not found
-        """
-        edu_lower = education.lower()
-        
-        # Check each priority keyword
-        for keyword, priority in self.EDUCATION_PRIORITY.items():
-            if keyword in edu_lower:
-                return priority
-        
-        return 99  # Unknown education type
-    
-    def _sort_by_priority(self, education_list: List[str]) -> List[str]:
-        """
-        Sort education list by priority (highest degree first).
-        
-        Args:
-            education_list: List of education strings
+            # ==================== Master's Degrees (Level 6) ====================
+            # Full form: Master's of/in X
+            (r"\b(Master(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 6),
+            (r'\b(Masters?\s+(?:of|in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 6),
+            (r"\b(Master(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 6),
+            # Abbreviations: M.S., M.A., MBA, MCA, M.Tech, M.E., M.Sc, M.Com
+            (r'\b(M\.?S\.?(?:c\.?)?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            (r'\b(M\.?A\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            (r'\b(M\.?B\.?A\.?|MBA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 6),
+            (r'\b(M\.?C\.?A\.?|MCA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 6),
+            (r'\b(M\.?\s*Tech\.?(?:nology)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            (r'\b(M\.?\s*E\.?(?:ng)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            (r'\b(M\.?Sc\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            (r'\b(M\.?Com\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
             
-        Returns:
-            Sorted list with highest education first
-        """
-        return sorted(education_list, key=lambda x: self._get_education_priority(x))
-    
-    def get_highest_education(self) -> Optional[str]:
-        """
-        Extract and return only the highest education degree.
+            # ==================== Bachelor's Degrees (Level 5) ====================
+            # Full form: Bachelor's of/in X
+            (r"\b(Bachelor(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 5),
+            (r'\b(Bachelors?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
+            (r"\b(Bachelor(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 5),
+            # B.Tech / B. Tech / BTech - with specialization (comma, in, from)
+            (r'\b(B\.?\s*[-]?\s*Tech\.?(?:nology)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
+            (r'\b(B\.?\s*[-]?\s*E\.?(?:ng)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
+            # B.S., B.A., BCA, BBA, B.Com, B.Sc
+            (r'\b(B\.?S\.?(?:c\.?)?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
+            (r'\b(B\.?A\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
+            (r'\b(B\.?C\.?A\.?|BCA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 5),
+            (r'\b(B\.?B\.?A\.?|BBA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 5),
+            (r'\b(B\.?Com\.?)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 5),
+            (r'\b(B\.?Sc\.?)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 5),
+            # BSC/BSc with specialization in parentheses - e.g., "BSC(MPCS)", "B.Sc(Computer Science)"
+            (r'\b(B\.?S\.?[Cc]\.?\s*\([A-Za-z\s,&]+\)(?:\s+from\s+[A-Z][A-Za-z\s]+)?)', 5),
+            (r'\b(BSC\s*\([A-Za-z\s,&]+\)(?:\s+from\s+[A-Z][A-Za-z\s]+)?)', 5),
+            # General Studies
+            (r'\b(General\s+Studies(?:\s+Degree)?)', 5),
+            
+            # ==================== Associate's Degrees (Level 4) ====================
+            (r"\b((?:Pursuing\s+)?Associate(?:['\u2019]?s)?\s+(?:of|in|Degree\s+in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 4),
+            (r"\b((?:Pursuing\s+)?Associate(?:['\u2019]?s)?\s+Degree[A-Za-z\s&/\-\.,]*)", 4),
+            (r'\b((?:Pursuing\s+)?Associates?\s+(?:of|in|Degree)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 4),
+            (r'\b(A\.?A\.?S\.?(?:\s+(?:in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 4),
+            (r'\b(A\.?S\.?(?:\s+(?:in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 4),
+            (r'\b(A\.?A\.?(?:\s+(?:in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 4),
+            
+            # ==================== Diploma (Level 3) ====================
+            (r'\b((?:Post[-\s]?Graduate\s+)?Diploma\s+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)', 3),
+            (r'\b(PG[-\s]?Diploma\s+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)', 3),
+            (r'\b(PGDCA|P\.G\.D\.C\.A\.?)', 3),
+            (r'\b(Polytechnic(?:\s+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 3),
+            
+            # ==================== Certificate (Level 2) ====================
+            # ONLY educational certificates, not professional certifications
+            (r'\b((?:Computer|Information)\s+(?:Systems?|Technology)\s+Certification)', 2),
+            (r'\b(Certificate\s+(?:in\s+)?(?:Computer|Information|Technology)[A-Za-z\s&/\-\.]+)', 2),
+            # ITIL and similar
+            (r'\b(ITIL(?:\s*V?[0-9]+)?(?:\s+Foundation|\s+Practitioner)?)', 2),
+            
+            # ==================== High School (Level 1) ====================
+            (r'\b(High\s+School\s+Diploma)', 1),
+            (r'\b(Intermediate(?:\s+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 1),
+            (r'\b(HSC|SSC|SSLC)\b', 1),
+            (r'\b(12th|10th)\s*(?:Standard|Class|Grade)?', 1),
+            (r'\b(Senior\s+Secondary|Higher\s+Secondary)', 1),
+            (r'\b(CBSE|ICSE|State\s+Board)\b', 1),
+        ]
         
-        Returns:
-            Highest education string, or None if not found
-        """
-        education_list = self.extract()
-        if education_list:
-            return education_list[0]  # Already sorted by priority
+        for pattern, level in full_degree_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if match and len(match.strip()) > 2:
+                    # Clean the extracted degree text
+                    clean_degree = match.strip()
+                    clean_degree = re.sub(r'\s+', ' ', clean_degree)  # normalize spaces
+                    
+                    # Truncate at common stop points
+                    # BUT keep "from" if it's part of the degree pattern (e.g., "B. Tech from JNTU")
+                    for stop in [' at ', ' - ', '\n', '|', '–', '—', ',  ', '  ']:
+                        if stop in clean_degree:
+                            clean_degree = clean_degree.split(stop)[0]
+                    
+                    # Only truncate at "from" if it's followed by common non-university words
+                    # Keep "from University/College/Institute" patterns
+                    if ' from ' in clean_degree.lower():
+                        parts = clean_degree.split(' from ', 1)
+                        if len(parts) == 2:
+                            after_from = parts[1].lower()
+                            # Keep if followed by university/college/institute names
+                            if not any(inst in after_from for inst in ['university', 'college', 'institute', 'school', 'academy', 'technological', 'jntu', 'iit', 'nit']):
+                                clean_degree = parts[0]
+                    
+                    clean_degree = clean_degree.rstrip('|–-,. ')
+                    
+                    # Skip if too short
+                    if len(clean_degree) < 3:
+                        continue
+                    
+                    # Limit length to avoid capturing too much text
+                    if len(clean_degree) > 80:
+                        clean_degree = clean_degree[:80].rsplit(' ', 1)[0]
+                    
+                    # Skip obvious false positives
+                    lower = clean_degree.lower()
+                    
+                    # Skip if starts with "as " or "be " (common false positives)
+                    if lower.startswith('as ') or lower.startswith('be '):
+                        # But allow legitimate degrees like "Associate" or "Bachelor"
+                        if not any(deg in lower for deg in ['associate', 'bachelor', 'master', 'b.s', 'b.a', 'm.s', 'm.a']):
+                            continue
+                    
+                    false_positives = [
+                        'systems and', 'teams and', 'programs and', 'items', 'problems', 
+                        'forms', 'terms', 'platforms', 'ms office', 'ms word', 'ms excel',
+                        'ms project', 'ms teams', 'ms dynamics', 'ms access', 'ms visio',
+                        'ms sql', 'ms azure', 'ms build', 'ms partner', 'ms ssis', 'ms vb',
+                        'ms. word', 'ms. excel', 'ms. powerpoint',
+                        'me to ', 'me learn', 'me know', 'me scope',
+                        'ba team', 'ba and scrum', 'ba developer', 'ma annual', 'ma 04', 
+                        'annual sales', 'scrum team', 'impediments', 'wordpress', 'html,',
+                        'national retail', 'blue print', 'contract',
+                        'qualifications profile', 'qualification profile',
+                        'international information systems security certification consortium',
+                    ]
+                    if any(fp in lower for fp in false_positives):
+                        continue
+                    
+                    # Must contain education-related words for short matches
+                    edu_words = ['science', 'arts', 'engineering', 'technology', 'technological', 'business', 
+                                 'computer', 'management', 'administration', 'commerce', 'education',
+                                 'psychology', 'nursing', 'economics', 'finance', 'accounting',
+                                 'mathematics', 'physics', 'chemistry', 'biology', 'history',
+                                 'literature', 'communication', 'information', 'electrical',
+                                 'mechanical', 'civil', 'degree', 'diploma', 'mba', 'bca', 'mca',
+                                 'b.tech', 'm.tech', 'b.e.', 'm.e.', 'b.sc', 'm.sc', 'b.com',
+                                 'health', 'human', 'performance', 'international', 'pursuing',
+                                 'university', 'college', 'institute', 'jawaharlal', 'nehru', 'jntu',
+                                 'svu', 'mpcs', 'mpc', 'bipc', 'cec', 'hec', 'intermediate', 'board',
+                                 'hsc', 'ssc', 'sslc', 'cbse', 'icse', '12th', '10th', 'secondary', 'standard']
+                    
+                    # For short matches or M.A./M.S./B.A./B.S. style, require edu words
+                    if len(clean_degree) < 25 or lower.startswith(('m.a', 'ma ', 'm.s', 'ms ', 'b.a', 'ba ', 'b.s', 'bs ', 'aas')):
+                        if not any(ew in lower for ew in edu_words):
+                            # Check if it's a clear degree pattern or school board
+                            if not re.match(r'^(master|bachelor|associate|diploma|phd|doctorate|pursuing|hsc|ssc|sslc|cbse|icse|12th|10th|intermediate)', lower):
+                                continue
+                    
+                    degrees.append((clean_degree, level, match))
+        
+        # Remove duplicates, keeping highest level
+        seen = {}
+        for name, level, original in degrees:
+            key = name[:30].lower()
+            if key not in seen or level > seen[key][1]:
+                seen[key] = (name, level, original)
+        
+        return [(name, level, orig) for name, level, orig in seen.values()]
+    
+    def get_highest_degree(self, degrees: List[Tuple[str, int, str]]) -> Tuple[Optional[str], int]:
+        """Get the highest degree from a list of (degree_name, level, original) tuples."""
+        if not degrees:
+            return None, 0
+        highest = max(degrees, key=lambda x: x[1])
+        return highest[0], highest[1]
+
+    def extract_institutions(self, text: str) -> List[str]:
+        """Extract institution names from text."""
+        institutions = []
+        lines = text.split('\n')
+        
+        for line in lines:
+            if self.institution_pattern.search(line):
+                # Clean up the line
+                clean_line = re.sub(r'[•\-–—|]', '', line).strip()
+                if clean_line and len(clean_line) > 5:
+                    institutions.append(clean_line[:100])  # Limit length
+        
+        return institutions[:5]  # Return max 5 institutions
+
+    def extract_years(self, text: str) -> List[str]:
+        """Extract years from text."""
+        # Find all 4-digit years
+        full_years = re.findall(r'\b((?:19|20)\d{2})\b', text)
+        valid_years = [y for y in full_years if 1950 <= int(y) <= 2030]
+        return list(set(valid_years))
+
+    def extract_gpa(self, text: str) -> Optional[str]:
+        """Extract GPA/CGPA from text."""
+        for pattern in self.gpa_patterns:
+            match = pattern.search(text)
+            if match:
+                return match.group(0)
         return None
-    
+
+    def get_highest_education_string(self, text: str) -> Optional[str]:
+        """Extract the highest education as a simple string."""
+        degrees = self.extract_degrees(text)
+        if not degrees:
+            return None
+        
+        # Get highest degree
+        highest = max(degrees, key=lambda x: x[1])
+        return highest[0]  # Return just the degree string
+
     def _store_in_database(self, education: str, education_details: str):
         """
         Store extracted education in database.
@@ -209,293 +484,50 @@ class EducationExtractor:
             
         except Exception as e:
             logger.error(f"Failed to store education in database: {e}")
-    
-    def find_section(self, headings: List[str]) -> Optional[int]:
-        """
-        Find the line index where a section starts.
-        
-        Args:
-            headings: List of heading patterns to search for
-            
-        Returns:
-            Line index where section starts, or None if not found
-        """
-        for i, line in enumerate(self.lines):
-            line_lower = line.lower().strip()
-            # Remove trailing colons, dashes, etc. for matching
-            line_clean = re.sub(r'[:–\-•\s]+$', '', line_lower)
-            for heading in headings:
-                # Check if line starts with heading or contains it as a major section header
-                # Section headers are usually standalone or at the start
-                heading_clean = heading.strip()
-                if re.search(rf'^{re.escape(heading_clean)}\b', line_clean, re.IGNORECASE) or \
-                   (len(line_clean.split()) <= 3 and heading_clean in line_clean):
-                    return i
-        return None
-    
+
     def extract(self) -> List[str]:
         """
-        Extract only REAL degrees with full degree names and specializations.
-        Ignores trainings, certifications, workshops.
-        
-        Optionally stores result in database.
+        Main extraction method - extracts education from resume text.
         
         Returns:
-            List of extracted education degrees (cleaned and deduplicated)
+            List of extracted education strings (highest first)
         """
-        # Step 1: Try Python extraction
-        education_list = []
-        section_start = self.find_section(self.EDUCATION_HEADINGS)
+        if not self.resume_text:
+            logger.warning("No resume text provided")
+            if self.store_in_db:
+                self._store_in_database('Unknown', '')
+            return []
         
-        if section_start is None:
-            logger.warning("No education section found in resume")
-        else:
-            # Find where education section ends (next major section or end of resume)
-            section_end = len(self.lines)
-            for i in range(section_start + 1, len(self.lines)):
-                line_lower = self.lines[i].lower()
-                # Check if it's another major section
-                if any(re.search(rf'^{re.escape(heading)}', line_lower, re.IGNORECASE) 
-                       for heading in self.VALID_EXPERIENCE_HEADINGS + self.SKILLS_HEADINGS):
-                    section_end = i
-                    break
-            
-            # Extract education from this section
-            education_lines = self.lines[section_start + 1:section_end]
-            
-            # Advanced degree patterns - handles various formats with/without spaces and periods
-            degree_patterns = [
-                # Full form degrees with specialization (MUST BE FIRST - more specific patterns)
-                r'\bBachelor\s+of\s+[A-Za-z][A-Za-z\s&]+(?:Engineering|Science|Technology|Arts|Commerce|Applications|Administration|Studies)\b',
-                r'\bMaster\s+of\s+[A-Za-z][A-Za-z\s&]+(?:Engineering|Science|Technology|Arts|Commerce|Applications|Administration|Studies)\b',
-                r'\bBachelor\s+of\s+(?:Computer\s+Science|Electrical|Electronics|Mechanical|Civil|Information\s+Technology)\b',
-                r'\bMaster\s+of\s+(?:Computer\s+Science|Electrical|Electronics|Mechanical|Civil|Information\s+Technology)\b',
-                # Engineering Variants
-                r'\bB\s*\.?\s*Tech\b',
-                r'\bB\s*\.?\s*E\b',
-                r'\bM\s*\.?\s*Tech\b',
-                r'\bM\s*\.?\s*E\b',
-                # Full form engineering degrees
-                r'\bBachelor\s+of\s+Technology\b',
-                r'\bBachelor\s+of\s+Engineering\b',
-                r'\bMaster\s+of\s+Technology\b',
-                r'\bMaster\s+of\s+Engineering\b',
-                # Science degrees
-                r'\bB\s*\.?\s*Sc\b',
-                r'\bM\s*\.?\s*Sc\b',
-                r'\bBachelor\s+of\s+Science\b',
-                r'\bMaster\s+of\s+Science\b',
-                # Commerce degrees
-                r'\bB\s*\.?\s*Com\b',
-                r'\bM\s*\.?\s*Com\b',
-                r'\bBachelor\s+of\s+Commerce\b',
-                r'\bMaster\s+of\s+Commerce\b',
-                # Arts degrees
-                r'\bB\s*\.?\s*A\b',
-                r'\bM\s*\.?\s*A\b',
-                r'\bBachelor\s+of\s+Arts\b',
-                r'\bMaster\s+of\s+Arts\b',
-                # Computer applications
-                r'\bB\s*\.?\s*C\s*\.?\s*A\b',
-                r'\bM\s*\.?\s*C\s*\.?\s*A\b',
-                r'\bBachelor\s+of\s+Computer\s+Applications\b',
-                r'\bMaster\s+of\s+Computer\s+Applications\b',
-                # Management
-                r'\bM\s*\.?\s*B\s*\.?\s*A\b',
-                r'\bB\s*\.?\s*B\s*\.?\s*A\b',
-                r'\bMaster\s+of\s+Business\s+Administration\b',
-                r'\bBachelor\s+of\s+Business\s+Administration\b',
-                # Doctorate
-                r'\bP\s*\.?\s*h\s*\.?\s*D\b',
-                r'\bDoctor\s+of\s+Philosophy\b',
-                # Diploma Patterns
-                r'\bDiploma\s+in\s+[A-Za-z &]+\b',
-                r'\bPost\s+Graduate\s+Diploma\b',
-                r'\bPG\s*\.?\s*Diploma\b',
-                r'\bP\s*\.?\s*G\s*\.?\s*D\s*\.?\s*C\s*\.?\s*A\b',
-                r'\bPolytechnic\b',
-                # Schooling
-                r'\b10\+2\b',
-                r'\b12th\b',
-                r'\bHSC\b',
-                r'\bSSC\b',
-                r'\bSSLC\b',
-                r'\bCBSE\b',
-                r'\bICSE\b',
-                r'\bIntermediate\b',
-                # Abroad Boards
-                r'\bIGCSE\b',
-                r'\bA-Levels\b',
-                r'\bO-Levels\b',
-                # Generic catch-all
-                r'\bBachelor\b',
-                r'\bMaster\b',
-                r'\bDiploma\b',
-            ]
-            
-            # Specialization patterns for branch/major detection
-            specialization_patterns = [
-                r'\bCSE\b|Computer\s*Science',
-                r'\bECE\b|Electronics\s*and\s*Communication',
-                r'\bEEE\b|Electrical\s*and\s*Electronics',
-                r'\bME\b|Mechanical',
-                r'\bCE\b|Civil',
-                r'\bIT\b|Information\s*Technology',
-                r'\bAI\b|Artificial\s*Intelligence',
-                r'\bDS\b|Data\s*Science',
-                r'\bML\b|Machine\s*Learning',
-                r'\bCyber\b|Cyber\s*Security',
-                r'\bCloud\b|Cloud\s*Computing',
-            ]
-            
-            current_degree = []
-            for line in education_lines:
-                # Skip empty lines
-                if not line:
-                    if current_degree:
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                        current_degree = []
-                    continue
-                
-                # Skip lines that are clearly section headers or non-degree content
-                line_lower = line.lower()
-                if any(word in line_lower for word in ['certification', 'training', 'workshop', 'course']) and not any(re.search(pattern, line, re.IGNORECASE) for pattern in degree_patterns):
-                    if current_degree:
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                        current_degree = []
-                    continue
-                
-                # Check if line contains a degree indicator
-                line_lower = line.lower()
-                if any(re.search(pattern, line, re.IGNORECASE) for pattern in degree_patterns):
-                    if current_degree:
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                    # Start new degree entry - include the full line to capture specialization
-                    # e.g., "BTech, Civil Engineering" should be captured as one entry
-                    current_degree = [line]
-                elif current_degree:
-                    # Continue building current degree entry (but stop at "Career objectives" or similar)
-                    # Check if this line looks like it's part of the degree (specialization, etc.)
-                    # or if it's a new section (CGPA, university name, etc.)
-                    line_lower = line.lower()
-                    
-                    # Stop if it's clearly a new section or metadata
-                    if any(word in line_lower for word in ['career objectives', 'objective', 'certification', 'work history', 'experience']):
-                        # Save current degree and stop
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                        current_degree = []
-                    # Stop if line contains CGPA/GPA/percentage (metadata, not part of degree name)
-                    elif re.search(r'\b(CGPA|GPA|percentage|%)\b', line_lower):
-                        # Save current degree before this metadata line
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                        current_degree = []
-                    # Stop if line looks like a university name (contains "University", "College", etc.)
-                    elif re.search(r'\b(University|College|Institute|School)\b', line, re.IGNORECASE):
-                        # Save current degree before university name
-                        degree_text = ' '.join(current_degree)
-                        if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                            education_list.append(degree_text.strip())
-                        current_degree = []
-                    # Otherwise, continue building (might be specialization on next line)
-                    else:
-                        # Only add if it looks like it could be part of the degree (short line, no numbers)
-                        # This handles cases like "Civil Engineering" on a separate line
-                        if len(line.split()) <= 5 and not re.search(r'\d', line):
-                            current_degree.append(line)
-                        else:
-                            # Save current degree and start fresh
-                            degree_text = ' '.join(current_degree)
-                            if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                                education_list.append(degree_text.strip())
-                            current_degree = []
-                elif len(line.split()) <= 15 and 'from' in line_lower:  # Potential degree line with "from"
-                    # Check if it contains a degree pattern
-                    if any(re.search(pattern, line, re.IGNORECASE) for pattern in degree_patterns):
-                        current_degree = [line]
-            
-            # Add last degree if exists
-            if current_degree:
-                degree_text = ' '.join(current_degree)
-                if any(re.search(pattern, degree_text, re.IGNORECASE) for pattern in degree_patterns):
-                    education_list.append(degree_text.strip())
+        # Find education section first
+        education_section = self.find_education_section(self.resume_text)
         
-        # Clean and deduplicate
-        cleaned = []
-        for edu in education_list:
-            # Remove years, percentages, GPAs, university names (keep only degree info)
-            # Remove year ranges
-            edu = re.sub(r'\d{4}[-–]\d{4}', '', edu)
-            # Remove standalone years
-            edu = re.sub(r'\b\d{4}\b', '', edu)
-            # Remove percentages
-            edu = re.sub(r'\d+\.?\d*%', '', edu)
-            # Remove GPA/CGPA with any trailing characters
-            edu = re.sub(r'GPA[:\s]*\d+\.?\d*[/]?\d*[^\w\s]*', '', edu, flags=re.IGNORECASE)
-            edu = re.sub(r'CGPA[:\s]*\d+\.?\d*[/]?\d*[^\w\s]*', '', edu, flags=re.IGNORECASE)
-            # Remove "from" and everything after it (university name, location, etc.)
-            # But keep the degree name before "from"
-            if ' from ' in edu.lower():
-                parts = re.split(r'\s+from\s+', edu, flags=re.IGNORECASE, maxsplit=1)
-                if parts:
-                    edu = parts[0].strip()
-            # Remove common university indicators (but keep if it's part of degree name)
-            # Match university names - look for institution names at the end
-            # Pattern: word(s) followed by University/College/Institute/School
-            # But be careful not to remove specialization fields (e.g., "Civil Engineering")
-            # Only remove if it's clearly a university name (contains "University", "College", etc.)
-            edu = re.sub(r'[,\s]+[A-Z][A-Za-z\s]*(?:University|College|Institute|School)[,\s]*.*$', '', edu, flags=re.IGNORECASE)
-            edu = re.sub(r',\s*[A-Z][A-Za-z\s]*(?:University|College|Institute|School)[,\s]*.*', '', edu, flags=re.IGNORECASE)
-            # Remove standalone university abbreviations like "JNTU" at the end
-            # But preserve "Bachelor of X" and "Master of X" patterns
-            # Only remove short acronyms (2-6 letters) that are NOT part of degree name
-            if not re.search(r'\b(?:Bachelor|Master)\s+of\s+', edu, re.IGNORECASE):
-                edu = re.sub(r'\s+[A-Z]{2,6}\s*$', '', edu)  # Remove 2-6 letter acronyms at end
-            # Remove everything after "Career objectives" or similar sections
-            edu = re.sub(r'\s+Career objectives.*$', '', edu, flags=re.IGNORECASE)
-            edu = re.sub(r'\s+Objective.*$', '', edu, flags=re.IGNORECASE)
-            # Clean up extra spaces
-            edu = ' '.join(edu.split()).strip()
-            # Fix missing spaces after commas (e.g., "BTech,CivilEngineering" -> "BTech, Civil Engineering")
-            # Apply multiple times to handle all commas
-            while re.search(r',([A-Za-z])', edu):
-                edu = re.sub(r',([A-Za-z])', r', \1', edu)  # Add space after comma if missing
-            # Remove trailing commas, dashes, and other punctuation (but keep periods that are part of abbreviations)
-            # IMPORTANT: Don't remove commas in the middle (e.g., "BTech, Civil Engineering" should keep the comma)
-            edu = re.sub(r'[,–\-]+$', '', edu).strip()  # Only remove trailing punctuation
-            # Remove standalone single letters at the end (often artifacts from GPA removal)
-            # But be careful not to remove letters that are part of abbreviations like "B.Tech"
-            edu = re.sub(r'\s+[A-Z]\s*$', '', edu)  # Only remove if it's a standalone word at the end
+        # Try to extract from education section first
+        education = None
+        if education_section:
+            education = self.get_highest_education_string(education_section)
+        
+        # Fallback to full text if no degree found in education section
+        if not education:
+            education = self.get_highest_education_string(self.resume_text)
+        
+        result = [education] if education else []
+        
+        # Store in database if requested
+        if self.store_in_db:
+            highest = result[0] if result else 'Unknown'
+            self._store_in_database(highest, '\n'.join(result))
+        
+        return result
 
-            # Strip any lingering leading/trailing punctuation characters (., *, -, etc.)
-            edu = re.sub(r'^[\W_]+', '', edu)
-            edu = re.sub(r'[\W_]+$', '', edu)
-
-            # Skip entries that are effectively empty or purely punctuation after cleaning
-            alnum_payload = re.sub(r'[^A-Za-z0-9]+', '', edu)
-
-            if edu and len(edu) > 3 and alnum_payload and edu not in cleaned:  # Filter out very short/punctuation artifacts
-                cleaned.append(edu)
+    def get_highest_education(self) -> Optional[str]:
+        """
+        Extract and return only the highest education degree.
         
-        # Step 2: Sort by priority (highest education first)
-        cleaned = self._sort_by_priority(cleaned)
-        
-        # Step 3: Store in database if requested
-        if self.store_in_db and cleaned:
-            highest_degree = cleaned[0] if cleaned else None
-            education_details = '\n'.join(cleaned) if cleaned else ''
-            self._store_in_database(highest_degree, education_details)
-        
-        return cleaned
+        Returns:
+            Highest education string, or None if not found
+        """
+        result = self.extract()
+        return result[0] if result else None
 
 
 def extract_education(
@@ -542,7 +574,7 @@ if __name__ == "__main__":
     Experienced software developer with 5 years of experience...
     
     EDUCATION
-    B.Tech 
+    B.Tech in Computer Science
     XYZ University, 2018-2022
     CGPA: 8.5/10
     
@@ -569,6 +601,6 @@ if __name__ == "__main__":
     print("\nUsing function:")
     print(education2)
     
-    # Example with database storage (requires candidate_id)
-    # education3 = extract_education(sample_resume, store_in_db=True, candidate_id=1)
-
+    # Get highest education only
+    highest = extractor.get_highest_education()
+    print(f"\nHighest education: {highest}")

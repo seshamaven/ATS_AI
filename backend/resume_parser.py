@@ -47,7 +47,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-from profile_type_utils import determine_primary_profile_type, determine_profile_types_enhanced, format_profile_types_for_storage
+from profile_type_utils import determine_primary_profile_type, determine_profile_types_enhanced, format_profile_types_for_storage, get_all_profile_type_scores
 from phone_extractor import extract_phone_numbers
 from location_identifier import extract_location as extract_location_advanced
 from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
@@ -1453,6 +1453,27 @@ Resume Text (look for name in FIRST FEW LINES):
             )
             profile_type = format_profile_types_for_storage(profile_types)
             
+            # Calculate sub_profile_type from second highest score
+            sub_profile_type = None
+            try:
+                profile_scores = get_all_profile_type_scores(
+                    primary_skills=primary_skills,
+                    secondary_skills=secondary_skills_str,
+                    resume_text=resume_text
+                )
+                if profile_scores:
+                    # Sort profile types by score (descending)
+                    sorted_profiles = sorted(profile_scores.items(), key=lambda x: x[1], reverse=True)
+                    # Filter out zero scores
+                    non_zero_profiles = [(pt, score) for pt, score in sorted_profiles if score > 0]
+                    
+                    if len(non_zero_profiles) >= 2:
+                        # Get second highest profile type
+                        sub_profile_type = non_zero_profiles[1][0]
+                        logger.info(f"Set sub_profile_type to second highest score: {sub_profile_type} (score: {non_zero_profiles[1][1]})")
+            except Exception as e:
+                logger.warning(f"Failed to calculate sub_profile_type: {e}")
+            
             # Prepare parsed data
             parsed_data = {
                 'name': name,
@@ -1475,7 +1496,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 'file_type': file_type,
                 'file_size_kb': int(file_size_kb),
                 'ai_extraction_used': ai_data is not None,
-                'profile_type': profile_type
+                'profile_type': profile_type,
+                'sub_profile_type': sub_profile_type
             }
             
             logger.info(f"Successfully parsed resume for: {name}")

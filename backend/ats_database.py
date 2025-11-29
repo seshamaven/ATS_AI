@@ -79,6 +79,7 @@ class ATSDatabase:
                 INSERT INTO resume_metadata (
                     name, email, phone,
                     total_experience, primary_skills, secondary_skills, all_skills, profile_type,
+                    role_type, subrole_type, sub_profile_type,
                     domain, sub_domain,
                     education, education_details,
                     current_location, preferred_locations,
@@ -90,6 +91,7 @@ class ATSDatabase:
                 ) VALUES (
                     %(name)s, %(email)s, %(phone)s,
                     %(total_experience)s, %(primary_skills)s, %(secondary_skills)s, %(all_skills)s, %(profile_type)s,
+                    %(role_type)s, %(subrole_type)s, %(sub_profile_type)s,
                     %(domain)s, %(sub_domain)s,
                     %(education)s, %(education_details)s,
                     %(current_location)s, %(preferred_locations)s,
@@ -123,6 +125,9 @@ class ATSDatabase:
                 'secondary_skills': resume_data.get('secondary_skills'),
                 'all_skills': resume_data.get('all_skills'),
                 'profile_type': profile_type_final,
+                'role_type': (resume_data.get('role_type') or '')[:100],
+                'subrole_type': (resume_data.get('subrole_type') or '')[:100],
+                'sub_profile_type': (resume_data.get('sub_profile_type') or '')[:100],
                 'domain': (resume_data.get('domain') or '')[:255],
                 'sub_domain': (resume_data.get('sub_domain') or '')[:255],
                 'education': (resume_data.get('education') or '')[:500],

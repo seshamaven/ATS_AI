@@ -622,6 +622,19 @@ def process_resume_base64():
                 if not candidate_id:
                     return jsonify({'error': 'Failed to store resume in database'}), 500
 
+                # Calculate and store profile scores
+                try:
+                    from profile_type_utils import get_all_profile_type_scores
+                    profile_scores = get_all_profile_type_scores(
+                        primary_skills=parsed_data.get('primary_skills', ''),
+                        secondary_skills=parsed_data.get('secondary_skills', ''),
+                        resume_text=parsed_data.get('resume_text', '')
+                    )
+                    db.insert_or_update_profile_scores(candidate_id, profile_scores)
+                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
+                except Exception as e:
+                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
+
             # Index in Pinecone if enabled
             pinecone_indexed = False
             if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
@@ -1118,903 +1131,1066 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
 @app.route('/api/searchResumes', methods=['POST'])
 def search_resumes():
     """
-    Hybrid Boolean + Semantic Resume Search using Pinecone.
+    AI Search with Role + Skill + Profile Type logic.
     
-    The system allows searching by any text (e.g., location, candidate name, skills, 
-    or keywords found in resumes) and retrieves related candidates using Pinecone's 
-    vector similarity search.
+    Requirements:
+    1. Role + skill query ("java developer"):
+       - Extract profile_type and sub_role_type from query
+       - Derive role_type from sub_role_type
+       - Filter by role_type AND profile_type
     
-    Search Coverage:
-    - Semantic Search: Searches full resume text content via embeddings (understands meaning)
-    - Boolean Filtering: Searches metadata fields (skills, location, name, company, domain, education, summary)
+    2. Skill-only query ("ASP.NET"):
+       - Extract profile_type from skill (using profile_type_utils)
+       - Infer sub_role_type from profile_type
+       - Derive role_type from sub_role_type
+       - Filter by role_type AND profile_type (or profile_type only as fallback)
     
-    Query Types Supported:
-    - Simple queries: "python", "Bangalore", "John Doe"
-    - Boolean queries: "python AND java", "Bangalore AND AWS"
-    - Complex queries: ("Product Owner" OR "Product Manager") AND "Business" AND "Analyst"
-    - Location queries: "Portland" OR "Oregon" (searches current_location field)
-    - Name queries: "John Smith" (searches name field)
-    - Skill queries: "Python" AND "Django" (searches primary_skills, secondary_skills)
-    - Company queries: "Microsoft" OR "Google" (searches current_company field)
+    3. Name search ("sesha"):
+       - Fuzzy match on LOWER(name) LIKE '%search_term%'
     
-    Accepts: JSON with query text and optional filters
-    Returns: JSON with matching resumes and scores
+    4. Multi-skill AND logic:
+       - All detected skill scores > 0 (AND condition)
+    
+    5. Input validation:
+       - Require at least one role OR one skill (not both)
+    
+    Input: {"query": "<search_text>", "limit": 50}
+    Output: JSON with matching candidates
     """
     try:
-        # Validate request
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
-        data = request.get_json()
-        if 'query' not in data:
-            return jsonify({'error': 'Missing query field'}), 400
+        data = request.get_json() or {}
+        query = (data.get('query') or '').strip()
         
-        user_query = data['query'].strip()
-        if not user_query:
+        if not query:
             return jsonify({'error': 'Query cannot be empty'}), 400
         
-        # Optional parameters
-        filters = data.get('filters', {})
-        top_k = data.get('top_k', 10)
-        use_boolean_search = data.get('use_boolean_search', True)  # Enable Boolean by default
-        use_llm_refinement = data.get('use_llm_refinement', False)
-        llm_window = data.get('llm_window_size', LLM_REFINEMENT_WINDOW)
-        
-        logger.info(f"Processing hybrid search query: {user_query}")
-        logger.info(f"Applied filters: {filters}")
-        logger.info(f"Boolean search enabled: {use_boolean_search}")
-        
-        # Start timing for performance monitoring
+        # Get limit - if not provided, return all results (None = no limit)
+        limit_param = data.get('limit')
+        limit = int(limit_param) if limit_param is not None else None
+        use_semantic = data.get('use_semantic', True)  # Enable semantic search by default
+        use_boolean = data.get('use_boolean', True)  # Enable Boolean filter by default
+        logger.info(f"Processing /api/searchResumes query: {query}, use_semantic: {use_semantic}, use_boolean: {use_boolean}")
         start_time = time.time()
         
-        # Check if Pinecone is enabled
-        if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
-            return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
+        # === STEP 1: Name Detection ===
+        if looks_like_name(query):
+            logger.info(f"Detected name search for: {query}")
+            with create_ats_database() as db:
+                sql = """
+                    SELECT 
+                        rm.candidate_id,
+                        rm.name,
+                        rm.email,
+                        rm.phone,
+                        rm.total_experience,
+                        rm.primary_skills,
+                        rm.secondary_skills,
+                        rm.all_skills,
+                        rm.profile_type,
+                        rm.role_type,
+                        rm.subrole_type,
+                        rm.sub_profile_type,
+                        rm.current_designation,
+                        rm.current_location,
+                        rm.current_company,
+                        rm.domain,
+                        rm.education,
+                        rm.resume_summary,
+                        rm.created_at
+                    FROM resume_metadata rm
+                    WHERE rm.status = 'active'
+                      AND LOWER(rm.name) LIKE %s
+                    ORDER BY rm.total_experience DESC
+                    LIMIT %s
+                """
+                db.cursor.execute(sql, (f"%{query.lower()}%", limit))
+                results = db.cursor.fetchall()
+                
+                candidates = []
+                for r in results:
+                    candidates.append({
+                        'candidate_id': r['candidate_id'],
+                        'name': r['name'],
+                        'email': r.get('email', ''),
+                        'phone': r.get('phone', ''),
+                        'total_experience': r.get('total_experience', 0),
+                        'primary_skills': r.get('primary_skills', ''),
+                        'secondary_skills': r.get('secondary_skills', ''),
+                        'all_skills': r.get('all_skills', ''),
+                        'profile_type': r.get('profile_type', ''),
+                        'role_type': r.get('role_type', ''),
+                        'subrole_type': r.get('subrole_type', ''),
+                        'sub_profile_type': r.get('sub_profile_type', ''),
+                        'current_designation': r.get('current_designation', ''),
+                        'current_location': r.get('current_location', ''),
+                        'current_company': r.get('current_company', ''),
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
+                    })
+                
+                return jsonify({
+                    'query': query,
+                    'search_type': 'name_search',
+                    'analysis': {'detected_as': 'name'},
+                    'count': len(candidates),
+                    'results': candidates,
+                    'processing_time_ms': int((time.time() - start_time) * 1000),
+                    'timestamp': datetime.now().isoformat()
+                }), 200
         
-        # Initialize Pinecone manager
-        from enhanced_pinecone_manager import EnhancedPineconeManager
-        pinecone_manager = EnhancedPineconeManager(
-            api_key=ATSConfig.PINECONE_API_KEY,
-            index_name=ATSConfig.PINECONE_INDEX_NAME,
-            dimension=ATSConfig.EMBEDDING_DIMENSION
-        )
-        pinecone_manager.get_or_create_index()
+        # === STEP 2: Role Detection ===
+        role_info = detect_subrole_from_query(query)
+        detected_subrole = role_info['sub_role'] if role_info else None
+        detected_main_role = role_info['main_role'] if role_info else None
+        detected_profile_type_from_role = role_info['profile_type'] if role_info else None
         
-        # === Step 1: Parse Boolean Query (if enabled) ===
-        parsed_query = None
-        if use_boolean_search:
-            # Check for explicit boolean operators (AND, OR, parentheses)
-            if ' AND ' in user_query.upper() or ' OR ' in user_query.upper() or '(' in user_query:
-                parsed_query = parse_boolean_query(user_query)
-                logger.info(f"Parsed Boolean query: {parsed_query}")
-            # Check for comma-separated values (treat as AND conditions)
-            elif ',' in user_query:
-                parsed_query = parse_comma_separated_query(user_query)
-                logger.info(f"Parsed comma-separated query: {parsed_query}")
-            else:
-                # Simple query - treat as single term
-                parsed_query = {'and_terms': [[user_query]]}
-                logger.info(f"Simple query detected, treating as single term")
-        else:
-            # Boolean search disabled - treat as single term
-            parsed_query = {'and_terms': [[user_query]]}
-            logger.info(f"Boolean search disabled, treating as single term")
+        # === STEP 3: Skill Extraction ===
+        detected_skills = extract_master_skills(query)
+        skill_score_columns = [s['score_column'] for s in detected_skills]
+        skill_profile_types = [s['profile_type'] for s in detected_skills]
+        first_skill_profile_type = skill_profile_types[0] if skill_profile_types else None
         
-        # === Step 2: Generate Embedding Once ===
-        query_embedding = embedding_service.generate_embedding(user_query)
+        # === STEP 4: Profile Type Detection (for skill-only queries) ===
+        if not detected_profile_type_from_role and first_skill_profile_type:
+            # Use profile_type from first skill
+            detected_profile_type_from_role = first_skill_profile_type
+            # Infer sub-role from profile_type
+            if not detected_subrole:
+                inferred_role_info = infer_subrole_from_profile_type(first_skill_profile_type)
+                if inferred_role_info:
+                    detected_subrole = inferred_role_info['sub_role']
+                    detected_main_role = inferred_role_info['main_role']
         
-        # === Layer 1: SQL metadata filtering ===
-        structured_filters = build_structured_filters(filters, user_query)
-        sql_limit = data.get('sql_limit', SQL_LAYER_LIMIT)
+        # === STEP 5: Input Validation ===
+        if not detected_subrole and not detected_skills:
+            return jsonify({
+                'error': 'Please refine the search and include at least one role or one skill.'
+            }), 400
+        
+        # === STEP 6: Build SQL Query ===
+        where_clauses = ["rm.status = 'active'"]
+        params = []
+        
+        # Role filter (only role_type)
+        if detected_main_role:
+            where_clauses.append("rm.role_type = %s")
+            params.append(detected_main_role)
+        
+        # Profile Type filter
+        profile_type_filters = []
+        if detected_profile_type_from_role:
+            profile_type_filters.append("rm.profile_type LIKE %s")
+            params.append(f"%{detected_profile_type_from_role}%")
+        # Also add profile types from skills
+        for pt in skill_profile_types:
+            if pt not in [detected_profile_type_from_role] if detected_profile_type_from_role else []:
+                profile_type_filters.append("rm.profile_type LIKE %s")
+                params.append(f"%{pt}%")
+        
+        if profile_type_filters:
+            where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
+        
+        # Multi-skill AND filter (all scores > 0) - Only apply when multiple skills detected
+        if skill_score_columns and len(detected_skills) > 1:
+            # Need to join with candidate_profile_scores
+            for col in skill_score_columns:
+                where_clauses.append(f"cps.{col} > 0")
+        
+        # Build final SQL
+        join_clause = ""
+        if skill_score_columns and len(detected_skills) > 1:
+            join_clause = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+        
+        # Conditionally add LIMIT clause
+        limit_clause = "LIMIT %s" if limit is not None else ""
+        
+        sql = f"""
+            SELECT 
+                rm.candidate_id,
+                rm.name,
+                rm.email,
+                rm.phone,
+                rm.total_experience,
+                rm.primary_skills,
+                rm.secondary_skills,
+                rm.all_skills,
+                rm.profile_type,
+                rm.role_type,
+                rm.subrole_type,
+                rm.sub_profile_type,
+                rm.current_designation,
+                rm.current_location,
+                rm.current_company,
+                rm.domain,
+                rm.education,
+                rm.resume_summary,
+                rm.created_at
+            FROM resume_metadata rm
+            {join_clause}
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY rm.total_experience DESC
+            {limit_clause}
+        """
+        if limit is not None:
+            params.append(limit)
+        
+        # === STEP 7: Execute SQL Query ===
         with create_ats_database() as db:
-            sql_candidates = db.filter_candidates(structured_filters, limit=sql_limit)
-        
-        if not sql_candidates:
-            # SQL returned 0 results - run two-step search directly (skip Pinecone)
-            logger.info(f"SQL filter returned 0 results, running two-step search directly...")
+            db.cursor.execute(sql, params)
+            results = db.cursor.fetchall()
             
-            # Mapping from query to score column
-            query_to_score_column = {
-                "java": "java_score",
-                ".net": "dotnet_score",
-                "dotnet": "dotnet_score",
-                "python": "python_score",
-                "javascript": "javascript_score",
-                "js": "javascript_score",
-                "full stack": "fullstack_score",
-                "fullstack": "fullstack_score",
-                "devops": "devops_score",
-                "data engineering": "data_engineering_score",
-                "data science": "data_science_score",
-                "testing": "testing_qa_score",
-                "qa": "testing_qa_score",
-                "sap": "sap_score",
-                "erp": "erp_score",
-                "cloud": "cloud_infra_score",
-                "infra": "cloud_infra_score",
-                "bi": "business_intelligence_score",
-                "business intelligence": "business_intelligence_score",
-                "power platform": "microsoft_power_platform_score",
-                "rpa": "rpa_score",
-                "cyber security": "cyber_security_score",
-                "security": "cyber_security_score",
-                "mobile": "mobile_development_score",
-                "salesforce": "salesforce_score",
-                "low code": "low_code_no_code_score",
-                "no code": "low_code_no_code_score",
-                "database": "database_score",
-                "sql": "database_score",
-                "integration": "integration_apis_score",
-                "api": "integration_apis_score",
-                "ui/ux": "ui_ux_score",
-                "ux": "ui_ux_score",
-                "support": "support_score",
-                "business development": "business_development_score",
-            }
-            
-            # Determine score column based on query
-            query_lower = user_query.lower()
-            score_column = "python_score"  # Default
-            for key, col in query_to_score_column.items():
-                if key in query_lower or query_lower in key:
-                    score_column = col
-                    break
-            
-            logger.info(f"Two-step search using score column: {score_column}")
-            
-            two_step_results = []
-            two_step_stats = {'step1_count': 0, 'step2_count': 0}
-            
-            with create_ats_database() as db:
-                # Step 1: Search by skill only
-                step1_results = db.search_by_skill(user_query, limit=100)
-                two_step_stats['step1_count'] = len(step1_results)
-                logger.info(f"Two-step Step 1: Found {len(step1_results)} candidates")
-                
-                # Step 2: Search by score
-                step2_results = db.search_by_skill_with_score(user_query, score_column=score_column, limit=100)
-                two_step_stats['step2_count'] = len(step2_results)
-                logger.info(f"Two-step Step 2: Found {len(step2_results)} candidates")
-                
-                # Helper function to build candidate object
-                def build_candidate_obj(r, match_score, search_source):
-                    cid = r['candidate_id']
-                    metadata = {
-                        'candidate_id': cid,
-                        'name': r.get('name', ''),
-                        'email': r.get('email', ''),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'secondary_skills': r.get('secondary_skills', ''),
-                        'all_skills': r.get('all_skills', '') or r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'total_experience': r.get('total_experience', 0),
-                        'current_designation': r.get('current_designation', '') or 'Unknown',
-                        'current_location': r.get('current_location', '') or 'Unknown',
-                        'current_company': r.get('current_company', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'resume_summary': r.get('resume_summary', ''),
-                        'created_at': str(r.get('created_at', '')),
-                        'source': search_source
-                    }
-                    return {
-                        'candidate_id': cid,
-                        'name': r.get('name', ''),
-                        'email': r.get('email', ''),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'total_experience': r.get('total_experience', 0),
-                        'current_designation': r.get('current_designation', ''),
-                        'current_location': r.get('current_location', ''),
-                        'current_company': r.get('current_company', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'resume_summary': r.get('resume_summary', ''),
-                        'match_score': round(match_score, 3),
-                        'layer_scores': {'vector': None},
-                        'metadata': metadata
-                    }
-                
-                # Merge results (deduplicate)
-                seen_ids = set()
-                
-                # Add Step 1 results
-                for r in step1_results:
-                    cid = r['candidate_id']
-                    if cid not in seen_ids:
-                        seen_ids.add(cid)
-                        two_step_results.append(build_candidate_obj(r, 0.5, 'two_step_primary'))
-                
-                # Add Step 2 results
-                for r in step2_results:
-                    cid = r['candidate_id']
-                    if cid not in seen_ids:
-                        seen_ids.add(cid)
-                        skill_score = r.get('skill_match_score', 0)
-                        match_score = min(0.8, (skill_score / 100)) if skill_score else 0.4
-                        two_step_results.append(build_candidate_obj(r, match_score, 'two_step_fallback'))
-            
-            # Sort by match_score DESC
-            two_step_results.sort(key=lambda x: (x.get('match_score', 0), x.get('total_experience', 0)), reverse=True)
-            
-            return jsonify({
-                'message': f'Found {len(two_step_results)} candidates via two-step search (SQL filter returned 0)',
-                'query': user_query,
-                'search_results': two_step_results,
-                'total_matches': len(two_step_results),
-                'layer_counts': {
-                    'sql_filtered': 0,
-                    'vector_considered': 0,
-                    'boolean_passed': 0,
-                    'llm_evaluated': 0,
-                    'two_step_step1': two_step_stats['step1_count'],
-                    'two_step_step2': two_step_stats['step2_count'],
-                    'two_step_new': len(two_step_results)
-                },
-                'profile_type_filter': structured_filters.get('profile_type'),
-                'two_step_search_applied': True,
-                'processing_time_ms': int((time.time() - start_time) * 1000),
-                'timestamp': datetime.now().isoformat()
-            }), 200
-        
-        candidate_map = {
-            record['candidate_id']: record
-            for record in sql_candidates
-            if record.get('candidate_id') is not None
-        }
-        candidate_ids = list(candidate_map.keys())
-        if not candidate_ids:
-            return jsonify({
-                'message': 'No matching resumes found after SQL filtering',
-                'query': user_query,
-                'search_results': [],
-                'total_matches': 0,
-                'layer_counts': {
-                    'sql_filtered': 0,
-                    'vector_considered': 0,
-                    'boolean_passed': 0,
-                    'llm_evaluated': 0
-                },
-                'profile_type_filter': structured_filters.get('profile_type'),
-                'processing_time_ms': int((time.time() - start_time) * 1000),
-                'timestamp': datetime.now().isoformat()
-            }), 200
-        
-        # === Layer 2: Vector search constrained to SQL subset ===
-        layer2_matches = {}
-        chunk_size = int(data.get('vector_chunk_size', VECTOR_CHUNK_SIZE))
-        chunk_size = max(chunk_size, 50)
-        vector_top_k = max(top_k * 3, 60)
-        # Don't use profile_type filter in Pinecone since we already filtered in SQL
-        # Pinecone stores profile_type as comma-separated string which doesn't work well with $in
-        # SQL filtering is more reliable for profile_type matching
-        pinecone_filters_for_vector = structured_filters.copy()
-        if 'profile_type' in pinecone_filters_for_vector:
-            del pinecone_filters_for_vector['profile_type']
-        pinecone_metadata_filter = build_pinecone_metadata_filter(pinecone_filters_for_vector)
-        
-        for chunk in chunk_list(candidate_ids, chunk_size):
-            if not chunk:
-                continue
-            base_filter = {'candidate_id': {'$in': chunk}}
-            chunk_filter = merge_pinecone_filters(base_filter, pinecone_metadata_filter)
-            chunk_top_k = min(len(chunk), vector_top_k)
-            results = pinecone_manager.query_vectors(
-                query_vector=query_embedding,
-                top_k=chunk_top_k,
-                include_metadata=True,
-                filter=chunk_filter
-            )
-            for match in results.matches:
-                cid = match.metadata.get('candidate_id')
-                if cid not in candidate_map:
-                    continue
-                existing = layer2_matches.get(cid)
-                if not existing or match.score > existing['score']:
-                    layer2_matches[cid] = {
-                        'score': match.score,
-                        'metadata': match.metadata
-                    }
-        
-        if not layer2_matches:
-            # Fallback: Return SQL-filtered candidates when vector search finds no matches
-            # This handles cases where candidates exist in SQL but:
-            # 1. Don't have embeddings in Pinecone
-            # 2. Pinecone metadata filter is too restrictive (e.g., comma-separated profile_type)
-            # 3. Vector similarity is below threshold
-            logger.warning(f"Vector search found 0 matches for {len(candidate_ids)} SQL-filtered candidates. Returning SQL results as fallback.")
-            fallback_results = []
-            
-            # Calculate match scores based on profile_type and skills overlap
-            search_profile_types = structured_filters.get('profile_type', [])
-            search_query_lower = user_query.lower() if user_query else ""
-            
-            for record in sql_candidates[:top_k]:
-                candidate_profile_types = record.get('profile_type', '')
-                candidate_skills = (record.get('primary_skills', '') or '').lower()
-                
-                # Calculate match score based on profile_type overlap
-                base_score = 0.5
-                profile_type_bonus = 0.0
-                profile_type_penalty = 0.0
-                skills_bonus = 0.0
-                
-                # Profile type matching bonus/penalty
-                if candidate_profile_types and search_profile_types:
-                    # Split candidate's profile types (handle both comma and comma+space formats)
-                    candidate_pts = [pt.strip() for pt in candidate_profile_types.replace(', ', ',').split(',')]
-                    has_match = False
-                    for search_pt in search_profile_types:
-                        if search_pt in candidate_pts:
-                            # Exact profile type match
-                            profile_type_bonus = 0.3
-                            has_match = True
-                            break
-                        elif any(search_pt in pt or pt in search_pt for pt in candidate_pts):
-                            # Partial match (e.g., "Microsoft Power Platform" in "Microsoft Power Platform,Integration / APIs")
-                            profile_type_bonus = 0.2
-                            has_match = True
-                            break
-                    
-                    # Penalty if profile_type filter exists but candidate doesn't match
-                    if not has_match and search_profile_types:
-                        profile_type_penalty = -0.2  # Reduce score for non-matching profile types
-                
-                # Skills matching bonus (check if query terms appear in skills)
-                if search_query_lower and candidate_skills:
-                    query_terms = search_query_lower.split()
-                    matched_terms = sum(1 for term in query_terms if term in candidate_skills and len(term) > 2)
-                    if matched_terms > 0:
-                        skills_bonus = min(0.2, matched_terms * 0.05)
-                
-                match_score = max(0.0, min(1.0, base_score + profile_type_bonus + profile_type_penalty + skills_bonus))
-                
-                # Build metadata object (same structure as Pinecone results)
-                cid = record.get('candidate_id')
-                metadata = {
-                    'candidate_id': cid,
-                    'name': record.get('name', ''),
-                    'email': record.get('email', ''),
-                    'primary_skills': record.get('primary_skills', ''),
-                    'secondary_skills': record.get('secondary_skills', ''),
-                    'all_skills': record.get('all_skills', '') or record.get('primary_skills', ''),
-                    'profile_type': record.get('profile_type', ''),
-                    'total_experience': record.get('total_experience', 0),
-                    'current_designation': record.get('current_designation', '') or 'Unknown',
-                    'current_location': record.get('current_location', '') or 'Unknown',
-                    'current_company': record.get('current_company', ''),
-                    'domain': record.get('domain', ''),
-                    'education': record.get('education', ''),
-                    'resume_summary': record.get('resume_summary', ''),
-                    'created_at': str(record.get('created_at', '')),
-                    'source': 'sql_fallback'
-                }
-                
-                fallback_results.append({
-                    'candidate_id': cid,
-                    'name': record.get('name', ''),
-                    'email': record.get('email', ''),
-                    'primary_skills': record.get('primary_skills', ''),
-                    'profile_type': record.get('profile_type', ''),
-                    'total_experience': record.get('total_experience', 0.0),
-                    'current_designation': record.get('current_designation', ''),
-                    'current_location': record.get('current_location', ''),
-                    'current_company': record.get('current_company', ''),
-                    'domain': record.get('domain', ''),
-                    'education': record.get('education', ''),
-                    'resume_summary': record.get('resume_summary', ''),
-                    'match_score': round(match_score, 3),
-                    'layer_scores': {'vector': None},
-                    'metadata': metadata
+            sql_candidates = []
+            for r in results:
+                sql_candidates.append({
+                    'candidate_id': r['candidate_id'],
+                    'name': r['name'],
+                    'email': r.get('email', ''),
+                    'phone': r.get('phone', ''),
+                    'total_experience': r.get('total_experience', 0),
+                    'primary_skills': r.get('primary_skills', ''),
+                    'secondary_skills': r.get('secondary_skills', ''),
+                    'all_skills': r.get('all_skills', ''),
+                    'profile_type': r.get('profile_type', ''),
+                    'role_type': r.get('role_type', ''),
+                    'subrole_type': r.get('subrole_type', ''),
+                    'sub_profile_type': r.get('sub_profile_type', ''),
+                    'current_designation': r.get('current_designation', ''),
+                    'current_location': r.get('current_location', ''),
+                    'current_company': r.get('current_company', ''),
+                    'domain': r.get('domain', ''),
+                    'education': r.get('education', ''),
+                    'resume_summary': r.get('resume_summary', ''),
                 })
-            
-            # Sort by match_score descending
-            fallback_results.sort(key=lambda x: x['match_score'], reverse=True)
-            
-            return jsonify({
-                'message': f'Found {len(fallback_results)} candidates via SQL filtering (vector search found no matches)',
-                'query': user_query,
-                'search_results': fallback_results,
-                'total_matches': len(fallback_results),
-                'layer_counts': {
-                    'sql_filtered': len(candidate_ids),
-                    'vector_considered': 0,
-                    'boolean_passed': 0,
-                    'llm_evaluated': 0
-                },
-                'profile_type_filter': structured_filters.get('profile_type'),
-                'processing_time_ms': int((time.time() - start_time) * 1000),
-                'timestamp': datetime.now().isoformat()
-            }), 200
         
-        vector_ranked = []
-        search_profile_types = structured_filters.get('profile_type', [])
+        # === STEP 8: Semantic Search (Hybrid Approach) ===
+        semantic_applied = False
+        final_candidates = sql_candidates
+        semantic_scores = {}
         
-        for cid, match_data in layer2_matches.items():
-            db_record = candidate_map[cid]
-            pinecone_meta = match_data.get('metadata') or {}
-            combined_metadata = dict(pinecone_meta)
-            for field in [
-                'primary_skills', 'secondary_skills', 'all_skills',
-                'current_location', 'current_company', 'current_designation',
-                'domain', 'education', 'resume_summary', 'profile_type'
-            ]:
-                if db_record.get(field):
-                    combined_metadata[field] = db_record[field]
-            
-            # Calculate base match score from vector similarity
-            base_score = match_data['score']
-            
-            # Add profile_type matching bonus
-            profile_type_bonus = 0.0
-            candidate_profile_type = db_record.get('profile_type') or pinecone_meta.get('profile_type', '')
-            if candidate_profile_type and search_profile_types:
-                # Split candidate's profile types (handle both comma and comma+space formats)
-                candidate_pts = [pt.strip() for pt in candidate_profile_type.replace(', ', ',').split(',')]
-                for search_pt in search_profile_types:
-                    if search_pt in candidate_pts:
-                        # Exact profile type match - boost score
-                        profile_type_bonus = 0.1
-                        break
-                    elif any(search_pt in pt or pt in search_pt for pt in candidate_pts):
-                        # Partial match bonus
-                        profile_type_bonus = 0.05
-                        break
-            
-            # Final score with profile_type bonus (capped at 1.0)
-            final_score = min(1.0, base_score + profile_type_bonus)
-            
-            candidate_info = {
-                'candidate_id': cid,
-                'name': db_record.get('name') or pinecone_meta.get('name'),
-                'email': db_record.get('email') or pinecone_meta.get('email'),
-                'match_score': round(final_score, 3),
-                'profile_type': candidate_profile_type,
-                'primary_skills': db_record.get('primary_skills'),
-                'total_experience': db_record.get('total_experience'),
-                'domain': db_record.get('domain'),
-                'education': db_record.get('education'),
-                'current_location': db_record.get('current_location'),
-                'current_company': db_record.get('current_company'),
-                'current_designation': db_record.get('current_designation'),
-                'resume_summary': db_record.get('resume_summary'),
-                'layer_scores': {'vector': match_data['score']},
-                'metadata': combined_metadata
-            }
-            vector_ranked.append(candidate_info)
+        # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
+        for candidate in final_candidates:
+            candidate['match_score'] = 1.0  # Perfect SQL match (default)
         
-        vector_ranked.sort(key=lambda c: c['match_score'], reverse=True)
+        if use_semantic and sql_candidates and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+            try:
+                logger.info(f"Applying semantic search to {len(sql_candidates)} SQL-filtered candidates")
+                
+                # Generate query embedding
+                query_embedding = embedding_service.generate_embedding(query)
+                logger.info(f"Generated query embedding with {len(query_embedding)} dimensions")
+                
+                # Initialize Pinecone manager
+                from enhanced_pinecone_manager import EnhancedPineconeManager
+                pinecone_manager = EnhancedPineconeManager(
+                    api_key=ATSConfig.PINECONE_API_KEY,
+                    index_name=ATSConfig.PINECONE_INDEX_NAME,
+                    dimension=ATSConfig.EMBEDDING_DIMENSION
+                )
+                pinecone_manager.get_or_create_index()
+                
+                # Get candidate IDs from SQL results (limit to 1000 for performance)
+                candidate_ids = [c['candidate_id'] for c in sql_candidates[:1000]]
+                
+                if candidate_ids:
+                    # Perform semantic search on SQL-filtered candidates
+                    # Use larger top_k to get better ranking, then limit later
+                    # Handle None limit - use all candidates (up to 200) when limit is not provided
+                    if limit is None:
+                        vector_top_k = min(len(candidate_ids), 200)
+                    else:
+                        vector_top_k = min(limit * 3, len(candidate_ids), 200)
+                    
+                    # Build Pinecone filter for candidate IDs
+                    # Pinecone filter format: {'candidate_id': {'$in': [id1, id2, ...]}}
+                    pinecone_filter = {'candidate_id': {'$in': candidate_ids}}
+                    
+                    logger.info(f"Querying Pinecone with {len(candidate_ids)} candidate IDs, top_k={vector_top_k}")
+                    
+                    # Query Pinecone index
+                    vector_results = pinecone_manager.index.query(
+                        vector=query_embedding,
+                        top_k=vector_top_k,
+                        include_metadata=True,
+                        filter=pinecone_filter
+                    )
+                    
+                    # Extract semantic scores
+                    for match in vector_results.matches:
+                        candidate_id = match.metadata.get('candidate_id')
+                        if candidate_id:
+                            semantic_scores[candidate_id] = match.score
+                    
+                    logger.info(f"Semantic search found {len(semantic_scores)} candidates with scores")
+                    
+                    # Merge SQL candidates with semantic scores
+                    # Create a map for fast lookup
+                    candidate_map = {c['candidate_id']: c for c in sql_candidates}
+                    
+                    # Add semantic scores and calculate combined scores
+                    for candidate_id, semantic_score in semantic_scores.items():
+                        if candidate_id in candidate_map:
+                            candidate_map[candidate_id]['semantic_score'] = round(semantic_score, 4)
+                            # Combined score: 30% SQL match (implicit 1.0) + 70% semantic similarity
+                            candidate_map[candidate_id]['combined_score'] = round(0.3 + (semantic_score * 0.7), 4)
+                            # Set match_score to combined_score
+                            candidate_map[candidate_id]['match_score'] = candidate_map[candidate_id]['combined_score']
+                    
+                    # For candidates without semantic scores, set match_score to 1.0 (perfect SQL match)
+                    for candidate_id, candidate in candidate_map.items():
+                        if 'match_score' not in candidate:
+                            candidate['match_score'] = 1.0  # Perfect SQL match when no semantic score
+                    
+                    # Sort by combined_score (or semantic_score if available), then by experience
+                    final_candidates = list(candidate_map.values())
+                    final_candidates.sort(
+                        key=lambda x: (
+                            x.get('combined_score', x.get('semantic_score', 0)),
+                            x.get('total_experience', 0)
+                        ),
+                        reverse=True
+                    )
+                    
+                    semantic_applied = True
+                    logger.info(f"Hybrid search completed: {len(final_candidates)} candidates ranked")
+                    
+            except Exception as e:
+                logger.warning(f"Semantic search failed: {e}, falling back to SQL-only results")
+                logger.error(traceback.format_exc())
+                # Fallback to SQL-only results (already in final_candidates)
+                semantic_applied = False
+                # Set match_score to 1.0 for SQL-only candidates (perfect SQL match)
+                for candidate in final_candidates:
+                    candidate['match_score'] = 1.0
         
-        # === Layer 2b: Optional Boolean filtering ===
-        if use_boolean_search and parsed_query:
-            boolean_filtered = []
-            for candidate in vector_ranked:
-                candidate_text = build_searchable_text(candidate['metadata'])
-                if matches_boolean_query(candidate_text, parsed_query):
-                    boolean_filtered.append(candidate)
-        else:
-            boolean_filtered = vector_ranked
+        # === STEP 9: Boolean Filter ===
+        boolean_applied = False
+        vector_candidates_count = len(final_candidates)  # Count before Boolean filter
         
-        if not boolean_filtered:
-            return jsonify({
-                'message': 'Boolean filter removed all semantic matches',
-                'query': user_query,
-                'search_results': [],
-                'total_matches': 0,
-                'layer_counts': {
-                    'sql_filtered': len(candidate_ids),
-                    'vector_considered': len(vector_ranked),
-                    'boolean_passed': 0,
-                    'llm_evaluated': 0
-                },
-                'profile_type_filter': structured_filters.get('profile_type'),
-                'boolean_filter_applied': True,
-                'processing_time_ms': int((time.time() - start_time) * 1000),
-                'timestamp': datetime.now().isoformat()
-            }), 200
-        
-        # === Layer 3: Optional LLM refinement ===
-        llm_applied = False
-        final_candidates = boolean_filtered
-        if use_llm_refinement and llm_refinement_service.available:
-            job_context = data.get('job_description') or user_query
-            final_candidates = llm_refinement_service.rerank_candidates(
-                job_context,
-                boolean_filtered,
-                top_n=min(llm_window, len(boolean_filtered))
+        if use_boolean and final_candidates:
+            # Check if query contains Boolean operators
+            has_boolean_operators = (
+                ' AND ' in query.upper() or 
+                ' OR ' in query.upper() or 
+                ' NOT ' in query.upper() or
+                ' in ' in query.lower()  # Location queries like "engineer in portland"
             )
-            llm_applied = True
-        elif use_llm_refinement and not llm_refinement_service.available:
-            logger.warning("LLM refinement requested but service is not available.")
-        
-        response_candidates = final_candidates[:top_k]
-        
-        # === Layer 4: Two-Step Skill Search (Auto-fallback if results < 20) ===
-        two_step_applied = False
-        two_step_stats = {'step1_count': 0, 'step2_count': 0, 'new_from_two_step': 0}
-        
-        if len(response_candidates) < 20:
-            logger.info(f"Results ({len(response_candidates)}) < 20, running two-step skill search fallback...")
             
-            # Mapping from query to score column
-            query_to_score_column = {
-                "java": "java_score",
-                ".net": "dotnet_score",
-                "dotnet": "dotnet_score",
-                "python": "python_score",
-                "javascript": "javascript_score",
-                "js": "javascript_score",
-                "full stack": "fullstack_score",
-                "fullstack": "fullstack_score",
-                "devops": "devops_score",
-                "data engineering": "data_engineering_score",
-                "data science": "data_science_score",
-                "testing": "testing_qa_score",
-                "qa": "testing_qa_score",
-                "sap": "sap_score",
-                "erp": "erp_score",
-                "cloud": "cloud_infra_score",
-                "infra": "cloud_infra_score",
-                "bi": "business_intelligence_score",
-                "business intelligence": "business_intelligence_score",
-                "power platform": "microsoft_power_platform_score",
-                "rpa": "rpa_score",
-                "cyber security": "cyber_security_score",
-                "security": "cyber_security_score",
-                "mobile": "mobile_development_score",
-                "salesforce": "salesforce_score",
-                "low code": "low_code_no_code_score",
-                "no code": "low_code_no_code_score",
-                "database": "database_score",
-                "sql": "database_score",
-                "integration": "integration_apis_score",
-                "api": "integration_apis_score",
-                "ui/ux": "ui_ux_score",
-                "ux": "ui_ux_score",
-                "support": "support_score",
-                "business development": "business_development_score",
-            }
-            
-            # Determine score column based on query
-            query_lower = user_query.lower()
-            score_column = "python_score"  # Default
-            
-            # Find best matching score column
-            for key, col in query_to_score_column.items():
-                if key in query_lower or query_lower in key:
-                    score_column = col
-                    break
-            
-            logger.info(f"Two-step search using score column: {score_column}")
-            
-            # Track existing candidate IDs
-            existing_ids = {c.get('candidate_id') for c in response_candidates if c.get('candidate_id')}
-            
-            with create_ats_database() as db:
-                # Step 1: Primary Search (skillset only)
-                step1_results = db.search_by_skill(user_query, limit=100)
-                two_step_stats['step1_count'] = len(step1_results)
-                logger.info(f"Two-step Step 1: Found {len(step1_results)} candidates")
-                
-                # Step 2: Fallback Search (score > 0 AND skillset LIKE query)
-                step2_results = db.search_by_skill_with_score(user_query, score_column=score_column, limit=100)
-                two_step_stats['step2_count'] = len(step2_results)
-                logger.info(f"Two-step Step 2: Found {len(step2_results)} candidates")
-                
-                # Merge new candidates from two-step search
-                new_candidates = []
-                
-                # Helper function to build Pinecone-style candidate object
-                def build_candidate_object(r, match_score, search_source):
-                    """Build candidate object with same structure as Pinecone results."""
-                    cid = r['candidate_id']
+            if has_boolean_operators:
+                try:
+                    logger.info(f"Applying Boolean filter to {len(final_candidates)} candidates")
                     
-                    # Build metadata object (same as Pinecone)
-                    metadata = {
-                        'candidate_id': cid,
-                        'name': r.get('name', ''),
-                        'email': r.get('email', ''),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'secondary_skills': r.get('secondary_skills', ''),
-                        'all_skills': r.get('all_skills', '') or r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'total_experience': r.get('total_experience', 0),
-                        'current_designation': r.get('current_designation', '') or 'Unknown',
-                        'current_location': r.get('current_location', '') or 'Unknown',
-                        'current_company': r.get('current_company', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'resume_summary': r.get('resume_summary', ''),
-                        'created_at': str(r.get('created_at', '')),
-                        'source': search_source
-                    }
+                    # Parse Boolean query
+                    parsed_boolean = parse_boolean_query(query)
                     
-                    return {
-                        'candidate_id': cid,
-                        'name': r.get('name', ''),
-                        'email': r.get('email', ''),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'total_experience': r.get('total_experience', 0),
-                        'current_designation': r.get('current_designation', ''),
-                        'current_location': r.get('current_location', ''),
-                        'current_company': r.get('current_company', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'resume_summary': r.get('resume_summary', ''),
-                        'match_score': round(match_score, 3),
-                        'layer_scores': {
-                            'vector': None
-                        },
-                        'metadata': metadata
-                    }
-                
-                # Add from Step 1 (not already in results)
-                for r in step1_results:
-                    cid = r['candidate_id']
-                    if cid not in existing_ids:
-                        existing_ids.add(cid)
-                        new_candidates.append(build_candidate_object(r, 0.5, 'two_step_primary'))
-                
-                # Add from Step 2 (not already in results)
-                for r in step2_results:
-                    cid = r['candidate_id']
-                    if cid not in existing_ids:
-                        existing_ids.add(cid)
-                        skill_score = r.get('skill_match_score', 0)
-                        match_score = min(0.8, (skill_score / 100)) if skill_score else 0.4
-                        new_candidates.append(build_candidate_object(r, match_score, 'two_step_fallback'))
-                
-                two_step_stats['new_from_two_step'] = len(new_candidates)
-                
-                if new_candidates:
-                    two_step_applied = True
-                    # Sort new candidates by skill_match_score DESC
-                    new_candidates.sort(key=lambda x: (x.get('skill_match_score') or 0, x.get('total_experience') or 0), reverse=True)
-                    # Append to response_candidates
-                    response_candidates.extend(new_candidates)
-                    logger.info(f"Added {len(new_candidates)} new candidates from two-step search")
+                    if parsed_boolean.get('and_terms'):
+                        # Filter candidates by Boolean logic
+                        boolean_filtered = []
+                        for candidate in final_candidates:
+                            # Build searchable text from candidate metadata
+                            candidate_text = build_searchable_text(candidate)
+                            
+                            # Check if candidate matches Boolean query
+                            if matches_boolean_query(candidate_text, parsed_boolean):
+                                boolean_filtered.append(candidate)
+                        
+                        boolean_applied = True
+                        final_candidates = boolean_filtered
+                        boolean_filtered_count = len(final_candidates)
+                        logger.info(f"Boolean filter applied: {boolean_filtered_count}/{vector_candidates_count} candidates match Boolean logic")
+                    else:
+                        logger.info("Boolean query parsed but no terms found, skipping Boolean filter")
+                        boolean_filtered_count = vector_candidates_count
+                        
+                except Exception as e:
+                    logger.warning(f"Boolean filter failed: {e}, using unfiltered results")
+                    logger.error(traceback.format_exc())
+                    boolean_applied = False
+                    boolean_filtered_count = vector_candidates_count
+            else:
+                logger.info("No Boolean operators detected, skipping Boolean filter")
+                boolean_filtered_count = vector_candidates_count
+        else:
+            boolean_filtered_count = vector_candidates_count
         
-        processing_time = int((time.time() - start_time) * 1000)
-        layer_counts = {
-            'sql_filtered': len(candidate_ids),
-            'vector_considered': len(vector_ranked),
-            'boolean_passed': len(boolean_filtered),
-            'llm_evaluated': len(final_candidates) if llm_applied else 0,
-            'two_step_step1': two_step_stats['step1_count'],
-            'two_step_step2': two_step_stats['step2_count'],
-            'two_step_new': two_step_stats['new_from_two_step']
+        # Limit results (only if limit is provided)
+        if limit is not None:
+            final_candidates = final_candidates[:limit]
+        
+        # Build analysis response
+        analysis = {
+            'detected_subrole': detected_subrole,
+            'detected_main_role': detected_main_role,
+            'detected_profile_type': detected_profile_type_from_role,
+            'detected_skills': [s['skill'] for s in detected_skills],
+            'skill_profile_types': skill_profile_types,
+            'skill_score_columns': skill_score_columns,
+            'semantic_search_applied': semantic_applied,
+            'boolean_filter_applied': boolean_applied,
+            'sql_candidates_count': len(sql_candidates),
+            'vector_candidates_count': vector_candidates_count if semantic_applied else len(sql_candidates),
+            'boolean_filtered_count': boolean_filtered_count if boolean_applied else None,
+            'final_candidates_count': len(final_candidates),
         }
         
-        message = 'Hybrid SQL + vector search completed'
-        if llm_applied:
-            message += ' with LLM refinement'
-        elif use_llm_refinement:
-            message += ' (LLM refinement unavailable)'
-        if two_step_applied:
-            message += f' + two-step fallback (+{two_step_stats["new_from_two_step"]} candidates)'
+        # Determine search type
+        if boolean_applied and semantic_applied:
+            search_type = 'sql_vector_boolean'
+        elif semantic_applied:
+            search_type = 'sql_vector'
+        else:
+            search_type = 'sql_only'
         
         return jsonify({
-            'message': message,
-            'query': user_query,
-            'search_results': response_candidates,
-            'total_matches': len(response_candidates),
-            'layer_counts': layer_counts,
-            'total_before_boolean_filter': len(vector_ranked) if use_boolean_search else None,
-            'boolean_filter_applied': use_boolean_search and parsed_query is not None,
-            'llm_refinement_applied': llm_applied,
-            'two_step_search_applied': two_step_applied,
-            'profile_type_filter': structured_filters.get('profile_type'),
-            'processing_time_ms': processing_time,
+            'query': query,
+            'search_type': search_type,
+            'analysis': analysis,
+            'count': len(final_candidates),
+            'results': final_candidates,
+            'processing_time_ms': int((time.time() - start_time) * 1000),
             'timestamp': datetime.now().isoformat()
         }), 200
         
     except Exception as e:
-        logger.error(f"Error in hybrid search: {e}")
+        logger.error(f"Error in /api/searchResumes: {e}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/searchResumesBySkill', methods=['POST'])
-def search_resumes_by_skill():
+
+# ============================================================================
+# Role Mapping Structures for /api/searchResume
+# ============================================================================
+
+# Role hierarchy: (main_role, {set of sub_roles})
+ROLE_MAPPING = [
+    ("Software Engineer", {
+        ".NET Developer", "BI Analyst", "BI Developer", "C# Full Stack Developer", "Cloud Engineer",
+        "Cold Fusion Developer", "Data Engineer", "Data Engineer & Contract Management", "Analyst",
+        "Python Developer", "Data Engineering", "Data Scientist", "Data Scientist Intern", "ML Engineer",
+        "Data & Visualization Engineer", "Dev Ops & Cloud Engineer", "Dev Ops Engineer",
+        "Site Reliability Engineer", "System Administrator", "Development Operations Engineer",
+        "Developer", "Firmware Engineer", "ETL Developer", "ETL Informatica Developer",
+        "Frontend Developer", "Full Stack .NET Developer", "Full Stack Developer", "Full Stack Engineer",
+        "Full-Stack .Net Developer", "Full-Stack Consultant", "Game Developer", "Senior Software Engineer",
+        "Java Developer", "Java Full-Stack Developer", ".Net Full Stack Developer", "Microsoft .Net Developer",
+        "Mobile Developer", "Power Apps Developer", "Power Platform Developer", "Power BI Developer",
+        "Professional .Net Developer", "Programmer", "React .Net Full Stack Developer", "SQL Developer",
+        "Salesforce", "Salesforce Developer", "Salesforce Administrator", ".Net Web Developer",
+        "Front-End Web UI Developer", "Big Data Engineer", "Staff Machine Learning Engineer",
+        "Service Now Developer", "Software Developer", "Software Developer Intern", "Software Engineer",
+        "Software Engineer & Instructor", "Software Engineering", "Analyst Ii Software Engineering",
+        "Business Intelligence Developer", "Cold Fusion Application Developer", "Platform Architect",
+        "Dot Net Developer", "Full Stack Java Developer", "Java Full Stack Developer",
+        "Net Full Stack Engineer", "Web Designer", "Web Developer", "Website Specialist",
+        ".NET Full Stack Engineer", ".NET Lead", ".NET Software Engineer", "Azure Developer",
+        "ALML Engineer", "Application Developer"
+    }),
+    ("Administrative", {
+        "Executive Assistant", "Admin Assistant", "Administrative Assistant",
+        "Administrative Coordinator", "Administrator", "Branch Admin", "Commercial Assistant",
+        "Community Administrator", "Contract Administrator", "Mail Administrator",
+        "Project Administrator", "Office Assistant", "Program & Operations Coordinator",
+        "Scheduling Coordinator", "Supervision. Responsible Administrator",
+        "Warranty Administrator"
+    }),
+    ("Analyst", {
+        "Analyst", "Analyst II", "Data Analyst", "Data Analyst Intern", "Power BI Developer",
+        "Security Specialist", "Dataanalyst2", "Detail-Focused Data Analyst", "Financial Analyst",
+        "Fraud Analyst", "R Risk Analyst", "Network & Communications Analyst", "Pricing Analyst",
+        "Procurement Analyst", "Professional Analyst", "Resource Analyst", "Pricing Analyst Iii",
+        "Sales Operations Analyst", "Business Development Software Analyst", "Risk Analyst",
+        "Sr. Data Analyst", "HR Transformation Analyst", "Business Intelligence Analyst",
+        "Settlement Analyst", "T-SQL Programmer Analyst", "Third-Party Risk Analyst"
+    }),
+    ("Architect", {
+        "Architecture", "Architecture Collaborators", "Architecture Experience", "Architect",
+        "Business Architect", "Cloud Architect", "Senior Data Architect",
+        "Freelance User Experience And User Interface Architect", "Results-Driven Solution Architect",
+        "Seasoned Architect", "Solution Architect", "Technical Architect"
+    }),
+    ("Associate", {
+        "Associate", "Associate Reliability", "Walmart Associate"
+    }),
+    ("Business Analyst", {
+        "Business Analyst", "Business Analyst-Data Analytics", "IT Analyst", "Project Manager",
+        "Technical Writer", "Functional Analyst", "SAS Certified Statistical Business Analyst",
+        "Agile Business Analyst", "Functional Consultant", "Business System Analyst",
+        "Statistical Business Analyst"
+    }),
+    ("Consultant", {
+        "Consultant", "Consultant And Jira Project Admin", "Creative & Marketing Consultant",
+        "Energy Consultant", "External Consultant", "Ocm Consultant",
+        "Organizational Effectiveness Consultant", "Project Consultant", "Pseudo Consultant",
+        "Consultant & Peoplesoft Business Lead", "Learning Consultant", "Management Consultant",
+        "People Soft Functional Consultant", "Quantitative Risk Management Consultant",
+        "Sr.Workday Consultant", "Technical Consultant"
+    }),
+    ("Database Administrator", {
+        "DB2 Database Administrator", "Database Administrator", "Engineer", "Database Engineer",
+        "Developer Consultant", "Project Manager- DBA Team"
+    }),
+    ("Designer", {
+        "Designer", "Flow Designer", "Graphic Designer",
+        "Graphic Designer & Interactive Designer", "Retail Consultant",
+        "Marketing Graphic Designer", "UX Designer"
+    }),
+    ("Director", {
+        "Assistant Director", "Delivery Director", "Director Of Marketing",
+        "Marketing Director", "Program Director"
+    }),
+    ("Education", {
+        "Teaching Assistant"
+    }),
+    ("Engineer", {
+        "Chemical Engineer", "Engineer", "Engineering", "Office 365 Engineer",
+        "Reporting Engineer", "Standards Engineer"
+    }),
+    ("Engineering Manager", {
+        "Engineering Management", "Engineering Manager"
+    }),
+    ("Finance", {
+        "Accounting Assistant", "Accounting Specialist", "Billing Specialist", "Escrow Officer"
+    }),
+    ("HR", {
+        "HR Manager", "HR Consultant", "HR Coordinator", "Payroll & Benefit Administrator",
+        "Human Resources Administrative Specialist", "Human Resources Manager",
+        "Payroll Analyst", "Payroll Manager", "Payroll Specialist", "Recruiting Leader"
+    }),
+    ("Healthcare", {
+        "CNA - Certified Nursing Assistant", "Personal Assistant"
+    }),
+    ("IT Manager", {
+        "Credit Director- Credit & Collections", "Manager", "IT Manager", "Director"
+    }),
+    ("IT Support", {
+        "Credit Analyst", "First-Line Support", "Helpdesk Technician", "IT Analyst", "IT Specialist",
+        "IT Support", "IT Technician", "Medication Technician", "PC Repair Technician",
+        "Pc Technician", "Desktop Support Technician", "Sterile Technician",
+        "Technical Support Engineer", "Information Tech", "Technicians",
+        "Tier 2 IT Specialist", "Tier 2 Technical Support Engineer"
+    }),
+    ("Intern", {
+        "Intern", "Internship"
+    }),
+    ("Lead", {
+        "Enterprise Transformation Leader", "Leader", "Leadership", "Leadhostess",
+        "Ecommerce Lead", "Provide Lead", "Shift Leader"
+    }),
+    ("Manager", {
+        "Account Manager", "Assistant Store Manager", "Case Manager", "Contract Manager",
+        "District Manager", "Editorial Manager", "Enterprise Manager", "Field Manager",
+        "Finance Manager", "Floor Manager", "Freelance Senior Digital Asset Manager",
+        "General Manager", "Manager", "Manager II", "Marketing Manager", "Operations Manager",
+        "PMO - Tranformation Manager", "Platform Manager", "SLA Manager",
+        "Manager- Change Management", "Social Media Manager And Content Specialist",
+        "Solution-Driven Customer Success Manager", "Support Manager", "Team Manager"
+    }),
+    ("Network Engineer", {
+        "Cisco Certified Network Professional", "Network Administration", "Network Administrator",
+        "Network Engineer", "Network Support Engineer"
+    }),
+    ("Product Manager", {
+        "Product Manager", "Product Owner"
+    }),
+    ("Program Manager", {
+        "Engineering Program Manager", "Program Analyst", "Program Coordinator", "Program Manager",
+        "Digital Transformation Program Manager", "Technical Program Manager"
+    }),
+    ("Project Manager", {
+        "Automation & Robotics Project Manager", "Proxy Lead Project Manager",
+        "E-Learning IT Project Manager II", "Marketing & Creative Project Manager",
+        "Marketing Project Manager", "Project Manager", "Project Manager Consultant",
+        "Project Coordinator", "Manager", "Project Engineer", "Project Expeditor",
+        "IT Project Manager", "Project Manager Independent Contractor",
+        "Technical Project Manager"
+    }),
+    ("QA Engineer", {
+        "508 Tester", "Automation Engineer", "QA Analyst", "QA Engineer", "Analyst", "Test Engineer"
+    }),
+    ("Sales", {
+        "Account Executive", "Sales Associate", "Sales Technology"
+    }),
+    ("Security Engineer", {
+        "Cybersecurity Engineer", "Grc Analyst", "IAM Consultant", "IAM Engineer",
+        "Security Analyst", "Identity & Access Management Engineer",
+        "Information Assurance Officer", "Information Security Analyst",
+        "Network Security", "Office 365 Identity Management Engineer",
+        "Penetration Tester", "Security Management", "Soc Analyst", "Cyber Security Analyst",
+        "Network & Security Engineer", "Network Security Engineer",
+        "Sci Cyber Security Team Lead"
+    }),
+    ("Specialist", {
+        "Analytics Specialist", "Ap Specialist", "Contract Specialist", "Funding Specialist",
+        "Learning And Development Specialist", "Legal Specialist",
+        "Music Licensing Contract Specialist", "Program Support Specialist",
+        "Project Specialist", "Specialist", "Tier-2 Benefits Account Specialist",
+        "Training Specialist"
+    }),
+    ("Supervisor", {
+        "Con Supervisor", "Service Supervisor", "Supervisor", "Supervisory"
+    }),
+    ("System Administrator", {
+        "Unix System Administrator On Rhel", "System Administrator",
+        "System Administrator Technician", "Business Analyst", "System Engineer"
+    }),
+    ("Technical Lead", {
+        "Supervise Team Lead", "Team Lead", "Technical Lead"
+    }),
+    ("Technical Writer", {
+        "Documentation Specialist", "Technical Writer"
+    }),
+    ("Writer", {
+        "Co-Writer"
+    })
+]
+
+# Build reverse mappings for fast lookup
+SUBROLE_TO_MAIN_ROLE = {}
+SUBROLE_TO_PROFILE_TYPE = {}
+
+# Profile type inference from sub-role (when skill-only query)
+PROFILE_TYPE_TO_DEFAULT_SUBROLE = {
+    "Java": "Java Developer",
+    ".Net": ".Net Developer",
+    "Python": "Python Developer",
+    "JavaScript": "React Developer",
+    "Full Stack": "Full Stack Developer",
+    "DevOps": "DevOps Engineer",
+    "Data Engineering": "Data Engineer",
+    "Data Science": "Data Scientist",
+    "SAP": "SAP Consultant",
+    "ERP": "ERP Analyst",
+    "Database": "Database Administrator",
+    "Business Intelligence (BI)": "BI Developer",
+    "Salesforce": "Salesforce Developer",
+    "Testing / QA": "QA Engineer",
+    "Cloud / Infra": "Cloud Engineer",
+    "Security Engineer": "Security Engineer",
+    "Network Engineer": "Network Engineer",
+}
+
+# Master skill to profile type and score column mapping
+MASTER_SKILL_TO_PROFILE_AND_SCORE = {
+    "java": {"profile_type": "Java", "score_column": "java_score"},
+    ".net": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "dotnet": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "asp.net": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "aspnet": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "c#": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "csharp": {"profile_type": ".Net", "score_column": "dotnet_score"},
+    "react": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "react js": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "reactjs": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "javascript": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "js": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "angular": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "vue": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "node": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "node.js": {"profile_type": "JavaScript", "score_column": "javascript_score"},
+    "python": {"profile_type": "Python", "score_column": "python_score"},
+    "sql": {"profile_type": "Database", "score_column": "database_score"},
+    "database": {"profile_type": "Database", "score_column": "database_score"},
+    "erp": {"profile_type": "ERP", "score_column": "erp_score"},
+    "sap": {"profile_type": "SAP", "score_column": "sap_score"},
+    "devops": {"profile_type": "DevOps", "score_column": "devops_score"},
+    "full stack": {"profile_type": "Full Stack", "score_column": "fullstack_score"},
+    "fullstack": {"profile_type": "Full Stack", "score_column": "fullstack_score"},
+}
+
+# Initialize reverse mappings
+for main_role, sub_roles in ROLE_MAPPING:
+    for sub_role in sub_roles:
+        SUBROLE_TO_MAIN_ROLE[sub_role.lower()] = main_role
+        # Try to infer profile_type from sub_role name
+        sub_lower = sub_role.lower()
+        if "java" in sub_lower and "developer" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Java"
+        elif ".net" in sub_lower or "dotnet" in sub_lower or "c#" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = ".Net"
+        elif "python" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Python"
+        elif "react" in sub_lower or "javascript" in sub_lower or "js" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "JavaScript"
+        elif "full stack" in sub_lower or "fullstack" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Full Stack"
+        elif "devops" in sub_lower or "dev ops" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "DevOps"
+        elif "data engineer" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Data Engineering"
+        elif "data scientist" in sub_lower or "ml engineer" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Data Science"
+        elif "sap" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "SAP"
+        elif "erp" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "ERP"
+        elif "database" in sub_lower or "dba" in sub_lower or "sql" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Database"
+        elif "salesforce" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Salesforce"
+        elif "qa" in sub_lower or "test" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Testing / QA"
+        elif "cloud" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Cloud / Infra"
+        elif "security" in sub_lower or "cyber" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Cyber Security"
+        elif "bi" in sub_lower or "business intelligence" in sub_lower:
+            SUBROLE_TO_PROFILE_TYPE[sub_role.lower()] = "Business Intelligence (BI)"
+
+
+def normalize_text(text: str) -> str:
+    """Normalize text: lowercase, remove extra spaces."""
+    return re.sub(r'\s+', ' ', text.lower().strip())
+
+
+def looks_like_name(text: str) -> bool:
+    """Detect if input looks like a candidate name."""
+    words = text.strip().split()
+    if 2 <= len(words) <= 4:
+        if all(word.isalpha() for word in words):
+            tech_keywords = [
+                "java", "python", "react", "sql", "developer", "engineer", 
+                "manager", "analyst", ".net", "asp", "c#", "javascript"
+            ]
+            text_lower = text.lower()
+            if not any(kw in text_lower for kw in tech_keywords):
+                return True
+    return False
+
+
+def detect_subrole_from_query(query: str) -> Optional[Dict[str, str]]:
     """
-    Two-step skill-based resume search.
+    Detect sub-role from query text.
+    Returns: {'sub_role': '...', 'main_role': '...', 'profile_type': '...'} or None
+    """
+    query_normalized = normalize_text(query)
     
-    Step 1 (Primary Search):
-    - Search candidates where profile_type matches/relates to query AND skillset contains query
-    - If result count >= 20, return immediately
+    # Try exact match first (case-insensitive)
+    for main_role, sub_roles in ROLE_MAPPING:
+        for sub_role in sub_roles:
+            sub_normalized = normalize_text(sub_role)
+            # Check if sub_role appears in query
+            if sub_normalized in query_normalized or query_normalized in sub_normalized:
+                profile_type = SUBROLE_TO_PROFILE_TYPE.get(sub_normalized)
+                return {
+                    'sub_role': sub_role,
+                    'main_role': main_role,
+                    'profile_type': profile_type
+                }
     
-    Step 2 (Fallback Search):
-    - If Step 1 < 20 results, search candidate_profile_scores WHERE score > 0 AND skillset LIKE query
-    - Combine results (deduplicated), sorted by skill_match_score DESC
+    # Try partial match (sub_role contains query or vice versa)
+    for main_role, sub_roles in ROLE_MAPPING:
+        for sub_role in sub_roles:
+            sub_normalized = normalize_text(sub_role)
+            # Check if key words match
+            query_words = set(query_normalized.split())
+            sub_words = set(sub_normalized.split())
+            if len(query_words & sub_words) >= 2:  # At least 2 words match
+                profile_type = SUBROLE_TO_PROFILE_TYPE.get(sub_normalized)
+                return {
+                    'sub_role': sub_role,
+                    'main_role': main_role,
+                    'profile_type': profile_type
+                }
     
-    Input: {"query": "<skill_name>"}
-    Output: Combined candidates from both steps (deduplicated)
+    return None
+
+
+def extract_master_skills(query: str) -> List[Dict[str, str]]:
+    """
+    Extract master skills from query.
+    Returns: [{'skill': '...', 'profile_type': '...', 'score_column': '...'}, ...]
+    """
+    query_lower = normalize_text(query)
+    detected_skills = []
+    
+    # Check each master skill
+    for skill_key, mapping in MASTER_SKILL_TO_PROFILE_AND_SCORE.items():
+        if skill_key in query_lower:
+            detected_skills.append({
+                'skill': skill_key,
+                'profile_type': mapping['profile_type'],
+                'score_column': mapping['score_column']
+            })
+    
+    return detected_skills
+
+
+def infer_subrole_from_profile_type(profile_type: str) -> Optional[Dict[str, str]]:
+    """
+    Infer sub-role from profile_type (for skill-only queries).
+    Returns: {'sub_role': '...', 'main_role': '...', 'profile_type': '...'} or None
+    """
+    default_subrole = PROFILE_TYPE_TO_DEFAULT_SUBROLE.get(profile_type)
+    if not default_subrole:
+        return None
+    
+    main_role = SUBROLE_TO_MAIN_ROLE.get(default_subrole.lower())
+    if not main_role:
+        return None
+    
+    return {
+        'sub_role': default_subrole,
+        'main_role': main_role,
+        'profile_type': profile_type
+    }
+
+
+@app.route('/api/searchResume', methods=['POST'])
+def search_resume():
+    """
+    AI Search with Role + Skill + Profile Type logic.
+    
+    Requirements:
+    1. Role + skill query ("java developer"):
+       - Extract profile_type and sub_role_type from query
+       - Derive role_type from sub_role_type
+       - Filter by role_type AND profile_type
+    
+    2. Skill-only query ("ASP.NET"):
+       - Extract profile_type from skill (using profile_type_utils)
+       - Infer sub_role_type from profile_type
+       - Derive role_type from sub_role_type
+       - Filter by role_type AND profile_type (or profile_type only as fallback)
+    
+    3. Name search ("sesha"):
+       - Fuzzy match on LOWER(name) LIKE '%search_term%'
+    
+    4. Multi-skill AND logic:
+       - All detected skill scores > 0 (AND condition)
+    
+    5. Input validation:
+       - Require at least one role OR one skill (not both)
+    
+    Input: {"query": "<search_text>", "limit": 50}
+    Output: JSON with matching candidates
     """
     try:
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
-        data = request.get_json()
-        if 'query' not in data:
-            return jsonify({'error': 'Missing query field'}), 400
+        data = request.get_json() or {}
+        query = (data.get('query') or '').strip()
         
-        query = data['query'].strip()
         if not query:
             return jsonify({'error': 'Query cannot be empty'}), 400
         
-        logger.info(f"Skill-based search for: {query}")
+        limit = int(data.get('limit', 50))
+        logger.info(f"Processing /api/searchResume query: {query}")
         start_time = time.time()
         
-        # Mapping from query to score column
-        query_to_score_column = {
-            "java": "java_score",
-            ".net": "dotnet_score",
-            "dotnet": "dotnet_score",
-            "python": "python_score",
-            "javascript": "javascript_score",
-            "js": "javascript_score",
-            "full stack": "fullstack_score",
-            "fullstack": "fullstack_score",
-            "devops": "devops_score",
-            "data engineering": "data_engineering_score",
-            "data science": "data_science_score",
-            "testing": "testing_qa_score",
-            "qa": "testing_qa_score",
-            "sap": "sap_score",
-            "erp": "erp_score",
-            "cloud": "cloud_infra_score",
-            "infra": "cloud_infra_score",
-            "bi": "business_intelligence_score",
-            "business intelligence": "business_intelligence_score",
-            "power platform": "microsoft_power_platform_score",
-            "rpa": "rpa_score",
-            "cyber security": "cyber_security_score",
-            "security": "cyber_security_score",
-            "mobile": "mobile_development_score",
-            "salesforce": "salesforce_score",
-            "low code": "low_code_no_code_score",
-            "no code": "low_code_no_code_score",
-            "database": "database_score",
-            "sql": "database_score",
-            "integration": "integration_apis_score",
-            "api": "integration_apis_score",
-            "ui/ux": "ui_ux_score",
-            "ux": "ui_ux_score",
-            "support": "support_score",
-            "business development": "business_development_score",
-        }
-        
-        # Determine score column based on query
-        query_lower = query.lower()
-        score_column = query_to_score_column.get(query_lower, "python_score")  # Default to python_score
-        
-        # Find best matching score column if exact match not found
-        if query_lower not in query_to_score_column:
-            for key, col in query_to_score_column.items():
-                if key in query_lower or query_lower in key:
-                    score_column = col
-                    break
-        
-        logger.info(f"Using score column: {score_column}")
-        
-        with create_ats_database() as db:
-            # Step 1: Primary Search (profile_type + skillset)
-            step1_results = db.search_by_skill(query, limit=100)
-            step1_count = len(step1_results)
-            logger.info(f"Step 1 (Primary Search): Found {step1_count} candidates")
-            
-            # Track candidate IDs from Step 1
-            step1_ids = {r['candidate_id'] for r in step1_results}
-            
-            # If Step 1 has >= 20 results, return immediately
-            if step1_count >= 20:
-                # Format results
-                results = []
-                for r in step1_results:
-                    results.append({
+        # === STEP 1: Name Detection ===
+        if looks_like_name(query):
+            logger.info(f"Detected name search for: {query}")
+            with create_ats_database() as db:
+                sql = """
+                    SELECT 
+                        rm.candidate_id,
+                        rm.name,
+                        rm.email,
+                        rm.phone,
+                        rm.total_experience,
+                        rm.primary_skills,
+                        rm.secondary_skills,
+                        rm.all_skills,
+                        rm.profile_type,
+                        rm.role_type,
+                        rm.subrole_type,
+                        rm.sub_profile_type,
+                        rm.current_designation,
+                        rm.current_location,
+                        rm.current_company,
+                        rm.domain,
+                        rm.education,
+                        rm.resume_summary,
+                        rm.created_at
+                    FROM resume_metadata rm
+                    WHERE rm.status = 'active'
+                      AND LOWER(rm.name) LIKE %s
+                    ORDER BY rm.total_experience DESC
+                    LIMIT %s
+                """
+                db.cursor.execute(sql, (f"%{query.lower()}%", limit))
+                results = db.cursor.fetchall()
+                
+                candidates = []
+                for r in results:
+                    candidates.append({
                         'candidate_id': r['candidate_id'],
                         'name': r['name'],
-                        'email': r['email'],
-                        'phone': r.get('phone'),
+                        'email': r.get('email', ''),
+                        'phone': r.get('phone', ''),
                         'total_experience': r.get('total_experience', 0),
                         'primary_skills': r.get('primary_skills', ''),
+                        'secondary_skills': r.get('secondary_skills', ''),
+                        'all_skills': r.get('all_skills', ''),
                         'profile_type': r.get('profile_type', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
+                        'role_type': r.get('role_type', ''),
+                        'subrole_type': r.get('subrole_type', ''),
+                        'sub_profile_type': r.get('sub_profile_type', ''),
+                        'current_designation': r.get('current_designation', ''),
                         'current_location': r.get('current_location', ''),
                         'current_company': r.get('current_company', ''),
-                        'current_designation': r.get('current_designation', ''),
-                        'skill_match_score': None,  # Not from score table
-                        'search_step': 'primary'
+                        'domain': r.get('domain', ''),
+                        'education': r.get('education', ''),
+                        'resume_summary': r.get('resume_summary', ''),
                     })
                 
                 return jsonify({
-                    'message': f'Found {len(results)} candidates via primary search',
                     'query': query,
-                    'search_results': results,
-                    'total_matches': len(results),
-                    'step1_count': step1_count,
-                    'step2_count': 0,
-                    'search_type': 'primary_only',
+                    'search_type': 'name_search',
+                    'analysis': {'detected_as': 'name'},
+                    'count': len(candidates),
+                    'results': candidates,
                     'processing_time_ms': int((time.time() - start_time) * 1000),
                     'timestamp': datetime.now().isoformat()
                 }), 200
-            
-            # Step 2: Fallback Search (score > 0 AND skillset LIKE query)
-            step2_results = db.search_by_skill_with_score(query, score_column=score_column, limit=100)
-            step2_count = len(step2_results)
-            logger.info(f"Step 2 (Fallback Search): Found {step2_count} candidates")
-            
-            # Combine results (deduplicate by candidate_id)
-            combined_results = []
-            seen_ids = set()
-            
-            # Add Step 1 results first (they matched profile_type)
-            for r in step1_results:
-                cid = r['candidate_id']
-                if cid not in seen_ids:
-                    seen_ids.add(cid)
-                    combined_results.append({
-                        'candidate_id': cid,
-                        'name': r['name'],
-                        'email': r['email'],
-                        'phone': r.get('phone'),
-                        'total_experience': r.get('total_experience', 0),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'current_location': r.get('current_location', ''),
-                        'current_company': r.get('current_company', ''),
-                        'current_designation': r.get('current_designation', ''),
-                        'skill_match_score': None,
-                        'search_step': 'primary'
-                    })
-            
-            # Add Step 2 results (deduplicated)
-            for r in step2_results:
-                cid = r['candidate_id']
-                if cid not in seen_ids:
-                    seen_ids.add(cid)
-                    combined_results.append({
-                        'candidate_id': cid,
-                        'name': r['name'],
-                        'email': r['email'],
-                        'phone': r.get('phone'),
-                        'total_experience': r.get('total_experience', 0),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'current_location': r.get('current_location', ''),
-                        'current_company': r.get('current_company', ''),
-                        'current_designation': r.get('current_designation', ''),
-                        'skill_match_score': r.get('skill_match_score', 0),
-                        'search_step': 'fallback'
-                    })
-            
-            # Sort by skill_match_score DESC (None values go last), then by experience
-            combined_results.sort(
-                key=lambda x: (x['skill_match_score'] or 0, x['total_experience'] or 0),
-                reverse=True
-            )
-            
+        
+        # === STEP 2: Role Detection ===
+        role_info = detect_subrole_from_query(query)
+        detected_subrole = role_info['sub_role'] if role_info else None
+        detected_main_role = role_info['main_role'] if role_info else None
+        detected_profile_type_from_role = role_info['profile_type'] if role_info else None
+        
+        # === STEP 3: Skill Extraction ===
+        detected_skills = extract_master_skills(query)
+        skill_score_columns = [s['score_column'] for s in detected_skills]
+        skill_profile_types = [s['profile_type'] for s in detected_skills]
+        first_skill_profile_type = skill_profile_types[0] if skill_profile_types else None
+        
+        # === STEP 4: Profile Type Detection (for skill-only queries) ===
+        if not detected_profile_type_from_role and first_skill_profile_type:
+            # Use profile_type from first skill
+            detected_profile_type_from_role = first_skill_profile_type
+            # Infer sub-role from profile_type
+            if not detected_subrole:
+                inferred_role_info = infer_subrole_from_profile_type(first_skill_profile_type)
+                if inferred_role_info:
+                    detected_subrole = inferred_role_info['sub_role']
+                    detected_main_role = inferred_role_info['main_role']
+        
+        # === STEP 5: Input Validation ===
+        if not detected_subrole and not detected_skills:
             return jsonify({
-                'message': f'Found {len(combined_results)} candidates (Step1: {step1_count}, Step2: {step2_count - len(step1_ids & {r["candidate_id"] for r in step2_results})} new)',
-                'query': query,
-                'search_results': combined_results,
-                'total_matches': len(combined_results),
-                'step1_count': step1_count,
-                'step2_count': step2_count,
-                'search_type': 'combined',
-                'score_column_used': score_column,
-                'processing_time_ms': int((time.time() - start_time) * 1000),
-                'timestamp': datetime.now().isoformat()
-            }), 200
+                'error': 'Please refine the search and include at least one role or one skill.'
+            }), 400
+        
+        # === STEP 6: Build SQL Query ===
+        where_clauses = ["rm.status = 'active'"]
+        params = []
+        
+        # Role filter (only role_type)
+        if detected_main_role:
+            where_clauses.append("rm.role_type = %s")
+            params.append(detected_main_role)
+        
+        # Profile Type filter
+        profile_type_filters = []
+        if detected_profile_type_from_role:
+            profile_type_filters.append("rm.profile_type LIKE %s")
+            params.append(f"%{detected_profile_type_from_role}%")
+        # Also add profile types from skills
+        for pt in skill_profile_types:
+            if pt not in [detected_profile_type_from_role] if detected_profile_type_from_role else []:
+                profile_type_filters.append("rm.profile_type LIKE %s")
+                params.append(f"%{pt}%")
+        
+        if profile_type_filters:
+            where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
+        
+        # Multi-skill AND filter (all scores > 0) - Only apply when multiple skills detected
+        if skill_score_columns and len(detected_skills) > 1:
+            # Need to join with candidate_profile_scores
+            for col in skill_score_columns:
+                where_clauses.append(f"cps.{col} > 0")
+        
+        # Build final SQL
+        join_clause = ""
+        if skill_score_columns and len(detected_skills) > 1:
+            join_clause = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+        
+        sql = f"""
+            SELECT 
+                rm.candidate_id,
+                rm.name,
+                rm.email,
+                rm.phone,
+                rm.total_experience,
+                rm.primary_skills,
+                rm.secondary_skills,
+                rm.all_skills,
+                rm.profile_type,
+                rm.role_type,
+                rm.subrole_type,
+                rm.sub_profile_type,
+                rm.current_designation,
+                rm.current_location,
+                rm.current_company,
+                rm.domain,
+                rm.education,
+                rm.resume_summary,
+                rm.created_at
+            FROM resume_metadata rm
+            {join_clause}
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY rm.total_experience DESC
+            LIMIT %s
+        """
+        params.append(limit)
+        
+        # === STEP 7: Execute Query ===
+        with create_ats_database() as db:
+            db.cursor.execute(sql, params)
+            results = db.cursor.fetchall()
             
+            candidates = []
+            for r in results:
+                candidates.append({
+                    'candidate_id': r['candidate_id'],
+                    'name': r['name'],
+                    'email': r.get('email', ''),
+                    'phone': r.get('phone', ''),
+                    'total_experience': r.get('total_experience', 0),
+                    'primary_skills': r.get('primary_skills', ''),
+                    'secondary_skills': r.get('secondary_skills', ''),
+                    'all_skills': r.get('all_skills', ''),
+                    'profile_type': r.get('profile_type', ''),
+                    'role_type': r.get('role_type', ''),
+                    'subrole_type': r.get('subrole_type', ''),
+                    'sub_profile_type': r.get('sub_profile_type', ''),
+                    'current_designation': r.get('current_designation', ''),
+                    'current_location': r.get('current_location', ''),
+                    'current_company': r.get('current_company', ''),
+                    'domain': r.get('domain', ''),
+                    'education': r.get('education', ''),
+                    'resume_summary': r.get('resume_summary', ''),
+                })
+        
+        # Build analysis response
+        analysis = {
+            'detected_subrole': detected_subrole,
+            'detected_main_role': detected_main_role,
+            'detected_profile_type': detected_profile_type_from_role,
+            'detected_skills': [s['skill'] for s in detected_skills],
+            'skill_profile_types': skill_profile_types,
+            'skill_score_columns': skill_score_columns,
+        }
+        
+        return jsonify({
+            'query': query,
+            'search_type': 'role_skill_search',
+            'analysis': analysis,
+            'count': len(candidates),
+            'results': candidates,
+            'processing_time_ms': int((time.time() - start_time) * 1000),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
     except Exception as e:
-        logger.error(f"Error in skill-based search: {e}")
+        logger.error(f"Error in /api/searchResume: {e}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 

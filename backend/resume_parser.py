@@ -284,26 +284,48 @@ Resume Text (look for name in FIRST FEW LINES):
             self._initialize_ai_client()
     
     def _initialize_ai_client(self):
-        """Initialize OpenAI or Azure OpenAI client."""
+        """Initialize Ollama, Azure OpenAI, or OpenAI client."""
         try:
             from ats_config import ATSConfig
             
-            # Try Azure OpenAI first
-            if ATSConfig.AZURE_OPENAI_ENDPOINT and ATSConfig.AZURE_OPENAI_API_KEY:
+            # Try Ollama first if enabled
+            if ATSConfig.USE_OLLAMA:
+                from ollama_client import get_ollama_openai_client
+                logger.info("=" * 60)
+                logger.info("RESUME PARSER AI SERVICE: Using OLLAMA")
+                logger.info(f"  Model: {ATSConfig.OLLAMA_MODEL}")
+                logger.info(f"  Base URL: {ATSConfig.OLLAMA_BASE_URL}")
+                logger.info("=" * 60)
+                self.ai_client = get_ollama_openai_client(
+                    base_url=ATSConfig.OLLAMA_BASE_URL,
+                    model=ATSConfig.OLLAMA_MODEL
+                )
+                self.ai_model = ATSConfig.OLLAMA_MODEL
+            # Try Azure OpenAI
+            elif ATSConfig.AZURE_OPENAI_ENDPOINT and ATSConfig.AZURE_OPENAI_API_KEY:
+                logger.info("=" * 60)
+                logger.info("RESUME PARSER AI SERVICE: Using AZURE OPENAI")
+                logger.info(f"  Model: {ATSConfig.AZURE_OPENAI_DEPLOYMENT_NAME}")
+                logger.info(f"  Endpoint: {ATSConfig.AZURE_OPENAI_ENDPOINT}")
+                logger.info("=" * 60)
                 self.ai_client = AzureOpenAI(
                     api_key=ATSConfig.AZURE_OPENAI_API_KEY,
                     api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
                     azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
                 )
                 self.ai_model = ATSConfig.AZURE_OPENAI_DEPLOYMENT_NAME
-                logger.info("Initialized Azure OpenAI client for skill extraction")
             # Fallback to OpenAI
             elif ATSConfig.OPENAI_API_KEY:
+                logger.info("=" * 60)
+                logger.info("RESUME PARSER AI SERVICE: Using OPENAI")
+                logger.info(f"  Model: {ATSConfig.OPENAI_MODEL}")
+                logger.info("=" * 60)
                 self.ai_client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
                 self.ai_model = ATSConfig.OPENAI_MODEL
-                logger.info("Initialized OpenAI client for skill extraction")
             else:
-                logger.warning("No OpenAI API key found. AI extraction disabled.")
+                logger.warning("=" * 60)
+                logger.warning("RESUME PARSER AI SERVICE: No LLM configuration found. AI extraction disabled.")
+                logger.warning("=" * 60)
                 self.use_ai_extraction = False
                 
         except Exception as e:
@@ -591,6 +613,11 @@ Resume Text (look for name in FIRST FEW LINES):
         try:
             # Prepare the prompt with resume text (increase limit for comprehensive extraction)
             prompt = self.AI_COMPREHENSIVE_EXTRACTION_PROMPT.replace("{resume_text}", text[:16000])
+            
+            # Determine service type for logging
+            from ats_config import ATSConfig
+            service_type = "OLLAMA" if ATSConfig.USE_OLLAMA else ("AZURE OPENAI" if ATSConfig.AZURE_OPENAI_ENDPOINT else "OPENAI")
+            logger.info(f"Extracting resume data using {service_type} (model: {self.ai_model})")
             
             # Call AI API
             response = self.ai_client.chat.completions.create(

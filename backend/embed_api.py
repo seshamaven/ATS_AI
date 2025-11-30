@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 from flask import Flask, jsonify
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from typing import List
 from pinecone import Pinecone
 from datetime import datetime
 from config import Config
@@ -29,11 +30,44 @@ if not Config.validate_config():
 # Print configuration (hiding sensitive data)
 Config.print_config(hide_sensitive=True)
 
-# Initialize OpenAI embeddings based on configuration
+# Initialize embeddings based on configuration
+class OllamaLangchainEmbeddings:
+    """Langchain-compatible wrapper for Ollama embeddings."""
+    
+    def __init__(self, ollama_client):
+        self.ollama_client = ollama_client
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query text."""
+        logger.debug("Generating embedding using OLLAMA")
+        return self.ollama_client.embeddings(text)
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed multiple documents."""
+        logger.debug(f"Generating embeddings for {len(texts)} documents using OLLAMA")
+        return [self.ollama_client.embeddings(text) for text in texts]
+
 def get_openai_embeddings():
-    """Get OpenAI embeddings client (Azure or regular) based on configuration."""
-    if Config.AZURE_OPENAI_ENDPOINT:
+    """Get embeddings client (Ollama, Azure OpenAI, or regular OpenAI) based on configuration."""
+    if Config.USE_OLLAMA:
+        from ollama_client import get_ollama_client
+        logger.info("=" * 60)
+        logger.info("EMBED API EMBEDDINGS SERVICE: Using OLLAMA")
+        logger.info(f"  Model: {Config.OLLAMA_MODEL}")
+        logger.info(f"  Base URL: {Config.OLLAMA_BASE_URL}")
+        logger.info("=" * 60)
+        ollama_client = get_ollama_client(
+            base_url=Config.OLLAMA_BASE_URL,
+            model=Config.OLLAMA_MODEL
+        )
+        return OllamaLangchainEmbeddings(ollama_client)
+    elif Config.AZURE_OPENAI_ENDPOINT:
         from langchain_openai import AzureOpenAIEmbeddings
+        logger.info("=" * 60)
+        logger.info("EMBED API EMBEDDINGS SERVICE: Using AZURE OPENAI")
+        logger.info(f"  Model: {Config.AZURE_OPENAI_DEPLOYMENT_NAME}")
+        logger.info(f"  Endpoint: {Config.AZURE_OPENAI_ENDPOINT}")
+        logger.info("=" * 60)
         return AzureOpenAIEmbeddings(
             azure_deployment=Config.AZURE_OPENAI_DEPLOYMENT_NAME,
             openai_api_key=Config.AZURE_OPENAI_API_KEY,
@@ -41,6 +75,10 @@ def get_openai_embeddings():
             azure_endpoint=Config.AZURE_OPENAI_ENDPOINT
         )
     else:
+        logger.info("=" * 60)
+        logger.info("EMBED API EMBEDDINGS SERVICE: Using OPENAI")
+        logger.info(f"  Model: {Config.OPENAI_EMBEDDING_MODEL}")
+        logger.info("=" * 60)
         return OpenAIEmbeddings(openai_api_key=Config.OPENAI_API_KEY)
 
 embeddings = get_openai_embeddings()

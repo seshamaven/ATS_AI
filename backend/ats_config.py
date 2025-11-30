@@ -35,7 +35,12 @@ class ATSConfig:
     MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))
     MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306')))
     
-    # Azure OpenAI Configuration
+    # Ollama Configuration (Preferred - Local LLM)
+    OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+    OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:4b')
+    USE_OLLAMA = os.getenv('USE_OLLAMA', 'True').lower() == 'true'
+    
+    # Azure OpenAI Configuration (Fallback)
     AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
     AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT', '')
     AZURE_OPENAI_API_VERSION = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
@@ -147,12 +152,13 @@ class ATSConfig:
             'MYSQL_DATABASE'
         ]
         
-        # Check for either Azure OpenAI or regular OpenAI
+        # Check for Ollama, Azure OpenAI, or regular OpenAI
+        has_ollama = cls.USE_OLLAMA
         has_azure = cls.AZURE_OPENAI_API_KEY and cls.AZURE_OPENAI_ENDPOINT
         has_openai = cls.OPENAI_API_KEY
         
-        if not (has_azure or has_openai):
-            print("Missing OpenAI configuration: Need either AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY")
+        if not (has_ollama or has_azure or has_openai):
+            print("Missing LLM configuration: Need either USE_OLLAMA=True, AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, or OPENAI_API_KEY")
             return False
         
         missing_vars = []
@@ -184,10 +190,13 @@ class ATSConfig:
             ('MySQL Password', '***' if hide_sensitive else cls.MYSQL_PASSWORD),
             ('MySQL Database', cls.MYSQL_DATABASE),
             ('MySQL Port', cls.MYSQL_PORT),
+            ('Use Ollama', cls.USE_OLLAMA),
+            ('Ollama Base URL', cls.OLLAMA_BASE_URL if cls.USE_OLLAMA else 'Not configured'),
+            ('Ollama Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else 'Not configured'),
             ('Azure OpenAI Endpoint', cls.AZURE_OPENAI_ENDPOINT or 'Not configured'),
             ('Azure OpenAI API Key', '***' if hide_sensitive and cls.AZURE_OPENAI_API_KEY else 'Not configured'),
             ('OpenAI API Key', '***' if hide_sensitive and cls.OPENAI_API_KEY else 'Not configured'),
-            ('Embedding Model', cls.AZURE_OPENAI_MODEL or cls.OPENAI_EMBEDDING_MODEL),
+            ('Embedding Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else (cls.AZURE_OPENAI_MODEL or cls.OPENAI_EMBEDDING_MODEL)),
             ('Use Pinecone', cls.USE_PINECONE),
             ('Pinecone Index', cls.PINECONE_INDEX_NAME if cls.USE_PINECONE else 'Not enabled'),
             ('ATS API Port', cls.ATS_API_PORT),

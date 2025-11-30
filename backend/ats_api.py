@@ -80,7 +80,7 @@ os.makedirs(ATSConfig.UPLOAD_FOLDER, exist_ok=True)
 
 class EmbeddingService:
     """
-    Service to generate embeddings using Azure OpenAI or OpenAI.
+    Service to generate embeddings using Ollama, Azure OpenAI, or OpenAI.
     
     STATELESS DESIGN: This class is stateless and thread-safe.
     It holds only immutable configuration (API keys, model names).
@@ -91,20 +91,41 @@ class EmbeddingService:
     def __init__(self):
         # Initialize embedding service based on configuration
         # NOTE: Only immutable configuration stored here (safe for global instance)
-        self.use_azure = bool(ATSConfig.AZURE_OPENAI_ENDPOINT)
-        
-        if self.use_azure:
-            logger.info("Using Azure OpenAI for embeddings")
+        if ATSConfig.USE_OLLAMA:
+            from ollama_client import get_ollama_client
+            logger.info("=" * 60)
+            logger.info("EMBEDDINGS SERVICE: Using OLLAMA")
+            logger.info(f"  Model: {ATSConfig.OLLAMA_MODEL}")
+            logger.info(f"  Base URL: {ATSConfig.OLLAMA_BASE_URL}")
+            logger.info("=" * 60)
+            self.ollama_client = get_ollama_client(
+                base_url=ATSConfig.OLLAMA_BASE_URL,
+                model=ATSConfig.OLLAMA_MODEL
+            )
+            self.client = None
+            self.model = ATSConfig.OLLAMA_MODEL
+            self.use_ollama = True
+        elif ATSConfig.AZURE_OPENAI_ENDPOINT:
+            logger.info("=" * 60)
+            logger.info("EMBEDDINGS SERVICE: Using AZURE OPENAI")
+            logger.info(f"  Model: {ATSConfig.AZURE_OPENAI_EMBEDDING_DEPLOYMENT}")
+            logger.info(f"  Endpoint: {ATSConfig.AZURE_OPENAI_ENDPOINT}")
+            logger.info("=" * 60)
             self.client = AzureOpenAI(
                 api_key=ATSConfig.AZURE_OPENAI_API_KEY,
                 api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
                 azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
             )
             self.model = ATSConfig.AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+            self.use_ollama = False
         else:
-            logger.info("Using OpenAI for embeddings")
+            logger.info("=" * 60)
+            logger.info("EMBEDDINGS SERVICE: Using OPENAI")
+            logger.info(f"  Model: {ATSConfig.OPENAI_EMBEDDING_MODEL}")
+            logger.info("=" * 60)
             self.client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
             self.model = ATSConfig.OPENAI_EMBEDDING_MODEL
+            self.use_ollama = False
     
     def generate_embedding(self, text: str) -> List[float]:
         """
@@ -117,18 +138,30 @@ class EmbeddingService:
             1536-dimension embedding vector
         """
         try:
-            # Truncate text if too long (max 8191 tokens for ada-002)
+            # Truncate text if too long
             if len(text) > 30000:
                 text = text[:30000]
             
-            response = self.client.embeddings.create(
-                input=text,
-                model=self.model
-            )
-            
-            embedding = response.data[0].embedding
-            logger.info(f"Generated embedding with {len(embedding)} dimensions")
-            return embedding
+            if self.use_ollama:
+                logger.debug(f"Generating embedding using OLLAMA (model: {self.model})")
+                embedding = self.ollama_client.embeddings(text)
+                # Ensure embedding is 1536 dimensions (pad or truncate if needed)
+                if len(embedding) < 1536:
+                    embedding.extend([0.0] * (1536 - len(embedding)))
+                elif len(embedding) > 1536:
+                    embedding = embedding[:1536]
+                logger.info(f"Generated embedding using OLLAMA - {len(embedding)} dimensions")
+                return embedding
+            else:
+                service_name = "AZURE OPENAI" if ATSConfig.AZURE_OPENAI_ENDPOINT else "OPENAI"
+                logger.debug(f"Generating embedding using {service_name} (model: {self.model})")
+                response = self.client.embeddings.create(
+                    input=text,
+                    model=self.model
+                )
+                embedding = response.data[0].embedding
+                logger.info(f"Generated embedding using {service_name} - {len(embedding)} dimensions")
+                return embedding
             
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
@@ -142,13 +175,33 @@ LLM_REFINEMENT_WINDOW = int(os.getenv('ATS_LLM_REFINEMENT_WINDOW', '60'))
 
 
 class LLMRefinementService:
-    """Optional third-layer refinement using Azure/OpenAI chat completions."""
+    """Optional third-layer refinement using Ollama, Azure OpenAI, or OpenAI chat completions."""
     
     def __init__(self):
         self.client = None
+        self.ollama_client = None
         self.model = None
+        self.use_ollama = False
         try:
-            if ATSConfig.AZURE_OPENAI_ENDPOINT:
+            if ATSConfig.USE_OLLAMA:
+                from ollama_client import get_ollama_openai_client
+                logger.info("=" * 60)
+                logger.info("LLM REFINEMENT SERVICE: Using OLLAMA")
+                logger.info(f"  Model: {ATSConfig.OLLAMA_MODEL}")
+                logger.info(f"  Base URL: {ATSConfig.OLLAMA_BASE_URL}")
+                logger.info("=" * 60)
+                self.client = get_ollama_openai_client(
+                    base_url=ATSConfig.OLLAMA_BASE_URL,
+                    model=ATSConfig.OLLAMA_MODEL
+                )
+                self.model = ATSConfig.OLLAMA_MODEL
+                self.use_ollama = True
+            elif ATSConfig.AZURE_OPENAI_ENDPOINT:
+                logger.info("=" * 60)
+                logger.info("LLM REFINEMENT SERVICE: Using AZURE OPENAI")
+                logger.info(f"  Model: {ATSConfig.AZURE_OPENAI_MODEL}")
+                logger.info(f"  Endpoint: {ATSConfig.AZURE_OPENAI_ENDPOINT}")
+                logger.info("=" * 60)
                 self.client = AzureOpenAI(
                     api_key=ATSConfig.AZURE_OPENAI_API_KEY,
                     api_version=ATSConfig.AZURE_OPENAI_API_VERSION,
@@ -156,11 +209,16 @@ class LLMRefinementService:
                 )
                 self.model = ATSConfig.AZURE_OPENAI_MODEL
             elif ATSConfig.OPENAI_API_KEY:
+                logger.info("=" * 60)
+                logger.info("LLM REFINEMENT SERVICE: Using OPENAI")
+                logger.info(f"  Model: {ATSConfig.OPENAI_MODEL}")
+                logger.info("=" * 60)
                 self.client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
                 self.model = ATSConfig.OPENAI_MODEL
         except Exception as exc:
             logger.warning(f"LLM refinement disabled: {exc}")
             self.client = None
+            self.ollama_client = None
             self.model = None
     
     @property
@@ -196,6 +254,9 @@ class LLMRefinementService:
                 f"Job context:\n{job_context[:2000]}\n\n"
                 f"Candidates:\n{json.dumps(prompt_candidates, ensure_ascii=False)}"
             )
+            
+            service_type = "OLLAMA" if self.use_ollama else ("AZURE OPENAI" if ATSConfig.AZURE_OPENAI_ENDPOINT else "OPENAI")
+            logger.info(f"Reranking candidates using {service_type} (model: {self.model})")
             
             response = self.client.chat.completions.create(
                 model=self.model,

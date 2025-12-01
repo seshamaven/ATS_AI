@@ -138,10 +138,13 @@ class OllamaClient:
 class OllamaChatCompletions:
     """
     OpenAI-compatible chat completions interface for Ollama.
+    Supports both chat.create() and chat.completions.create() for compatibility.
     """
     
     def __init__(self, client: OllamaClient):
         self.client = client
+        # Add self-reference for OpenAI-compatible interface: chat.completions.create()
+        self.completions = self
     
     def create(self, model: str = None, messages: List[Dict[str, str]] = None, temperature: float = 0.7, max_tokens: Optional[int] = None, **kwargs) -> Dict[str, Any]:
         """

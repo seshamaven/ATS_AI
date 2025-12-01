@@ -52,6 +52,12 @@ from phone_extractor import extract_phone_numbers
 from location_identifier import extract_location as extract_location_advanced
 from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
 from email_extractor import extract_email_and_provider
+from name_AI_extraction import extract_name_with_ai
+from company_AI_extraction import extract_company_with_ai
+from designation_AI_extraction import extract_designation_with_ai
+from domain_AI_extraction import extract_domain_with_ai
+from certifications_AI_extraction import extract_certifications_with_ai
+from summary_AI_extraction import extract_summary_with_ai
 
 # Import the new EducationExtractor
 try:
@@ -125,32 +131,14 @@ Summary
 The extracted JSON must be database-ready and syntactically valid (no markdown or extra text).
 
 ⚙️ EXTRACTION GUIDELINES
-1. full_name
 
-Identify the candidate’s actual personal name.
-Follow these detailed rules and rejection patterns:
-
-Rules for Extraction:
-
-Name is usually on line 1 or 2 (Title Case or ALL CAPS).
-
-Should contain 2–4 alphabetic words only.
-
-Reject anything containing punctuation, digits, or organization names.
-
-Stop searching after the first 3 lines.
-
-Reject:
-
-Section headers (Education, Experience, etc.)
-
-Degrees, Job Titles, or Organization Names.
-
-Examples:
-✅ Correct: Daniel Mindlin, VARRE DHANA LAKSHMI DURGA
-❌ Incorrect: Education, Infosys, B.Tech in EEE
-
-NOTE: The following fields are extracted separately using Python-based extraction and should NOT be included in AI response:
+NOTE: The following fields are extracted separately using dedicated modules and should NOT be included in AI response:
+- full_name (extracted by name_AI_extraction.py)
+- current_company (extracted by company_AI_extraction.py)
+- current_designation (extracted by designation_AI_extraction.py)
+- domain (extracted by domain_AI_extraction.py)
+- certifications (extracted by certifications_AI_extraction.py)
+- summary (extracted by summary_AI_extraction.py)
 - email (extracted by email_extractor.py)
 - phone_number (extracted by phone_extractor.py)
 - total_experience (extracted by experience_extractor.py)
@@ -161,53 +149,9 @@ NOTE: The following fields are extracted separately using Python-based extractio
 
 Do NOT extract these fields - they will be ignored.
 
-3. current_company
-
-Extract the current or most recent employer name.
-
-4. current_designation
-
-Extract the most recent job title.
-
-5. domain
-
-Extract professional domains or industries (not education fields).
-Use the sample list as reference :
- {{DOMAINS}}
-
-Rules:
-
-If technical keywords (Python, Java, AWS, etc.) appear → include "Information Technology".
-
-Include multiple relevant business domains (e.g., "Banking", "Finance").
-
-Ignore educational degrees — only professional domains count.
-
-6. certifications
-
-Capture all professional or vendor certifications (e.g., AWS Certified Developer, PMP).
-
-7. summary
-
-Provide a concise 2–3 line professional summary describing:
-
-Experience in years
-
-Domain focus
-
-Technical strengths
-
-Avoid generic summaries (“Hardworking individual”) — focus on quantifiable professional traits.
+This comprehensive extraction is now deprecated. All fields are extracted using dedicated modules.
 
 ⚙️ QUALITY & VALIDATION RULES
-
-For full_name:
-
-Must not include punctuation, numbers, company, or degree text.
-
-Must appear within first 3 lines.
-
-Use alphabetic words only.
 
 For All Fields:
 
@@ -226,12 +170,7 @@ Return a single valid JSON object — no markdown, no explanation text.
 Example:
 
 {
-  "full_name": "John M. Smith",
-  "current_company": "Infosys",
-  "current_designation": "Software Engineer",
-  "domain": ["Information Technology", "Banking"],
-  "certifications": ["AWS Certified Developer"],
-  "summary": "Software Engineer with strong experience in Java and ReactJS with exposure to banking domain."
+  "note": "All fields are now extracted using dedicated modules. This comprehensive extraction is deprecated."
 }
 
 🧮 EVALUATION CRITERIA
@@ -486,7 +425,7 @@ Resume Text (look for name in FIRST FEW LINES):
         
         logger.info("Checking PDF header area (top 5 lines) for candidate name...")
         
-        # First, check top 5 lines thoroughly for the name (PDF header area)
+        # First pass: Check lines WITHOUT commas (names rarely have commas, locations often do)
         for idx, line in enumerate(lines[:5]):
             # Strip and normalize whitespace
             line = ' '.join(line.split())  # Normalize multiple spaces to single space
@@ -495,8 +434,8 @@ Resume Text (look for name in FIRST FEW LINES):
             # Remove trailing separators like | or • that might appear after names
             line = line.rstrip('|•').strip()
             
-            # Skip empty lines
-            if not line:
+            # Skip empty lines or lines with commas (check those in second pass)
+            if not line or ',' in line:
                 continue
             
             # Skip section headers (but check if NOT in first 3 lines where actual name might be)
@@ -512,8 +451,24 @@ Resume Text (look for name in FIRST FEW LINES):
             if re.search(r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b', line, re.IGNORECASE):
                 continue
             
-            # Skip email addresses (they shouldn't be names)
+            # Extract name part before '@' if line contains email
+            # Example: "MUPPANA APARNA DEVI        aparnadevi2939@gmail.com" -> "MUPPANA APARNA DEVI"
             if '@' in line:
+                # Split by '@' and take the part before it
+                name_part = line.split('@')[0].strip()
+                # Clean up: remove any trailing email-like patterns or extra whitespace
+                # Remove trailing patterns that might be part of email (before @)
+                name_part = re.sub(r'\s+[a-zA-Z0-9._%+-]+$', '', name_part).strip()
+                # Additional cleanup: remove any trailing dots, numbers, or special chars
+                name_part = re.sub(r'[.\d]+$', '', name_part).strip()
+                
+                if name_part and 2 <= len(name_part.split()) <= 4:
+                    # Validate it looks like a name (all alphabetic words)
+                    words = name_part.split()
+                    if all(word.replace('.', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                        logger.info(f"Found candidate name in line with email: {name_part}")
+                        return name_part
+                # If extraction failed, skip this line
                 continue
             
             # Skip phone numbers
@@ -523,6 +478,132 @@ Resume Text (look for name in FIRST FEW LINES):
             # Skip addresses (they often contain numbers and "Drive", "Street", etc.)
             if any(addr_word in line_lower for addr_word in ['drive', 'street', 'avenue', 'road', 'blvd', 'city']):
                 continue
+            
+            # For first 3 lines only: be more lenient - might be the actual name
+            if idx < 3:
+                # Reject sentence fragments (ending with comma, period, or containing common phrases)
+                if line.endswith(',') or line.endswith('.'):
+                    continue
+                # Reject common bullet point phrases
+                if any(phrase in line_lower for phrase in ['while maintaining', 'while working', 'while attending', 
+                                                           'while completing', 'full course', 'as part of', 
+                                                           'in order to', 'for the', 'that']):
+                    continue
+                
+                # Accept if it looks like a name (2-4 words, Title Case or ALL CAPS)
+                # CRITICAL: Allow ALL CAPS names in PDF headers (e.g., "VARRE DHANA LAKSHMI DURGA")
+                if line and 2 <= len(line.split()) <= 4 and len(line) < 70:
+                    words = line.split()
+                    # Check if mostly alphabetic and NOT a sentence fragment
+                    if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                        # Accept even if ALL CAPS (common in PDF headers)
+                        logger.info(f"Found candidate name in PDF header area (no comma): {line}")
+                        return line
+            
+            # For lines beyond first 3: more strict validation
+            # Name is typically 2-4 words, mostly alphabetic, not too long
+            if line and 2 <= len(line.split()) <= 4 and len(line) < 50:
+                words = line.split()
+                # Allow hyphenated names (e.g., "Mary-Jane"), apostrophes, and periods
+                if all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                    # Additional checks: reject sentence fragments and bullet point content
+                    # Reject if ends with comma or period
+                    if line.endswith(',') or line.endswith('.'):
+                        continue
+                    # Reject common bullet point patterns
+                    if any(phrase in line_lower for phrase in ['while maintaining', 'while working', 
+                                                                'full course', 'as part of', 
+                                                                'in order to', 'that', 'the']):
+                        continue
+                    # Additional check: name should not be in ALL CAPS (likely a section header)
+                    # But allow Title Case
+                    if not line.isupper():
+                        return line
+        
+        # Second pass: Check lines WITH commas (but reject location patterns)
+        for idx, line in enumerate(lines[:5]):
+            # Strip and normalize whitespace
+            line = ' '.join(line.split())  # Normalize multiple spaces to single space
+            line = line.strip()
+            
+            # Remove trailing separators like | or • that might appear after names
+            line = line.rstrip('|•').strip()
+            
+            # Skip empty lines or lines without commas (already checked in first pass)
+            if not line or ',' not in line:
+                continue
+            
+            # Skip section headers (but check if NOT in first 3 lines where actual name might be)
+            if idx > 2 and line.lower() in invalid_names:
+                continue
+            
+            # Skip lines with academic degree patterns
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in degree_keywords):
+                continue
+            
+            # Skip lines with degree abbreviations (B.A., M.S., etc.)
+            if re.search(r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b', line, re.IGNORECASE):
+                continue
+            
+            # Extract name part before '@' if line contains email
+            # Example: "MUPPANA APARNA DEVI        aparnadevi2939@gmail.com" -> "MUPPANA APARNA DEVI"
+            if '@' in line:
+                # Split by '@' and take the part before it
+                name_part = line.split('@')[0].strip()
+                # Clean up: remove any trailing email-like patterns or extra whitespace
+                # Remove trailing patterns that might be part of email (before @)
+                name_part = re.sub(r'\s+[a-zA-Z0-9._%+-]+$', '', name_part).strip()
+                # Additional cleanup: remove any trailing dots, numbers, or special chars
+                name_part = re.sub(r'[.\d]+$', '', name_part).strip()
+                
+                if name_part and 2 <= len(name_part.split()) <= 4:
+                    # Validate it looks like a name (all alphabetic words)
+                    words = name_part.split()
+                    if all(word.replace('.', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                        logger.info(f"Found candidate name in line with email: {name_part}")
+                        return name_part
+                # If extraction failed, skip this line
+                continue
+            
+            # Skip phone numbers
+            if re.search(r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', line):
+                continue
+            
+            # Skip addresses (they often contain numbers and "Drive", "Street", etc.)
+            if any(addr_word in line_lower for addr_word in ['drive', 'street', 'avenue', 'road', 'blvd', 'city']):
+                continue
+            
+            # Reject location patterns: "City, State" or "City, Country"
+            # Pattern: Word(s), Word(s) - typically locations
+            if ',' in line:
+                # Check if it matches "City, State" or "City, Country" pattern
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) == 2:
+                    part1, part2 = parts[0], parts[1]
+                    # If both parts are 1-3 words and look like location names
+                    if (1 <= len(part1.split()) <= 3 and 1 <= len(part2.split()) <= 3 and
+                        all(word.replace('.', '').isalpha() for word in part1.split()) and
+                        all(word.replace('.', '').isalpha() for word in part2.split())):
+                        # Check if second part looks like a state/province/country
+                        part2_lower = part2.lower()
+                        # Known location indicators
+                        location_indicators = [
+                            'andhra pradesh', 'telangana', 'karnataka', 'tamil nadu', 'maharashtra',
+                            'gujarat', 'rajasthan', 'west bengal', 'uttar pradesh', 'punjab',
+                            'haryana', 'delhi', 'hyderabad', 'bangalore', 'mumbai', 'chennai',
+                            'kolkata', 'pune', 'rajahmundry', 'visakhapatnam', 'vijayawada',
+                            'india', 'usa', 'united states', 'uk', 'united kingdom'
+                        ]
+                        if any(indicator in part2_lower for indicator in location_indicators):
+                            logger.debug(f"Skipping location pattern: {line}")
+                            continue
+                        # Also check if it's a common location pattern (two capitalized words separated by comma)
+                        if (part1[0].isupper() and part2[0].isupper() and 
+                            len(part1) > 3 and len(part2) > 3):
+                            # Likely a location, skip it
+                            logger.debug(f"Skipping likely location pattern: {line}")
+                            continue
             
             # For first 3 lines only: be more lenient - might be the actual name
             if idx < 3:
@@ -652,70 +733,34 @@ Resume Text (look for name in FIRST FEW LINES):
                 logger.error(f"Full response (first 500 chars): {response_content[:500]}")
                 return None
             
-            # Validate extracted name - reject section headers and academic degrees
+            # Validate and potentially re-extract name using dedicated module
+            # First check if comprehensive extraction found a name
             full_name = ai_result.get('full_name', '')
-            if full_name:
-                # Common section headers and academic degrees that should NEVER be names
-                invalid_names = ['education', 'experience', 'skills', 'contact', 'objective', 
-                               'summary', 'qualifications', 'work history', 'professional summary',
-                               'references', 'certifications', 'projects', 'achievements']
+            
+            # Import validation function
+            from name_AI_extraction import validate_extracted_name
+            
+            # Validate the name from comprehensive extraction
+            if full_name and validate_extracted_name(full_name):
+                logger.info(f"Comprehensive extraction found valid name: {full_name}")
+            else:
+                # Name is invalid or missing, use dedicated name extraction with fallback
+                logger.warning(f"Comprehensive extraction name invalid/missing: '{full_name}', trying dedicated name extraction...")
+                extracted_name = extract_name_with_ai(
+                    text=text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model,
+                    fallback_extractor=self.extract_name,  # Pass the regex fallback method
+                    nlp=self.nlp  # Pass NLP for final fallback
+                )
                 
-                # Check for academic degree patterns (B.A., M.S., PhD, etc.)
-                degree_patterns = [
-                    r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b',
-                    r'\bin\s+[A-Z][a-z]+',
-                    r'degree|diploma|certificate'
-                ]
-                
-                is_invalid = False
-                
-                # Check if it's in invalid names list
-                if full_name.lower() in invalid_names:
-                    is_invalid = True
-                
-                # Check if it contains academic degree patterns
-                if not is_invalid:
-                    for pattern in degree_patterns:
-                        if re.search(pattern, full_name, re.IGNORECASE):
-                            is_invalid = True
-                            break
-                
-                # Check if it looks like an academic degree format (e.g., "B.A. in History")
-                if not is_invalid and any(keyword in full_name.lower() for keyword in ['in ', 'degree', 'major', 'minor']):
-                    is_invalid = True
-                
-                # Check if it's a sentence fragment from bullet points (e.g., "full course load.")
-                if not is_invalid:
-                    sentence_fragment_keywords = ['while maintaining', 'while working', 'while attending', 
-                                                  'while completing', 'full course', 'as part of', 
-                                                  'in order to', 'for the', 'that', 'load.', 'completed in']
-                    if any(phrase in full_name.lower() for phrase in sentence_fragment_keywords):
-                        is_invalid = True
-                
-                # Check if it ends with a period or comma (likely a sentence fragment)
-                if not is_invalid and (full_name.endswith('.') or full_name.endswith(',')):
-                    is_invalid = True
-                
-                if is_invalid:
-                    logger.warning(f"AI extracted invalid name '{full_name}' (sentence fragment/section header/academic degree). Trying regex fallback...")
-                    # Use regex-based extraction as fallback
-                    fallback_name = self.extract_name(text)
-                    if fallback_name and fallback_name != 'Unknown':
-                        ai_result['full_name'] = fallback_name
-                        logger.info(f"Replaced with: {fallback_name}")
-                    else:
-                        # Last resort: try to extract from first PERSON entity in first 500 chars
-                        logger.warning(f"Regex fallback also failed. Trying NLP...")
-                        if self.nlp:
-                            doc = self.nlp(text[:500])
-                            for ent in doc.ents:
-                                if ent.label_ == "PERSON" and len(ent.text.split()) <= 4:
-                                    logger.info(f"Found name via NLP: {ent.text}")
-                                    ai_result['full_name'] = ent.text
-                                    break
-                        if ai_result.get('full_name', '').lower() in ['education', 'experience', 'skills']:
-                            ai_result['full_name'] = 'Unknown'
-                            logger.warning(f"Final fallback resulted in invalid name, setting to Unknown")
+                if extracted_name:
+                    ai_result['full_name'] = extracted_name
+                    logger.info(f"Dedicated name extraction found: {extracted_name}")
+                else:
+                    # All methods failed
+                    ai_result['full_name'] = ''
+                    logger.warning("All name extraction methods failed")
             
             logger.info(f"AI extraction completed for {ai_result.get('full_name', 'Unknown')}")
             return ai_result
@@ -1305,8 +1350,22 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Python-only extraction completed: {len(technical_skills)} technical skills, {len(secondary_skills)} soft skills")
                 
-                # Get domains (handle both single and multiple)
-                domain_list = ai_data.get('domain', [])
+                # Get domains using dedicated AI extraction
+                domain_list = extract_domain_with_ai(
+                    text=resume_text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model
+                ) if self.use_ai_extraction and self.ai_client else None
+                
+                # If AI extraction failed or not available, try fallback
+                if not domain_list:
+                    fallback_domain = self.extract_domain(resume_text)
+                    if fallback_domain:
+                        domain_list = [fallback_domain]
+                    else:
+                        domain_list = []
+                
+                # Ensure it's a list
                 if not isinstance(domain_list, list):
                     domain_list = [domain_list] if domain_list else []
                 
@@ -1314,12 +1373,6 @@ Resume Text (look for name in FIRST FEW LINES):
                 if technical_skills and "Information Technology" not in domain_list:
                     domain_list.insert(0, "Information Technology")
                     logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
-                
-                # If no domains found, try fallback extraction
-                if not domain_list:
-                    fallback_domain = self.extract_domain(resume_text)
-                    if fallback_domain:
-                        domain_list = [fallback_domain]
                 
                 domain = ', '.join(domain_list) if domain_list else ''
                 
@@ -1349,16 +1402,34 @@ Resume Text (look for name in FIRST FEW LINES):
                         education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else highest_degree
                         logger.warning(f"Both Python and AI extraction failed, using: {highest_degree}")
                 
-                # Get certifications
-                certifications = ai_data.get('certifications', [])
-                certifications_str = ', '.join(certifications) if isinstance(certifications, list) else certifications or ''
+                # Get certifications using dedicated AI extraction
+                certifications = extract_certifications_with_ai(
+                    text=resume_text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model
+                ) if self.use_ai_extraction and self.ai_client else []
+                certifications_str = ', '.join(certifications) if isinstance(certifications, list) and certifications else ''
                 
-                # Get current company and designation
-                current_company = ai_data.get('current_company') or ''
-                current_designation = ai_data.get('current_designation') or ''
+                # Get current company using dedicated AI extraction
+                current_company = extract_company_with_ai(
+                    text=resume_text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model
+                ) if self.use_ai_extraction and self.ai_client else ''
                 
-                # Summary
-                summary = ai_data.get('summary') or ''
+                # Get current designation using dedicated AI extraction
+                current_designation = extract_designation_with_ai(
+                    text=resume_text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model
+                ) if self.use_ai_extraction and self.ai_client else ''
+                
+                # Get summary using dedicated AI extraction
+                summary = extract_summary_with_ai(
+                    text=resume_text,
+                    ai_client=self.ai_client,
+                    ai_model=self.ai_model
+                ) if self.use_ai_extraction and self.ai_client else ''
                 
                 # Get additional data
                 location = self.extract_location(resume_text)

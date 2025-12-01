@@ -21,6 +21,9 @@ pandas>=2.0.0
 spacy>=3.7.0
 # Download spaCy model: python -m spacy download en_core_web_sm
 
+# Embeddings Fallback (when Ollama model doesn't support embeddings)
+sentence-transformers>=2.2.0
+
 # Resume Parsing - PDF
 PyPDF2>=3.0.0
 

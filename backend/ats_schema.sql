@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     all_skills TEXT COMMENT 'All extracted skills',
     profile_type VARCHAR(100) DEFAULT 'Generalist' COMMENT 'Primary role classification (Java, .Net, SAP, etc.)',
     role_type VARCHAR(100) COMMENT 'Role type classification',
+ 
     subrole_type VARCHAR(100) COMMENT 'Sub-role type classification',
     sub_profile_type VARCHAR(100) COMMENT 'Sub-profile type classification',
     

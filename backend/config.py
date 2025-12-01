@@ -35,7 +35,12 @@ class Config:
     MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('MYSQL_DATABASE', 'reglib'))
     MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('MYSQL_PORT', '3306')))
     
-    # Azure OpenAI Configuration (Preferred)
+    # Ollama Configuration (Preferred - Local LLM)
+    OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+    OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:4b')
+    USE_OLLAMA = os.getenv('USE_OLLAMA', 'True').lower() == 'true'
+    
+    # Azure OpenAI Configuration (Fallback)
     AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
     AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT', '')
     AZURE_OPENAI_API_VERSION = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
@@ -43,7 +48,7 @@ class Config:
     AZURE_OPENAI_MODEL = os.getenv('AZURE_OPENAI_MODEL', 'gpt-4o')
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT', 'text-embedding-ada-002')
     
-    # OpenAI Configuration (Alternative)
+    # OpenAI Configuration (Alternative Fallback)
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
     OPENAI_EMBEDDING_MODEL = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-ada-002')
@@ -116,12 +121,13 @@ class Config:
             'MYSQL_DATABASE'
         ]
         
-        # Check for either Azure OpenAI or regular OpenAI
+        # Check for Ollama, Azure OpenAI, or regular OpenAI
+        has_ollama = cls.USE_OLLAMA
         has_azure = cls.AZURE_OPENAI_API_KEY and cls.AZURE_OPENAI_ENDPOINT
         has_openai = cls.OPENAI_API_KEY
         
-        if not (has_azure or has_openai):
-            print("Missing OpenAI configuration: Need either AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY")
+        if not (has_ollama or has_azure or has_openai):
+            print("Missing LLM configuration: Need either USE_OLLAMA=True, AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, or OPENAI_API_KEY")
             return False
         
         missing_vars = []
@@ -148,10 +154,13 @@ class Config:
             ('MySQL Password', '***' if hide_sensitive else cls.MYSQL_PASSWORD),
             ('MySQL Database', cls.MYSQL_DATABASE),
             ('MySQL Port', cls.MYSQL_PORT),
+            ('Use Ollama', cls.USE_OLLAMA),
+            ('Ollama Base URL', cls.OLLAMA_BASE_URL if cls.USE_OLLAMA else 'Not configured'),
+            ('Ollama Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else 'Not configured'),
             ('Azure OpenAI Endpoint', cls.AZURE_OPENAI_ENDPOINT or 'Not configured'),
             ('Azure OpenAI API Key', '***' if hide_sensitive and cls.AZURE_OPENAI_API_KEY else 'Not configured'),
             ('OpenAI API Key', '***' if hide_sensitive and cls.OPENAI_API_KEY else 'Not configured'),
-            ('Embedding Model', cls.AZURE_OPENAI_MODEL or cls.OPENAI_EMBEDDING_MODEL),
+            ('Embedding Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else (cls.AZURE_OPENAI_MODEL or cls.OPENAI_EMBEDDING_MODEL)),
             ('Pinecone API Key', '***' if hide_sensitive else cls.PINECONE_API_KEY),
             ('Pinecone Index', cls.PINECONE_INDEX_NAME),
             ('Embed API Port', cls.EMBED_API_PORT),

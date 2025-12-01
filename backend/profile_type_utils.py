@@ -541,8 +541,16 @@ def _count_keyword_matches(keyword: str, text: str, profile_type: str) -> int:
     """Count keyword matches using word boundaries."""
     pattern = COMPILED_PATTERNS.get(profile_type, {}).get(keyword)
     if not pattern:
+        if profile_type == "Python" and keyword == "python":
+            logger.warning(f"DEBUG _count_keyword_matches: Pattern not found for Python/python. "
+                          f"COMPILED_PATTERNS has 'Python' key: {'Python' in COMPILED_PATTERNS}, "
+                          f"Python dict has 'python' key: {'python' in COMPILED_PATTERNS.get('Python', {})}")
         return 0
-    return len(pattern.findall(text))
+    matches = pattern.findall(text)
+    count = len(matches)
+    if profile_type == "Python" and keyword == "python":
+        logger.info(f"DEBUG _count_keyword_matches: pattern={pattern.pattern}, matches={matches}, count={count}")
+    return count
 
 def _has_negative_context(keyword: str, text: str, profile_type: str) -> bool:
     """Check if keyword appears in negative context."""
@@ -551,15 +559,26 @@ def _has_negative_context(keyword: str, text: str, profile_type: str) -> bool:
     if not pattern:
         return False
     
+    # Compile negative indicator patterns with word boundaries to avoid false positives
+    # e.g., "not" should match "not python" but NOT "notebook"
+    negative_indicator_patterns = [
+        re.compile(r"\bdon'?t\b", re.IGNORECASE),  # Matches "don't" or "dont" as whole words
+        re.compile(r"\bnot\b", re.IGNORECASE),  # Matches "not" as whole word (not "notebook")
+        re.compile(r"\bavoid\b", re.IGNORECASE),
+        re.compile(r"\bnever\b", re.IGNORECASE),
+        re.compile(r"\bno experience\b", re.IGNORECASE),
+        re.compile(r"\bnot familiar\b", re.IGNORECASE),
+        re.compile(r"\bunfamiliar\b", re.IGNORECASE),
+        re.compile(r"\bdon'?t know\b", re.IGNORECASE),  # Matches "don't know" or "dont know"
+    ]
+    
     for match in pattern.finditer(text):
         start, end = match.span()
-        context = text[max(0, start-50):min(len(text), end+50)].lower()
-        negative_indicators = [
-            "don't", "dont", "not", "avoid", "never", "no experience",
-            "not familiar", "unfamiliar", "don't know", "dont know"
-        ]
-        for indicator in negative_indicators:
-            if indicator in context:
+        context = text[max(0, start-50):min(len(text), end+50)]
+        
+        # Check each negative indicator pattern
+        for neg_pattern in negative_indicator_patterns:
+            if neg_pattern.search(context):
                 return True
     return False
 
@@ -882,6 +901,19 @@ def get_all_profile_type_scores(
     for ps in profile_scores:
         all_scores[ps.profile_type] = round(ps.raw_score, 2)  # Round to 2 decimal places for raw scores
     
+    # Debug logging for Python score
+    python_score = all_scores.get("Python", 0.0)
+    python_in_scores = any(ps.profile_type == "Python" for ps in profile_scores)
+    logger.info(f"DEBUG get_all_profile_type_scores: Python score={python_score}, "
+              f"Python in profile_scores list={python_in_scores}, "
+              f"primary_skills='{primary_skills[:100] if primary_skills else 'EMPTY'}', "
+              f"text_blob length={len(text_blob)}")
+    if python_score == 0.0 and "python" in text_blob.lower():
+        logger.warning(f"DEBUG Python score is 0 but 'python' found in text_blob! "
+                      f"profile_scores list has {len(profile_scores)} items")
+        for ps in profile_scores[:5]:
+            logger.info(f"  Top scores: {ps.profile_type}={ps.raw_score}")
+    
     return all_scores
 
 def _determine_profile_type_with_llm(primary_skills: str, secondary_skills: str, resume_text: str, ai_client, ai_model: str) -> str:
@@ -1074,11 +1106,26 @@ def _calculate_normalized_scores(
         keyword_details = []
         
         for keyword, base_weight in keyword_weights.items():
+            # Debug logging for Python profile type
+            if profile_type == "Python" and keyword == "python":
+                pattern = COMPILED_PATTERNS.get(profile_type, {}).get(keyword)
+                logger.info(f"DEBUG Python matching: keyword='{keyword}', pattern exists={pattern is not None}")
+                if pattern:
+                    logger.info(f"DEBUG Python pattern: {pattern.pattern}")
+                logger.info(f"DEBUG Python text_blob contains 'python': {'python' in text_blob}")
+                logger.info(f"DEBUG Python text_blob sample: {text_blob[:200]}")
+            
             if _has_negative_context(keyword, text_blob, profile_type):
+                if profile_type == "Python" and keyword == "python":
+                    logger.warning(f"DEBUG Python: Skipped due to negative context")
                 continue
             
             count = _count_keyword_matches(keyword, text_blob, profile_type)
+            if profile_type == "Python" and keyword == "python":
+                logger.info(f"DEBUG Python: count={count}, base_weight={base_weight}")
             if count == 0:
+                if profile_type == "Python" and keyword == "python":
+                    logger.warning(f"DEBUG Python: count is 0, skipping keyword")
                 continue
             
             location_multiplier = 1.0
@@ -1090,8 +1137,18 @@ def _calculate_normalized_scores(
             elif keyword.lower() in secondary_lower:
                 location_multiplier = 2.0
             
+            if profile_type == "Python" and keyword == "python":
+                logger.info(f"DEBUG Python location: first_lines_lower contains='{'python' in first_lines_lower}', "
+                          f"primary_lower contains='{'python' in primary_lower}', "
+                          f"location_multiplier={location_multiplier}")
+                logger.info(f"DEBUG Python first_lines: '{first_lines_lower[:100]}'")
+                logger.info(f"DEBUG Python primary_lower sample: '{primary_lower[:100]}'")
+            
             keyword_score = count * base_weight * location_multiplier
             raw_score += keyword_score
+            
+            if profile_type == "Python" and keyword == "python":
+                logger.info(f"DEBUG Python: keyword_score={keyword_score}, raw_score so far={raw_score}")
             
             matched_keywords.append(keyword)
             location = ("first_lines" if location_multiplier == 5.0
@@ -1122,6 +1179,10 @@ def _calculate_normalized_scores(
                 matched_keywords=matched_keywords,
                 keyword_details=keyword_details
             ))
+        elif profile_type == "Python":
+            logger.warning(f"DEBUG Python: raw_score is 0, NOT added to profile_scores. "
+                          f"Matched keywords count: {len(matched_keywords)}, "
+                          f"text_blob length: {len(text_blob)}")
     
     return sorted(profile_scores, key=lambda x: x.normalized_score, reverse=True)
 

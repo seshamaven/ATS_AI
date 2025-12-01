@@ -11,9 +11,9 @@ from typing import List, Dict, Any, Optional, Tuple
 from flask import Flask, request, jsonify
 from langchain_openai import OpenAIEmbeddings
 from pinecone import Pinecone
-import openai
 from datetime import datetime
 import numpy as np
+from ollama_client import get_ollama_client, OllamaChatCompletions
 from production_monitoring import (
     get_production_logger,
     get_production_monitor,
@@ -51,11 +51,27 @@ if not Config.validate_config():
 # Print configuration (hiding sensitive data)
 Config.print_config(hide_sensitive=True)
 
-# Initialize OpenAI client based on configuration
+# Initialize OpenAI/Ollama client based on configuration
 def get_openai_client():
-    """Get OpenAI client (Azure or regular) based on configuration."""
-    if Config.AZURE_OPENAI_ENDPOINT:
+    """Get OpenAI/Ollama client based on configuration."""
+    if Config.USE_OLLAMA:
+        from ollama_client import get_ollama_openai_client
+        logger.info("=" * 60)
+        logger.info("LLM SERVICE: Using OLLAMA")
+        logger.info(f"  Model: {Config.OLLAMA_MODEL}")
+        logger.info(f"  Base URL: {Config.OLLAMA_BASE_URL}")
+        logger.info("=" * 60)
+        return get_ollama_openai_client(
+            base_url=Config.OLLAMA_BASE_URL,
+            model=Config.OLLAMA_MODEL
+        )
+    elif Config.AZURE_OPENAI_ENDPOINT:
         from openai import AzureOpenAI
+        logger.info("=" * 60)
+        logger.info("LLM SERVICE: Using AZURE OPENAI")
+        logger.info(f"  Model: {Config.AZURE_OPENAI_MODEL}")
+        logger.info(f"  Endpoint: {Config.AZURE_OPENAI_ENDPOINT}")
+        logger.info("=" * 60)
         return AzureOpenAI(
             api_key=Config.AZURE_OPENAI_API_KEY,
             api_version=Config.AZURE_OPENAI_API_VERSION,
@@ -63,18 +79,57 @@ def get_openai_client():
         )
     else:
         from openai import OpenAI
+        logger.info("=" * 60)
+        logger.info("LLM SERVICE: Using OPENAI")
+        logger.info(f"  Model: {Config.OPENAI_MODEL}")
+        logger.info("=" * 60)
         return OpenAI(api_key=Config.OPENAI_API_KEY)
 
 def get_openai_model():
-    """Get OpenAI model name based on configuration."""
-    if Config.AZURE_OPENAI_ENDPOINT:
+    """Get model name based on configuration."""
+    if Config.USE_OLLAMA:
+        return Config.OLLAMA_MODEL
+    elif Config.AZURE_OPENAI_ENDPOINT:
         return Config.AZURE_OPENAI_MODEL
     else:
         return Config.OPENAI_MODEL
 
-# Initialize OpenAI
-openai.api_key = Config.OPENAI_API_KEY
-embeddings = OpenAIEmbeddings(openai_api_key=Config.OPENAI_API_KEY)
+# Initialize embeddings
+class OllamaLangchainEmbeddings:
+    """Langchain-compatible wrapper for Ollama embeddings."""
+    
+    def __init__(self, ollama_client):
+        self.ollama_client = ollama_client
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query text."""
+        logger.debug("Generating embedding using OLLAMA")
+        return self.ollama_client.embeddings(text)
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed multiple documents."""
+        return [self.ollama_client.embeddings(text) for text in texts]
+
+if Config.USE_OLLAMA:
+    # Use Ollama for embeddings (will fallback to sentence-transformers if needed)
+    ollama_client = get_ollama_client(
+        base_url=Config.OLLAMA_BASE_URL,
+        model=Config.OLLAMA_MODEL
+    )
+    embeddings = OllamaLangchainEmbeddings(ollama_client)
+    logger.info("=" * 60)
+    logger.info("EMBEDDINGS SERVICE: Using OLLAMA")
+    logger.info(f"  Model: {Config.OLLAMA_MODEL}")
+    logger.info(f"  Base URL: {Config.OLLAMA_BASE_URL}")
+    logger.info("=" * 60)
+else:
+    import openai
+    openai.api_key = Config.OPENAI_API_KEY
+    embeddings = OpenAIEmbeddings(openai_api_key=Config.OPENAI_API_KEY)
+    logger.info("=" * 60)
+    logger.info("EMBEDDINGS SERVICE: Using OPENAI")
+    logger.info(f"  Model: {Config.OPENAI_EMBEDDING_MODEL}")
+    logger.info("=" * 60)
 
 # Initialize Pinecone
 pc = Pinecone(api_key=Config.PINECONE_API_KEY)
@@ -610,9 +665,12 @@ class SemanticSimilarityChecker:
             """
             
             client = get_openai_client()
+            model_name = get_openai_model()
+            service_type = "OLLAMA" if Config.USE_OLLAMA else ("AZURE OPENAI" if Config.AZURE_OPENAI_ENDPOINT else "OPENAI")
+            logger.debug(f"Checking similarity using {service_type} (model: {model_name})")
             
             response = client.chat.completions.create(
-                model=get_openai_model(),
+                model=model_name,
                 messages=[
                     {"role": "system", "content": "You are a regulatory compliance expert."},
                     {"role": "user", "content": prompt}

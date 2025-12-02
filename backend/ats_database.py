@@ -27,15 +27,142 @@ class ATSDatabase:
         self.config = config or ATSConfig.get_mysql_config()
         self.connection = None
         self.cursor = None
+        
     
     def connect(self) -> bool:
-        """Establish MySQL connection."""
+        """Establish MySQL connection. Attempts to create database if it doesn't exist."""
         try:
+            # First, try to connect to the database
             self.connection = mysql.connector.connect(**self.config)
             self.cursor = self.connection.cursor(dictionary=True)
             logger.info(f"Connected to MySQL database: {self.config['database']}")
+            # Ensure required columns exist (role_type, subrole_type)
+            self._ensure_role_columns_exist()
             return True
         except Error as e:
+            error_msg = str(e).lower()
+            
+            # Check if database doesn't exist (error 1049)
+            if "1049" in str(e) or "unknown database" in error_msg:
+                logger.warning(f"Database '{self.config['database']}' does not exist. Attempting to create it...")
+                try:
+                    # Connect without specifying database
+                    temp_config = self.config.copy()
+                    database_name = temp_config.pop('database')
+                    
+                    temp_connection = mysql.connector.connect(**temp_config)
+                    temp_cursor = temp_connection.cursor()
+                    
+                    # Create database
+                    temp_cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                    temp_connection.commit()
+                    temp_cursor.close()
+                    temp_connection.close()
+                    
+                    logger.info(f"Database '{database_name}' created successfully")
+                    
+                    # Now try to connect again
+                    self.connection = mysql.connector.connect(**self.config)
+                    self.cursor = self.connection.cursor(dictionary=True)
+                    logger.info(f"Connected to MySQL database: {self.config['database']}")
+                    return True
+                except Error as create_error:
+                    logger.error(f"Failed to create database: {create_error}")
+                    logger.error(f"Please create the database manually: CREATE DATABASE {self.config['database']}")
+                    self.connection = None
+                    self.cursor = None
+                    return False
+            else:
+                # Other connection errors
+                logger.error(f"Error connecting to MySQL: {e}")
+                logger.error(
+                    "Connection config: host=%s, user=%s, database=%s, port=%s",
+                    self.config.get('host'),
+                    self.config.get('user'),
+                    self.config.get('database'),
+                    self.config.get('port'),
+                )
+                logger.error("Please check:")
+                logger.error("  1. MySQL server is running")
+                logger.error("  2. Database credentials are correct")
+                logger.error("  3. Database exists (or run: CREATE DATABASE ats_db)")
+                logger.error("  4. User has proper permissions")
+                self.connection = None
+                self.cursor = None
+                return False
+    
+    def is_connected(self) -> bool:
+        """Check if database is connected and cursor is available."""
+        return (self.connection is not None and 
+                self.cursor is not None and 
+                self.connection.is_connected())
+    
+    def _ensure_role_columns_exist(self):
+        """Ensure role_type and subrole_type columns exist in resume_metadata table."""
+        try:
+            # Check if role_type column exists
+            self.cursor.execute("""
+                SELECT COUNT(*) as col_count
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = %s 
+                  AND TABLE_NAME = 'resume_metadata' 
+                  AND COLUMN_NAME = 'role_type'
+            """, (self.config['database'],))
+            
+            result = self.cursor.fetchone()
+            col_count = result['col_count'] if result else 0
+            
+            if col_count == 0:
+                logger.info("Adding missing column 'role_type' to resume_metadata table...")
+                self.cursor.execute("""
+                    ALTER TABLE resume_metadata 
+                    ADD COLUMN role_type VARCHAR(100) COMMENT 'Role type classification' 
+                    AFTER profile_type
+                """)
+                self.connection.commit()
+                logger.info("âœ“ Column 'role_type' added successfully")
+            
+            # Check if subrole_type column exists
+            self.cursor.execute("""
+                SELECT COUNT(*) as col_count
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = %s 
+                  AND TABLE_NAME = 'resume_metadata' 
+                  AND COLUMN_NAME = 'subrole_type'
+            """, (self.config['database'],))
+            
+            result = self.cursor.fetchone()
+            col_count = result['col_count'] if result else 0
+            
+            if col_count == 0:
+                logger.info("Adding missing column 'subrole_type' to resume_metadata table...")
+                self.cursor.execute("""
+                    ALTER TABLE resume_metadata 
+                    ADD COLUMN subrole_type VARCHAR(100) COMMENT 'Sub-role type classification' 
+                    AFTER role_type
+                """)
+                self.connection.commit()
+                logger.info("âœ“ Column 'subrole_type' added successfully")
+            
+            # Add indexes if they don't exist
+            try:
+                self.cursor.execute("CREATE INDEX idx_role_type ON resume_metadata(role_type)")
+                logger.debug("âœ“ Index 'idx_role_type' created")
+            except Error as e:
+                if "Duplicate key name" not in str(e):
+                    logger.warning(f"Could not create idx_role_type: {e}")
+            
+            try:
+                self.cursor.execute("CREATE INDEX idx_subrole_type ON resume_metadata(subrole_type)")
+                logger.debug("âœ“ Index 'idx_subrole_type' created")
+            except Error as e:
+                if "Duplicate key name" not in str(e):
+                    logger.warning(f"Could not create idx_subrole_type: {e}")
+                    
+        except Error as e:
+            logger.warning(f"Could not verify/add role columns: {e}")
+            # Don't fail connection if columns can't be added - might be permission issue
+    
             logger.error(f"Error connecting to MySQL: {e}")
             return False
     
@@ -52,8 +179,11 @@ class ATSDatabase:
     
     def __enter__(self):
         """Context manager entry."""
-        self.connect()
+        if not self.connect():
+            raise ConnectionError(f"Failed to connect to MySQL database: {self.config.get('database', 'unknown')}")
         return self
+        #self.connect()
+        #return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
@@ -125,9 +255,10 @@ class ATSDatabase:
                 'secondary_skills': resume_data.get('secondary_skills'),
                 'all_skills': resume_data.get('all_skills'),
                 'profile_type': profile_type_final,
-                'role_type': (resume_data.get('role_type') or '')[:100],
-                'subrole_type': (resume_data.get('subrole_type') or '')[:100],
-                'sub_profile_type': (resume_data.get('sub_profile_type') or '')[:100],
+                # Role-related fields are optional; store NULL when not provided
+                'role_type': (resume_data.get('role_type') or '')[:100] if resume_data.get('role_type') else None,
+                'subrole_type': (resume_data.get('subrole_type') or '')[:100] if resume_data.get('subrole_type') else None,
+                'sub_profile_type': (resume_data.get('sub_profile_type') or '')[:100] if resume_data.get('sub_profile_type') else None,
                 'domain': (resume_data.get('domain') or '')[:255],
                 'sub_domain': (resume_data.get('sub_domain') or '')[:255],
                 'education': (resume_data.get('education') or '')[:500],
@@ -157,6 +288,8 @@ class ATSDatabase:
         except Error as e:
             # Enhanced error logging to identify which column is too long
             error_msg = str(e)
+            error_code = e.errno if hasattr(e, 'errno') else None
+            logger.error(f"Error code: {error_code}")
             if "Data too long for column" in error_msg:
                 logger.error(f"Error inserting resume: {e}")
                 logger.error(f"Profile type value length: {len(str(profile_type_final))} chars, value: {profile_type_final[:100]}")
@@ -167,15 +300,38 @@ class ATSDatabase:
                 logger.error(f"File type length: {len(str(data.get('file_type', '')))} chars")
                 logger.error(f"Education length: {len(str(data.get('education', '')))} chars")
                 logger.error(f"Current designation length: {len(str(data.get('current_designation', '')))} chars")
+                logger.error(f"Role type: {data.get('role_type')}")
+                logger.error(f"Subrole type: {data.get('subrole_type')}")
+            elif error_code == 1054:
+                logger.error("Unknown column error - table schema may be out of date")
+                logger.error("Missing columns detected. Please run:")
+                logger.error("  ALTER TABLE resume_metadata ADD COLUMN role_type VARCHAR(100) AFTER profile_type;")
+                logger.error("  ALTER TABLE resume_metadata ADD COLUMN subrole_type VARCHAR(100) AFTER role_type;")
+           
             else:
-                logger.error(f"Error inserting resume: {e}")
+                logger.error(f"Full error details: {e}")
+                logger.error(f"Query: {query[:500]}...")
+                logger.error(f"Data keys: {list(data.keys())}")
+                # Log non-None data values for debugging
+                for key, value in data.items():
+                    if value is not None:
+                        logger.error(f"  {key}: {str(value)[:100]}")
+            
+
             if self.connection:
                 self.connection.rollback()
+                # Store error for retrieval
+            self.last_error = str(e)
+            self.last_error_code = error_code
             return None
     
     def get_all_resumes(self) -> List[Dict[str, Any]]:
         """Get all resumes from database."""
         try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get resumes.")
+                return []
+            
             query = """
                 SELECT 
                     candidate_id, name, email, phone,
@@ -211,6 +367,9 @@ class ATSDatabase:
     def get_resume_by_id(self, candidate_id: int) -> Optional[Dict[str, Any]]:
         """Get resume by candidate ID."""
         try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get resume.")
+                return None
             query = "SELECT * FROM resume_metadata WHERE candidate_id = %s"
             self.cursor.execute(query, (candidate_id,))
             result = self.cursor.fetchone()
@@ -223,6 +382,9 @@ class ATSDatabase:
     def get_all_resumes(self, status: str = 'active', limit: int = 1000) -> List[Dict[str, Any]]:
         """Get resumes for processing/indexing, including file data when available."""
         try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get resume.")
+                return None
             query = """
                 SELECT 
                     candidate_id,
@@ -407,6 +569,9 @@ class ATSDatabase:
     def update_resume(self, candidate_id: int, updates: Dict[str, Any]) -> bool:
         """Update resume fields."""
         try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get resume.")
+                return None
             if 'profile_type' in updates:
                 # Handle multi-profile (comma-separated) vs single profile type
                 profile_type_value = updates['profile_type']
@@ -587,6 +752,9 @@ class ATSDatabase:
             True if successful, False otherwise
         """
         try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot insert/update profile scores.")
+                return False
             # Mapping from profile type names to database column names
             profile_type_to_column = {
                 "Java": "java_score",

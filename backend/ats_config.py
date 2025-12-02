@@ -31,7 +31,7 @@ class ATSConfig:
     # Database Configuration - Support both Railway and local formats
     MYSQL_HOST = os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))
     MYSQL_USER = os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))
-    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Reset@123'))
     MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))
     MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306')))
     
@@ -69,7 +69,7 @@ class ATSConfig:
     # SQLAlchemy Configuration
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))}:"
-        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))}@"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Reset@123'))}@"
         f"{os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))}:"
         f"{os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))}/"
         f"{os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))}"
@@ -80,7 +80,9 @@ class ATSConfig:
     ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc'}
     UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', './uploads')
     
-    # Embedding Configuration
+     # Embedding Configuration
+    # NOTE: Pinecone index 'ats-resumes' is configured with 1536 dimensions,
+    # so the default EMBEDDING_DIMENSION must also be 1536 to match.
     EMBEDDING_DIMENSION = int(os.getenv('EMBEDDING_DIMENSION', '1536'))
     BATCH_EMBEDDING_SIZE = int(os.getenv('BATCH_EMBEDDING_SIZE', '100'))
     

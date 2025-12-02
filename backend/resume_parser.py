@@ -15,7 +15,8 @@ try:
     import PyPDF2
     from docx import Document
 except ImportError:
-    pass
+    #pass
+    PyPDF2 = None
 
 # DOC parsing libraries (older binary format)
 try:
@@ -58,6 +59,12 @@ from designation_extraction import extract_designation
 from domain_extraction import extract_domains
 from certifications_AI_extraction import extract_certifications_with_ai
 from summary_AI_extraction import extract_summary_with_ai
+from role_extract import (
+    detect_role_subrole, 
+    detect_all_roles, 
+    match_subrole_from_skills, 
+    infer_role_from_skills
+)
 
 # Import the new EducationExtractor
 try:
@@ -324,6 +331,7 @@ Resume Text (look for name in FIRST FEW LINES):
             logger.warning(f"pdfplumber extraction failed: {e}")
         
         # Fallback to PyPDF2
+        if PyPDF2 is not None:
         try:
             text = ""
             with open(file_path, 'rb') as file:
@@ -337,14 +345,42 @@ Resume Text (look for name in FIRST FEW LINES):
                 extracted_text = text.strip()
         except Exception as e:
             logger.warning(f"PyPDF2 extraction failed: {e}")
-        
+            
+        else:
+            logger.debug("PyPDF2 not available")
         # Return best result we got
         if extracted_text:
             logger.info(f"PDF extracted with {len(extracted_text)} characters")
             return extracted_text
         
-        raise ValueError("Failed to extract text from PDF using any available method")
-    
+        # Provide helpful error message with installation instructions
+        available_libs = []
+        missing_libs = []
+        
+        try:
+            import fitz
+            available_libs.append("PyMuPDF")
+        except ImportError:
+            missing_libs.append("PyMuPDF (pip install PyMuPDF)")
+        
+        try:
+            import pdfplumber
+            available_libs.append("pdfplumber")
+        except ImportError:
+            missing_libs.append("pdfplumber (pip install pdfplumber)")
+        
+        if PyPDF2 is not None:
+            available_libs.append("PyPDF2")
+        else:
+            missing_libs.append("PyPDF2 (pip install PyPDF2)")
+        
+        error_msg = "Failed to extract text from PDF using any available method."
+        if available_libs:
+            error_msg += f" Tried: {', '.join(available_libs)}"
+        if missing_libs:
+            error_msg += f" Install one of: {', '.join(missing_libs)}"
+        
+        raise ValueError(error_msg)
     def parse_docx(self, file_path: str) -> str:
         """Extract text from DOCX file."""
         try:
@@ -357,6 +393,11 @@ Resume Text (look for name in FIRST FEW LINES):
     
     def parse_doc(self, file_path: str) -> str:
         """Extract text from DOC file (older binary format)."""
+        if Document is None:
+            raise ImportError(
+                "DOCX file parsing requires 'python-docx' library. "
+                "Install with: pip install python-docx"
+            )
         try:
             # Try NT-TextFileLoader first (works well on Windows)
             if nt_loader is not None:
@@ -1479,6 +1520,12 @@ Resume Text (look for name in FIRST FEW LINES):
                     if fallback_domain:
                         domain_list = [fallback_domain]
                 
+                 # If no domains found, try fallback extraction
+                if not domain_list:
+                    fallback_domain = self.extract_domain(resume_text)
+                    if fallback_domain:
+                        domain_list = [fallback_domain]
+                
                 domain = ', '.join(domain_list) if domain_list else ''
                 
                 # ALWAYS prioritize Python extraction over AI for accuracy
@@ -1651,6 +1698,94 @@ Resume Text (look for name in FIRST FEW LINES):
                 ai_model=self.ai_model if self.use_ai_extraction else None
             )
             profile_type = format_profile_types_for_storage(profile_types)
+                   # Extract role and subrole:
+            # 1. Find ALL roles from resume text (designation + experience)
+            # 2. Select highest based on ROLE_HIERARCHY
+            # 3. Match subrole based on skills
+            role_type = None
+            subrole_type = None
+            
+            # Check if this is a non-IT profile BEFORE trying to detect roles
+            from role_extract import is_non_it_profile
+            is_non_it = profile_type and is_non_it_profile(profile_type)
+            
+            if is_non_it:
+                logger.info(f"Non-IT profile detected: '{profile_type}'. Skipping IT role detection entirely.")
+                role_type = None
+                subrole_type = None
+            else:
+                # Step 1: Find ALL roles in resume (designation + experience section)
+                all_role_matches = []
+                
+                # Check current designation
+                if current_designation:
+                    matches = detect_all_roles(current_designation)
+                    all_role_matches.extend(matches)
+                    logger.debug(f"Found {len(matches)} role(s) in designation: {current_designation}")
+                
+                # Check full resume text for all roles (experience section, etc.)
+                if resume_text:
+                    # Search larger portion to catch all roles from experience
+                    resume_snippet = resume_text[:8000] if len(resume_text) > 8000 else resume_text
+                    matches = detect_all_roles(resume_snippet)
+                    all_role_matches.extend(matches)
+                    logger.debug(f"Found {len(matches)} role(s) in resume text")
+                
+                # Step 2: Select highest priority role (if multiple found)
+                if all_role_matches:
+                    # Remove duplicates while preserving priority order (subrole is None, so dedupe by role only)
+                    seen = set()
+                    unique_matches = []
+                    for priority, role, subrole in all_role_matches:
+                        if role not in seen:
+                            seen.add(role)
+                            unique_matches.append((priority, role, subrole))
+                    
+                    # Sort by priority (lower = higher priority) and select best
+                    unique_matches.sort(key=lambda x: x[0])
+                    best_priority, role_type, _ = unique_matches[0]
+                    
+                    logger.info(f"âœ“ Selected highest role: '{role_type}' (priority: {best_priority}) from {len(unique_matches)} unique role(s) found")
+                    
+                    # Step 3: Match subrole based on skills (always returns one of: Backend/Frontend/Full Stack Developer)
+                    subrole_type = match_subrole_from_skills(role_type, primary_skills, secondary_skills_str)
+                    if subrole_type:
+                        logger.info(f"âœ“ Matched subrole: '{subrole_type}' based on skills (primary: {primary_skills[:50]}...)")
+                    else:
+                        # Fallback to Backend Developer if match_subrole_from_skills returns None (shouldn't happen)
+                        subrole_type = "Backend Developer"
+                        logger.info(f"âœ“ Using default subrole: '{subrole_type}' for role '{role_type}'")
+                
+                # Fallback: if no role string found anywhere, infer role from skills (for freshers etc.)
+                if not role_type:
+                    from role_extract import infer_role_from_skills
+                    # Only infer IT roles for IT-related profiles
+                    inferred = infer_role_from_skills(primary_skills, secondary_skills_str, profile_type)
+                    if inferred:
+                        role_type, subrole_type = inferred
+                        logger.info(f"âœ“ Inferred role from skills (fallback): role_type='{role_type}', subrole_type='{subrole_type}'")
+                    else:
+                        logger.debug("No role/subrole detected from resume text or skills")
+
+            # Override subrole_type so it is always based on profile_type + skills
+            # But only for IT-related profiles
+            from role_extract import determine_subrole_type_from_profile_and_skills, is_non_it_profile
+            if profile_type and is_non_it_profile(profile_type):
+                # For non-IT profiles, set subrole_type to None (not applicable)
+                subrole_type = None
+                logger.info(f"Non-IT profile '{profile_type}': subrole_type set to None")
+            else:
+                subrole_type = determine_subrole_type_from_profile_and_skills(
+                    profile_type, primary_skills, secondary_skills_str
+                )
+                logger.info(
+                    f"âœ“ Determined subrole_type='{subrole_type}' based on profile_type='{profile_type}' and skills"
+                )
+            
+            # Final log
+            if role_type:
+                logger.info(f"âœ“ Final result: role_type='{role_type}', subrole_type='{subrole_type}'")
+            
             
             # Calculate sub_profile_type from second highest score
             sub_profile_type = None
@@ -1670,6 +1805,9 @@ Resume Text (look for name in FIRST FEW LINES):
                         # Get second highest profile type
                         sub_profile_type = non_zero_profiles[1][0]
                         logger.info(f"Set sub_profile_type to second highest score: {sub_profile_type} (score: {non_zero_profiles[1][1]})")
+                    else:
+                        logger.info(f"Only {len(non_zero_profiles)} profile type(s) with non-zero scores, sub_profile_type set to None")
+           
             except Exception as e:
                 logger.warning(f"Failed to calculate sub_profile_type: {e}")
             
@@ -1699,6 +1837,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 'file_size_kb': int(file_size_kb),
                 'ai_extraction_used': ai_data is not None,
                 'profile_type': profile_type,
+                'role_type': role_type,
+                'subrole_type': subrole_type,
                 'sub_profile_type': sub_profile_type
             }
             

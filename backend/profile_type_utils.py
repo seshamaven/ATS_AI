@@ -915,6 +915,32 @@ def get_all_profile_type_scores(
             logger.info(f"  Top scores: {ps.profile_type}={ps.raw_score}")
     
     return all_scores
+def get_second_highest_profile_type(profile_scores: Dict[str, float]) -> Optional[str]:
+    """
+    Get the profile type with the second highest score from candidate profile scores.
+    
+    Args:
+        profile_scores: Dictionary mapping profile_type -> raw_score
+        
+    Returns:
+        Profile type name with second highest score, or None if not available
+    """
+    if not profile_scores:
+        return None
+    
+    # Filter out zero scores and sort by score descending
+    non_zero_scores = [(pt, score) for pt, score in profile_scores.items() if score > 0.0]
+    
+    if len(non_zero_scores) < 2:
+        # Need at least 2 non-zero scores to have a "second highest"
+        return None
+    
+    # Sort by score descending
+    sorted_scores = sorted(non_zero_scores, key=lambda x: x[1], reverse=True)
+    
+    # Return the second highest profile type
+    return sorted_scores[1][0]
+
 
 def _determine_profile_type_with_llm(primary_skills: str, secondary_skills: str, resume_text: str, ai_client, ai_model: str) -> str:
     """

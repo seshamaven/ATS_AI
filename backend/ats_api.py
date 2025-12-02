@@ -512,29 +512,91 @@ def process_resume():
             resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
             
             # Store in database (without embedding - stored in Pinecone only)
-            with create_ats_database() as db:
-                candidate_id = db.insert_resume(parsed_data)
-                
-                if not candidate_id:
-                    return jsonify({'error': 'Failed to store resume in database'}), 500
-                
-                # Calculate and store profile scores
-                try:
-                    from profile_type_utils import get_all_profile_type_scores
-                    profile_scores = get_all_profile_type_scores(
-                        primary_skills=parsed_data.get('primary_skills', ''),
-                        secondary_skills=parsed_data.get('secondary_skills', ''),
-                        resume_text=parsed_data.get('resume_text', '')
-                    )
-                    db.insert_or_update_profile_scores(candidate_id, profile_scores)
-                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
-                except Exception as e:
-                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
+            try:
+                with create_ats_database() as db:
+                    candidate_id = db.insert_resume(parsed_data)
+                    
+                    if not candidate_id:
+                        error_details = db.last_error or "Unknown database error"
+                        error_code = db.last_error_code
+                        logger.error(f"insert_resume returned None. Error: {error_details} (Code: {error_code})")
+                        
+                        # Provide helpful error message based on error code
+                        if error_code == 1054:
+                            error_message = "Database schema is missing required columns (role_type, subrole_type). Please run the migration."
+                        elif "Data too long" in error_details:
+                            error_message = f"Data too long for a column: {error_details}"
+                        else:
+                            error_message = error_details
+                        
+                        return jsonify({
+                            'error': 'Failed to store resume in database',
+                            'details': error_message,
+                            'error_code': error_code
+                        }), 500
+                    
+                    # Calculate and store profile scores
+                    try:
+                        from profile_type_utils import (
+                            get_all_profile_type_scores,
+                            get_second_highest_profile_type,
+                        )
+                        profile_scores = get_all_profile_type_scores(
+                            primary_skills=parsed_data.get('primary_skills', ''),
+                            secondary_skills=parsed_data.get('secondary_skills', ''),
+                            resume_text=parsed_data.get('resume_text', '')
+                        )
+                        db.insert_or_update_profile_scores(candidate_id, profile_scores)
+                        logger.info(f"Stored profile scores for candidate_id={candidate_id}")
+                        
+                        # Log all profile scores for debugging
+                        sorted_scores = sorted(profile_scores.items(), key=lambda x: x[1], reverse=True)
+                        non_zero_scores = [(pt, score) for pt, score in sorted_scores if score > 0]
+                        logger.info(f"Profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                        
+                        # Set sub_profile_type to the second highest scoring profile type
+                        second_highest_profile = get_second_highest_profile_type(profile_scores)
+                        if second_highest_profile:
+                            db.update_resume(candidate_id, {'sub_profile_type': second_highest_profile})
+                            # Update parsed_data so the API response reflects the correct value
+                            parsed_data['sub_profile_type'] = second_highest_profile
+                            logger.info(f"Set sub_profile_type={second_highest_profile} for candidate_id={candidate_id}")
+                        else:
+                            logger.warning(f"No second highest profile type found for candidate_id={candidate_id}. Profile scores: {non_zero_scores}")
+                            # Update to None explicitly to ensure database consistency
+                            db.update_resume(candidate_id, {'sub_profile_type': None})
+                            parsed_data['sub_profile_type'] = None
+                    except Exception as e:
+                        logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}", exc_info=True)
+            except ConnectionError as e:
+                logger.error(f"Database connection error: {e}")
+                return jsonify({
+                    'error': f'Database connection failed: {str(e)}',
+                    'details': 'Please ensure MySQL is running and the database exists. Check server logs for more details.'
+                }), 500
+            except Exception as e:
+                logger.error(f"Unexpected error storing resume: {e}", exc_info=True)
+                return jsonify({
+                    'error': 'Failed to store resume in database',
+                    'details': str(e)
+                }), 500
             
             # Index in Pinecone if enabled
             pinecone_indexed = False
-            if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+            pinecone_error = None
+            
+            # Check Pinecone configuration
+            if not ATSConfig.USE_PINECONE:
+                logger.warning(f"Pinecone indexing skipped: USE_PINECONE={ATSConfig.USE_PINECONE}")
+                pinecone_error = "Pinecone is disabled (USE_PINECONE=False)"
+            elif not ATSConfig.PINECONE_API_KEY:
+                logger.warning(f"Pinecone indexing skipped: PINECONE_API_KEY is missing")
+                pinecone_error = "Pinecone API key is missing"
+            else:
                 try:
+                    logger.info(f"Attempting to index resume {candidate_id} in Pinecone...")
+                    logger.info(f"Pinecone config: index={ATSConfig.PINECONE_INDEX_NAME}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
+                    
                     from enhanced_pinecone_manager import EnhancedPineconeManager
                     pinecone_manager = EnhancedPineconeManager(
                         api_key=ATSConfig.PINECONE_API_KEY,
@@ -553,6 +615,9 @@ def process_resume():
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',
                         'profile_type': parsed_data.get('profile_type') or 'Generalist',
+                        'role_type': parsed_data.get('role_type') or 'Unknown',
+                        'subrole_type': parsed_data.get('subrole_type') or 'Unknown',
+                        'sub_profile_type': parsed_data.get('sub_profile_type') or 'Unknown',
                         'current_location': parsed_data.get('current_location') or 'Unknown',
                         'current_designation': parsed_data.get('current_designation') or 'Unknown',
                         'file_type': file_type or 'Unknown',
@@ -573,30 +638,70 @@ def process_resume():
                     logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
                     
                 except Exception as e:
-                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {e}")
+                    error_msg = str(e)
+                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {error_msg}", exc_info=True)
+                    pinecone_error = error_msg
                     # Don't fail the entire request if Pinecone indexing fails
             
             # Clean up uploaded file
             if os.path.exists(file_path):
                 os.remove(file_path)
             
-            # Prepare response
-            response_data = {
-                'status': 'success',
-                'message': 'Resume processed successfully',
-                'candidate_id': candidate_id,
-                'candidate_name': parsed_data.get('name'),
-                'email': parsed_data.get('email'),
-                'phone': parsed_data.get('phone'),
-                'total_experience': parsed_data.get('total_experience'),
-                'primary_skills': parsed_data.get('primary_skills'),
-                'domain': parsed_data.get('domain'),
-                'education': parsed_data.get('education'),
-                'profile_type': parsed_data.get('profile_type'),
-                'embedding_dimensions': 'stored_in_pinecone_only',
-                'pinecone_indexed': pinecone_indexed,
-                'timestamp': datetime.now().isoformat()
-            }
+            # Fetch latest data from database to ensure we have the updated sub_profile_type
+            # (it might have been updated after initial insert)
+            latest_resume_data = None
+            try:
+                with create_ats_database() as db:
+                    latest_resume_data = db.get_resume_by_id(candidate_id)
+            except Exception as e:
+                logger.warning(f"Failed to fetch latest resume data for response: {e}")
+                # Fall back to parsed_data if database fetch fails
+            
+            # Use database values if available, otherwise fall back to parsed_data
+            if latest_resume_data:
+                # Database has the most up-to-date values (especially sub_profile_type)
+                response_data = {
+                    'status': 'success',
+                    'message': 'Resume processed successfully',
+                    'candidate_id': candidate_id,
+                    'candidate_name': latest_resume_data.get('name') or parsed_data.get('name'),
+                    'email': latest_resume_data.get('email') or parsed_data.get('email'),
+                    'phone': latest_resume_data.get('phone') or parsed_data.get('phone'),
+                    'total_experience': latest_resume_data.get('total_experience') or parsed_data.get('total_experience'),
+                    'primary_skills': latest_resume_data.get('primary_skills') or parsed_data.get('primary_skills'),
+                    'domain': latest_resume_data.get('domain') or parsed_data.get('domain'),
+                    'education': latest_resume_data.get('education') or parsed_data.get('education'),
+                    'profile_type': latest_resume_data.get('profile_type') or parsed_data.get('profile_type'),
+                    'role_type': latest_resume_data.get('role_type') or parsed_data.get('role_type'),
+                    'subrole_type': latest_resume_data.get('subrole_type') or parsed_data.get('subrole_type'),
+                    'sub_profile_type': latest_resume_data.get('sub_profile_type') or parsed_data.get('sub_profile_type'),
+                    'embedding_dimensions': 'stored_in_pinecone_only',
+                    'pinecone_indexed': pinecone_indexed,
+                    'pinecone_error': pinecone_error if not pinecone_indexed else None,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                # Fallback to parsed_data if database fetch failed
+                response_data = {
+                    'status': 'success',
+                    'message': 'Resume processed successfully',
+                    'candidate_id': candidate_id,
+                    'candidate_name': parsed_data.get('name'),
+                    'email': parsed_data.get('email'),
+                    'phone': parsed_data.get('phone'),
+                    'total_experience': parsed_data.get('total_experience'),
+                    'primary_skills': parsed_data.get('primary_skills'),
+                    'domain': parsed_data.get('domain'),
+                    'education': parsed_data.get('education'),
+                    'profile_type': parsed_data.get('profile_type'),
+                    'role_type': parsed_data.get('role_type'),
+                    'subrole_type': parsed_data.get('subrole_type'),
+                    'sub_profile_type': parsed_data.get('sub_profile_type'),
+                    'embedding_dimensions': 'stored_in_pinecone_only',
+                    'pinecone_indexed': pinecone_indexed,
+                    'pinecone_error': pinecone_error if not pinecone_indexed else None,
+                    'timestamp': datetime.now().isoformat()
+                }
             
             logger.info(f"Resume processed successfully: candidate_id={candidate_id}")
             return jsonify(response_data), 200
@@ -685,7 +790,10 @@ def process_resume_base64():
 
                 # Calculate and store profile scores
                 try:
-                    from profile_type_utils import get_all_profile_type_scores
+                    from profile_type_utils import (
+                        get_all_profile_type_scores,
+                        get_second_highest_profile_type,
+                    )
                     profile_scores = get_all_profile_type_scores(
                         primary_skills=parsed_data.get('primary_skills', ''),
                         secondary_skills=parsed_data.get('secondary_skills', ''),
@@ -693,13 +801,43 @@ def process_resume_base64():
                     )
                     db.insert_or_update_profile_scores(candidate_id, profile_scores)
                     logger.info(f"Stored profile scores for candidate_id={candidate_id}")
+                    
+                    # Log all profile scores for debugging
+                    sorted_scores = sorted(profile_scores.items(), key=lambda x: x[1], reverse=True)
+                    non_zero_scores = [(pt, score) for pt, score in sorted_scores if score > 0]
+                    logger.info(f"Profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                    
+                    # Set sub_profile_type to the second highest scoring profile type
+                    second_highest_profile = get_second_highest_profile_type(profile_scores)
+                    if second_highest_profile:
+                        db.update_resume(candidate_id, {'sub_profile_type': second_highest_profile})
+                        # Update parsed_data so the API response reflects the correct value
+                        parsed_data['sub_profile_type'] = second_highest_profile
+                        logger.info(f"Set sub_profile_type={second_highest_profile} for candidate_id={candidate_id}")
+                    else:
+                        logger.warning(f"No second highest profile type found for candidate_id={candidate_id}. Profile scores: {non_zero_scores}")
+                        # Update to None explicitly to ensure database consistency
+                        db.update_resume(candidate_id, {'sub_profile_type': None})
+                        parsed_data['sub_profile_type'] = None
                 except Exception as e:
-                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}")
+                    logger.error(f"Failed to store profile scores for candidate_id={candidate_id}: {e}", exc_info=True)
 
             # Index in Pinecone if enabled
             pinecone_indexed = False
-            if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+            pinecone_error = None
+            
+            # Check Pinecone configuration
+            if not ATSConfig.USE_PINECONE:
+                logger.warning(f"Pinecone indexing skipped: USE_PINECONE={ATSConfig.USE_PINECONE}")
+                pinecone_error = "Pinecone is disabled (USE_PINECONE=False)"
+            elif not ATSConfig.PINECONE_API_KEY:
+                logger.warning(f"Pinecone indexing skipped: PINECONE_API_KEY is missing")
+                pinecone_error = "Pinecone API key is missing"
+            else:
                 try:
+                    logger.info(f"Attempting to index resume {candidate_id} in Pinecone...")
+                    logger.info(f"Pinecone config: index={ATSConfig.PINECONE_INDEX_NAME}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
+                    
                     from enhanced_pinecone_manager import EnhancedPineconeManager
                     pinecone_manager = EnhancedPineconeManager(
                         api_key=ATSConfig.PINECONE_API_KEY,
@@ -718,6 +856,9 @@ def process_resume_base64():
                         'total_experience': parsed_data.get('total_experience', 0),
                         'education': parsed_data.get('education') or 'Unknown',
                         'profile_type': parsed_data.get('profile_type') or 'Generalist',
+                        'role_type': parsed_data.get('role_type') or 'Unknown',
+                        'subrole_type': parsed_data.get('subrole_type') or 'Unknown',
+                        'sub_profile_type': parsed_data.get('sub_profile_type') or 'Unknown',
                         'current_location': parsed_data.get('current_location') or 'Unknown',
                         'current_designation': parsed_data.get('current_designation') or 'Unknown',
                         'file_type': file_type or 'Unknown',
@@ -735,28 +876,68 @@ def process_resume_base64():
                     pinecone_indexed = True
                     logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
                 except Exception as e:
-                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {e}")
+                    error_msg = str(e)
+                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {error_msg}", exc_info=True)
+                    pinecone_error = error_msg
                     # Do not fail request for Pinecone errors
 
             # Clean up temporary file
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-            response_data = {
-                'status': 'success',
-                'message': 'Resume processed successfully',
-                'candidate_id': candidate_id,
-                'candidate_name': parsed_data.get('name'),
-                'email': parsed_data.get('email'),
-                'total_experience': parsed_data.get('total_experience'),
-                'primary_skills': parsed_data.get('primary_skills'),
-                'domain': parsed_data.get('domain'),
-                'education': parsed_data.get('education'),
-                'profile_type': parsed_data.get('profile_type'),
-                'embedding_dimensions': 'stored_in_pinecone_only',
-                'pinecone_indexed': pinecone_indexed,
-                'timestamp': datetime.now().isoformat()
-            }
+            # Fetch latest data from database to ensure we have the updated sub_profile_type
+            # (it might have been updated after initial insert)
+            latest_resume_data = None
+            try:
+                with create_ats_database() as db:
+                    latest_resume_data = db.get_resume_by_id(candidate_id)
+            except Exception as e:
+                logger.warning(f"Failed to fetch latest resume data for response: {e}")
+                # Fall back to parsed_data if database fetch fails
+            
+            # Use database values if available, otherwise fall back to parsed_data
+            if latest_resume_data:
+                # Database has the most up-to-date values (especially sub_profile_type)
+                response_data = {
+                    'status': 'success',
+                    'message': 'Resume processed successfully',
+                    'candidate_id': candidate_id,
+                    'candidate_name': latest_resume_data.get('name') or parsed_data.get('name'),
+                    'email': latest_resume_data.get('email') or parsed_data.get('email'),
+                    'total_experience': latest_resume_data.get('total_experience') or parsed_data.get('total_experience'),
+                    'primary_skills': latest_resume_data.get('primary_skills') or parsed_data.get('primary_skills'),
+                    'domain': latest_resume_data.get('domain') or parsed_data.get('domain'),
+                    'education': latest_resume_data.get('education') or parsed_data.get('education'),
+                    'profile_type': latest_resume_data.get('profile_type') or parsed_data.get('profile_type'),
+                    'role_type': latest_resume_data.get('role_type') or parsed_data.get('role_type'),
+                    'subrole_type': latest_resume_data.get('subrole_type') or parsed_data.get('subrole_type'),
+                    'sub_profile_type': latest_resume_data.get('sub_profile_type') or parsed_data.get('sub_profile_type'),
+                    'embedding_dimensions': 'stored_in_pinecone_only',
+                    'pinecone_indexed': pinecone_indexed,
+                    'pinecone_error': pinecone_error if not pinecone_indexed else None,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                # Fallback to parsed_data if database fetch failed
+                response_data = {
+                    'status': 'success',
+                    'message': 'Resume processed successfully',
+                    'candidate_id': candidate_id,
+                    'candidate_name': parsed_data.get('name'),
+                    'email': parsed_data.get('email'),
+                    'total_experience': parsed_data.get('total_experience'),
+                    'primary_skills': parsed_data.get('primary_skills'),
+                    'domain': parsed_data.get('domain'),
+                    'education': parsed_data.get('education'),
+                    'profile_type': parsed_data.get('profile_type'),
+                    'role_type': parsed_data.get('role_type'),
+                    'subrole_type': parsed_data.get('subrole_type'),
+                    'sub_profile_type': parsed_data.get('sub_profile_type'),
+                    'embedding_dimensions': 'stored_in_pinecone_only',
+                    'pinecone_indexed': pinecone_indexed,
+                    'pinecone_error': pinecone_error if not pinecone_indexed else None,
+                    'timestamp': datetime.now().isoformat()
+                }
 
             return jsonify(response_data), 200
 
@@ -860,6 +1041,9 @@ def index_existing_resumes():
                     'total_experience': resume.get('total_experience', 0),
                     'education': resume.get('education') or 'Unknown',
                     'profile_type': resume.get('profile_type') or 'Generalist',
+                    'role_type': resume.get('role_type') or 'Unknown',
+                    'subrole_type': resume.get('subrole_type') or 'Unknown',
+                    'sub_profile_type': resume.get('sub_profile_type') or 'Unknown',
                     'current_location': resume.get('current_location') or 'Unknown',
                     'current_designation': resume.get('current_designation') or 'Unknown',
                     'file_type': resume.get('file_type') or 'Unknown',

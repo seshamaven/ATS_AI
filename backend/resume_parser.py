@@ -332,20 +332,19 @@ Resume Text (look for name in FIRST FEW LINES):
         
         # Fallback to PyPDF2
         if PyPDF2 is not None:
-        try:
-            text = ""
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-            if text.strip() and len(text.strip()) > len(extracted_text):
-                logger.info("PDF extracted using PyPDF2")
-                return text.strip()
-            if len(text.strip()) > len(extracted_text):
-                extracted_text = text.strip()
-        except Exception as e:
-            logger.warning(f"PyPDF2 extraction failed: {e}")
-            
+            try:
+                text = ""
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                if text.strip() and len(text.strip()) > len(extracted_text):
+                    logger.info("PDF extracted using PyPDF2")
+                    return text.strip()
+                if len(text.strip()) > len(extracted_text):
+                    extracted_text = text.strip()
+            except Exception as e:
+                logger.warning(f"PyPDF2 extraction failed: {e}")
         else:
             logger.debug("PyPDF2 not available")
         # Return best result we got

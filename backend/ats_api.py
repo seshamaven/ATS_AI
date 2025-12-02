@@ -308,6 +308,73 @@ def chunk_list(items: List[Any], chunk_size: int) -> List[List[Any]]:
     return [items[i:i + chunk_size] for i in range(0, len(items), max(chunk_size, 1))]
 
 
+def get_namespace_from_profile_type(profile_type: str) -> str:
+    """
+    Map profile_type to Pinecone namespace.
+    
+    Uses namespaces within a single index instead of separate indexes.
+    This allows unlimited profile types without hitting the 5-index limit.
+    
+    Args:
+        profile_type: Profile type string (e.g., 'Java', 'Python', 'Business Analyst')
+    
+    Returns:
+        Normalized namespace name (e.g., 'java', 'python', 'business-analyst')
+    """
+    if not profile_type:
+        return 'others'
+    
+    # Normalize profile type
+    profile_lower = profile_type.lower().strip()
+    
+    # Handle multi-profile types (comma-separated)
+    if ',' in profile_lower:
+        # Use the first profile type
+        profile_lower = profile_lower.split(',')[0].strip()
+    
+    # Map to namespace names
+    namespace_mapping = {
+        'java': 'java',
+        'python': 'python',
+        '.net': 'dotnet',
+        'dotnet': 'dotnet',
+        'net': 'dotnet',
+        'c#': 'dotnet',
+        'csharp': 'dotnet',
+        'business analyst': 'business-analyst',
+        'business-analyst': 'business-analyst',
+        'ba': 'business-analyst',
+        'project manager': 'project-manager',
+        'project-manager': 'project-manager',
+        'pm': 'project-manager',
+        'sql': 'sql',
+        'database': 'sql',
+        'dba': 'sql',
+        'others': 'others',
+        'other': 'others',
+        'generalist': 'others',
+        'general': 'others'
+    }
+    
+    # Direct match
+    if profile_lower in namespace_mapping:
+        return namespace_mapping[profile_lower]
+    
+    # Partial match
+    for key, namespace in namespace_mapping.items():
+        if key in profile_lower or profile_lower in key:
+            return namespace
+    
+    # Normalize and return (replace spaces with hyphens, lowercase)
+    normalized = profile_lower.replace(' ', '-').replace('.', '').replace('/', '-')
+    normalized = ''.join(c if c.isalnum() or c == '-' else '' for c in normalized)
+    while '--' in normalized:
+        normalized = normalized.replace('--', '-')
+    normalized = normalized.strip('-')
+    
+    return normalized if normalized else 'others'
+
+
 def normalize_filter_value(value):
     if value is None:
         return []
@@ -632,10 +699,15 @@ def process_resume():
                         'metadata': pinecone_metadata
                     }
                     
-                    # Upsert to Pinecone
-                    pinecone_manager.upsert_vectors([vector_data])
+                    # Determine namespace from profile_type
+                    profile_type = parsed_data.get('profile_type') or 'Generalist'
+                    namespace = get_namespace_from_profile_type(profile_type)
+                    logger.info(f"Using namespace '{namespace}' for profile_type '{profile_type}'")
+                    
+                    # Upsert to Pinecone with namespace
+                    pinecone_manager.upsert_vectors([vector_data], namespace=namespace)
                     pinecone_indexed = True
-                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone namespace '{namespace}'")
                     
                 except Exception as e:
                     error_msg = str(e)
@@ -872,9 +944,14 @@ def process_resume_base64():
                         'metadata': pinecone_metadata
                     }
 
-                    pinecone_manager.upsert_vectors([vector_data])
+                    # Determine namespace from profile_type
+                    profile_type = parsed_data.get('profile_type') or 'Generalist'
+                    namespace = get_namespace_from_profile_type(profile_type)
+                    logger.info(f"Using namespace '{namespace}' for profile_type '{profile_type}'")
+
+                    pinecone_manager.upsert_vectors([vector_data], namespace=namespace)
                     pinecone_indexed = True
-                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone")
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone namespace '{namespace}'")
                 except Exception as e:
                     error_msg = str(e)
                     logger.error(f"Failed to index resume {candidate_id} in Pinecone: {error_msg}", exc_info=True)
@@ -985,7 +1062,8 @@ def index_existing_resumes():
         
         indexed_count = 0
         failed_count = 0
-        vectors_to_upsert = []
+        # Group vectors by namespace for efficient batch upserting
+        vectors_by_namespace = {}
         
         for resume in resumes:
             temp_file_path = None
@@ -1058,13 +1136,21 @@ def index_existing_resumes():
                     'metadata': pinecone_metadata
                 }
                 
-                vectors_to_upsert.append(vector_data)
+                # Determine namespace from profile_type
+                profile_type = resume.get('profile_type') or 'Generalist'
+                namespace = get_namespace_from_profile_type(profile_type)
+                
+                # Group vectors by namespace
+                if namespace not in vectors_by_namespace:
+                    vectors_by_namespace[namespace] = []
+                vectors_by_namespace[namespace].append(vector_data)
                 indexed_count += 1
                 
-                # Batch upsert every 100 vectors
-                if len(vectors_to_upsert) >= 100:
-                    pinecone_manager.upsert_vectors(vectors_to_upsert)
-                    vectors_to_upsert = []
+                # Batch upsert every 100 vectors per namespace
+                if len(vectors_by_namespace[namespace]) >= 100:
+                    pinecone_manager.upsert_vectors(vectors_by_namespace[namespace], namespace=namespace)
+                    logger.info(f"Upserted 100 vectors to namespace '{namespace}'")
+                    vectors_by_namespace[namespace] = []
                     
             except Exception as e:
                 logger.error(f"Failed to prepare resume {resume.get('candidate_id', 'unknown')} for indexing: {e}")
@@ -1078,9 +1164,11 @@ def index_existing_resumes():
                     except Exception as e:
                         logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
         
-        # Upsert remaining vectors
-        if vectors_to_upsert:
-            pinecone_manager.upsert_vectors(vectors_to_upsert)
+        # Upsert remaining vectors grouped by namespace
+        for namespace, vectors in vectors_by_namespace.items():
+            if vectors:
+                pinecone_manager.upsert_vectors(vectors, namespace=namespace)
+                logger.info(f"Upserted {len(vectors)} remaining vectors to namespace '{namespace}'")
         
         return jsonify({
             'status': 'success',
@@ -1655,21 +1743,53 @@ def search_resumes():
                     
                     logger.info(f"Querying Pinecone with {len(candidate_ids)} candidate IDs, top_k={vector_top_k}")
                     
-                    # Query Pinecone index
-                    vector_results = pinecone_manager.index.query(
-                        vector=query_embedding,
-                        top_k=vector_top_k,
-                        include_metadata=True,
-                        filter=pinecone_filter
-                    )
+                    # Query across multiple namespaces since candidates can be in different namespaces
+                    # Common namespaces to query
+                    common_namespaces = ['java', 'python', 'dotnet', 'business-analyst', 'sql', 'project-manager', 'others']
                     
-                    # Extract semantic scores
-                    for match in vector_results.matches:
+                    all_matches = []
+                    for namespace in common_namespaces:
+                        try:
+                            vector_results = pinecone_manager.query_vectors(
+                                query_vector=query_embedding,
+                                top_k=vector_top_k,
+                                include_metadata=True,
+                                filter=pinecone_filter,
+                                namespace=namespace
+                            )
+                            all_matches.extend(vector_results.matches)
+                            logger.debug(f"Found {len(vector_results.matches)} matches in namespace '{namespace}'")
+                        except Exception as e:
+                            logger.warning(f"Error querying namespace '{namespace}': {e}")
+                            # Continue with other namespaces
+                    
+                    # Also query default namespace (empty string or None)
+                    try:
+                        vector_results = pinecone_manager.query_vectors(
+                            query_vector=query_embedding,
+                            top_k=vector_top_k,
+                            include_metadata=True,
+                            filter=pinecone_filter,
+                            namespace=None
+                        )
+                        all_matches.extend(vector_results.matches)
+                        logger.debug(f"Found {len(vector_results.matches)} matches in default namespace")
+                    except Exception as e:
+                        logger.warning(f"Error querying default namespace: {e}")
+                    
+                    # Deduplicate matches by candidate_id (keep highest score)
+                    match_dict = {}
+                    for match in all_matches:
                         candidate_id = match.metadata.get('candidate_id')
-                        if candidate_id:
-                            semantic_scores[candidate_id] = match.score
+                        if candidate_id and candidate_id in candidate_ids:
+                            if candidate_id not in match_dict or match.score > match_dict[candidate_id].score:
+                                match_dict[candidate_id] = match
                     
-                    logger.info(f"Semantic search found {len(semantic_scores)} candidates with scores")
+                    # Extract semantic scores from deduplicated matches
+                    for candidate_id, match in match_dict.items():
+                        semantic_scores[candidate_id] = match.score
+                    
+                    logger.info(f"Semantic search found {len(semantic_scores)} candidates with scores across all namespaces")
                     
                     # Merge SQL candidates with semantic scores
                     # Create a map for fast lookup

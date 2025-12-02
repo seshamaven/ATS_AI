@@ -7,7 +7,16 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 from pinecone import Pinecone, ServerlessSpec
-from pinecone.core.client.exceptions import PineconeException
+
+# Try to import PineconeException, fallback to generic Exception if not available
+try:
+    from pinecone.exceptions import PineconeException
+except ImportError:
+    try:
+        from pinecone.core.client.exceptions import PineconeException
+    except ImportError:
+        # Fallback: use generic Exception
+        PineconeException = Exception
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -97,12 +106,8 @@ class EnhancedPineconeManager:
             self._index_initialized = True
             return self.index
             
-        except PineconeException as e:
-            error_msg = f"Pinecone API error: {e}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
         except Exception as e:
-            error_msg = f"Unexpected error during index management: {e}"
+            error_msg = f"Pinecone API error: {e}"
             logger.error(error_msg)
             raise Exception(error_msg)
     
@@ -131,25 +136,25 @@ class EnhancedPineconeManager:
             
             logger.info(f"Successfully created and initialized index '{self.index_name}' with dimension {self.dimension}")
             
-        except PineconeException as e:
-            if "already exists" in str(e).lower():
+        except Exception as e:
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str:
                 logger.warning(f"Index '{self.index_name}' already exists, connecting to it...")
                 self.index = self.pc.Index(self.index_name)
             else:
                 error_msg = f"Failed to create Pinecone index: {e}"
                 logger.error(error_msg)
                 raise Exception(error_msg)
-        except Exception as e:
-            error_msg = f"Unexpected error creating index: {e}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
     
-    def upsert_vectors(self, vectors: List[Dict[str, Any]]):
+    def upsert_vectors(self, vectors: List[Dict[str, Any]], namespace: str = None):
         """
-        Insert vectors into Pinecone index.
+        Insert vectors into Pinecone index with optional namespace support.
         
         Args:
             vectors: List of vector dictionaries with 'id', 'values', and 'metadata'
+            namespace: Optional namespace name (e.g., 'java', 'python', 'business-analyst')
+                      If None, vectors are inserted into default namespace
+                      If provided, all vectors are inserted into that namespace
         """
         if not self._index_initialized:
             raise RuntimeError("Index not initialized. Call get_or_create_index() first.")
@@ -159,7 +164,8 @@ class EnhancedPineconeManager:
             return
         
         try:
-            logger.info(f"Upserting {len(vectors)} vectors to Pinecone index '{self.index_name}'")
+            namespace_info = f" namespace '{namespace}'" if namespace else " (default namespace)"
+            logger.info(f"Upserting {len(vectors)} vectors to Pinecone index '{self.index_name}'{namespace_info}")
             
             # Prepare vectors with cleaned metadata
             prepared_vectors = []
@@ -186,29 +192,33 @@ class EnhancedPineconeManager:
                 
                 prepared_vectors.append(prepared_vector)
             
-            # Perform upsert operation
-            self.index.upsert(vectors=prepared_vectors)
-            logger.info(f"Successfully upserted {len(prepared_vectors)} vectors to Pinecone")
+            # Perform upsert operation with namespace
+            if namespace:
+                self.index.upsert(vectors=prepared_vectors, namespace=namespace)
+                logger.info(f"Successfully upserted {len(prepared_vectors)} vectors to namespace '{namespace}'")
+            else:
+                self.index.upsert(vectors=prepared_vectors)
+                logger.info(f"Successfully upserted {len(prepared_vectors)} vectors to default namespace")
             
-        except PineconeException as e:
-            error_msg = f"Pinecone upsert error: {e}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
         except Exception as e:
-            error_msg = f"Unexpected error during vector upsert: {e}"
+            error_msg = f"Pinecone upsert error: {e}"
             logger.error(error_msg)
             raise Exception(error_msg)
     
     def query_vectors(self, query_vector: List[float], top_k: int = 10, 
-                     include_metadata: bool = True, filter: Dict[str, Any] = None):
+                     include_metadata: bool = True, filter: Dict[str, Any] = None,
+                     namespace: str = None):
         """
-        Query vectors from Pinecone index.
+        Query vectors from Pinecone index with optional namespace support.
         
         Args:
             query_vector: Query vector for similarity search
             top_k: Number of results to return
             include_metadata: Whether to include metadata in results
             filter: Optional metadata filter
+            namespace: Optional namespace name to query (e.g., 'java', 'python')
+                      If None, queries default namespace
+                      If provided, queries only that namespace
             
         Returns:
             Query results from Pinecone
@@ -222,24 +232,31 @@ class EnhancedPineconeManager:
             )
         
         try:
-            logger.info(f"Querying Pinecone index '{self.index_name}' with top_k={top_k}")
+            namespace_info = f" namespace '{namespace}'" if namespace else " (default namespace)"
+            logger.info(f"Querying Pinecone index '{self.index_name}'{namespace_info} with top_k={top_k}")
             
-            results = self.index.query(
-                vector=query_vector,
-                top_k=top_k,
-                include_metadata=include_metadata,
-                filter=filter
-            )
+            # Build query parameters
+            query_params = {
+                'vector': query_vector,
+                'top_k': top_k,
+                'include_metadata': include_metadata
+            }
+            
+            # Add namespace if provided
+            if namespace:
+                query_params['namespace'] = namespace
+            
+            # Add filter if provided
+            if filter:
+                query_params['filter'] = filter
+            
+            results = self.index.query(**query_params)
             
             logger.info(f"Query returned {len(results.matches)} results")
             return results
             
-        except PineconeException as e:
-            error_msg = f"Pinecone query error: {e}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
         except Exception as e:
-            error_msg = f"Unexpected error during vector query: {e}"
+            error_msg = f"Pinecone query error: {e}"
             logger.error(error_msg)
             raise Exception(error_msg)
     
@@ -300,6 +317,77 @@ class EnhancedPineconeManager:
                 cleaned_metadata[key] = str(value)
         
         return cleaned_metadata
+    
+    @staticmethod
+    def create_dynamic_index(index_name: str, 
+                            api_key: str = None,
+                            dimension: int = 1536,
+                            metric: str = 'cosine',
+                            cloud: str = 'aws',
+                            region: str = 'us-east-1') -> bool:
+        """
+        Static method to create a Pinecone index dynamically.
+        
+        Args:
+            index_name: Name of the index to create (e.g., 'java', 'python')
+            api_key: Pinecone API key (defaults to PINECONE_API_KEY env var)
+            dimension: Vector dimension (default: 1536)
+            metric: Similarity metric ('cosine', 'euclidean', 'dotproduct')
+            cloud: Cloud provider ('aws', 'gcp', 'azure')
+            region: Region for the index
+            
+        Returns:
+            True if index was created successfully, False if it already exists
+        """
+        try:
+            # Get API key
+            api_key = api_key or os.getenv('PINECONE_API_KEY')
+            if not api_key:
+                raise ValueError("PINECONE_API_KEY is required")
+            
+            # Initialize Pinecone client
+            pc = Pinecone(api_key=api_key)
+            
+            # Validate and normalize index name
+            index_name = index_name.lower().strip()
+            if not index_name.replace('-', '').replace('_', '').isalnum():
+                raise ValueError("Index name must contain only lowercase letters, numbers, hyphens, and underscores")
+            
+            logger.info(f"Checking if index '{index_name}' already exists...")
+            
+            # List all existing indexes
+            existing_indexes = pc.list_indexes()
+            existing_names = [idx.name for idx in existing_indexes]
+            
+            if index_name in existing_names:
+                logger.warning(f"Index '{index_name}' already exists")
+                return False
+            
+            logger.info(f"Creating new index '{index_name}' with dimension {dimension}...")
+            
+            # Create index with serverless specification
+            pc.create_index(
+                name=index_name,
+                dimension=dimension,
+                metric=metric,
+                spec=ServerlessSpec(
+                    cloud=cloud,
+                    region=region
+                )
+            )
+            
+            logger.info(f"✅ Successfully created index '{index_name}'")
+            return True
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str:
+                logger.warning(f"Index '{index_name}' already exists")
+                return False
+            else:
+                error_msg = f"Failed to create Pinecone index '{index_name}': {e}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
 
 def create_pinecone_manager() -> EnhancedPineconeManager:

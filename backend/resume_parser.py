@@ -54,8 +54,8 @@ from skill_extractor import extract_skills as extract_skills_advanced, extract_t
 from email_extractor import extract_email_and_provider
 from name_AI_extraction import extract_name_with_ai
 from company_AI_extraction import extract_company_with_ai
-from designation_AI_extraction import extract_designation_with_ai
-from domain_AI_extraction import extract_domain_with_ai
+from designation_extraction import extract_designation
+from domain_extraction import extract_domains
 from certifications_AI_extraction import extract_certifications_with_ai
 from summary_AI_extraction import extract_summary_with_ai
 
@@ -135,8 +135,8 @@ The extracted JSON must be database-ready and syntactically valid (no markdown o
 NOTE: The following fields are extracted separately using dedicated modules and should NOT be included in AI response:
 - full_name (extracted by name_AI_extraction.py)
 - current_company (extracted by company_AI_extraction.py)
-- current_designation (extracted by designation_AI_extraction.py)
-- domain (extracted by domain_AI_extraction.py)
+- current_designation (extracted by designation_extraction.py)
+- domain (extracted by domain_extraction.py)
 - certifications (extracted by certifications_AI_extraction.py)
 - summary (extracted by summary_AI_extraction.py)
 - email (extracted by email_extractor.py)
@@ -223,23 +223,18 @@ Resume Text (look for name in FIRST FEW LINES):
             self._initialize_ai_client()
     
     def _initialize_ai_client(self):
-        """Initialize Ollama, Azure OpenAI, or OpenAI client."""
+        """Initialize OpenAI, Azure OpenAI, or Ollama client (OpenAI prioritized)."""
         try:
             from ats_config import ATSConfig
             
-            # Try Ollama first if enabled
-            if ATSConfig.USE_OLLAMA:
-                from ollama_client import get_ollama_openai_client
+            # Prioritize OpenAI if API key is available
+            if ATSConfig.OPENAI_API_KEY:
                 logger.info("=" * 60)
-                logger.info("RESUME PARSER AI SERVICE: Using OLLAMA")
-                logger.info(f"  Model: {ATSConfig.OLLAMA_MODEL}")
-                logger.info(f"  Base URL: {ATSConfig.OLLAMA_BASE_URL}")
+                logger.info("RESUME PARSER AI SERVICE: Using OPENAI")
+                logger.info(f"  Model: {ATSConfig.OPENAI_MODEL}")
                 logger.info("=" * 60)
-                self.ai_client = get_ollama_openai_client(
-                    base_url=ATSConfig.OLLAMA_BASE_URL,
-                    model=ATSConfig.OLLAMA_MODEL
-                )
-                self.ai_model = ATSConfig.OLLAMA_MODEL
+                self.ai_client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
+                self.ai_model = ATSConfig.OPENAI_MODEL
             # Try Azure OpenAI
             elif ATSConfig.AZURE_OPENAI_ENDPOINT and ATSConfig.AZURE_OPENAI_API_KEY:
                 logger.info("=" * 60)
@@ -253,14 +248,19 @@ Resume Text (look for name in FIRST FEW LINES):
                     azure_endpoint=ATSConfig.AZURE_OPENAI_ENDPOINT
                 )
                 self.ai_model = ATSConfig.AZURE_OPENAI_DEPLOYMENT_NAME
-            # Fallback to OpenAI
-            elif ATSConfig.OPENAI_API_KEY:
+            # Fallback to Ollama only if explicitly enabled and no OpenAI available
+            elif ATSConfig.USE_OLLAMA:
+                from ollama_client import get_ollama_openai_client
                 logger.info("=" * 60)
-                logger.info("RESUME PARSER AI SERVICE: Using OPENAI")
-                logger.info(f"  Model: {ATSConfig.OPENAI_MODEL}")
+                logger.info("RESUME PARSER AI SERVICE: Using OLLAMA (fallback)")
+                logger.info(f"  Model: {ATSConfig.OLLAMA_MODEL}")
+                logger.info(f"  Base URL: {ATSConfig.OLLAMA_BASE_URL}")
                 logger.info("=" * 60)
-                self.ai_client = OpenAI(api_key=ATSConfig.OPENAI_API_KEY)
-                self.ai_model = ATSConfig.OPENAI_MODEL
+                self.ai_client = get_ollama_openai_client(
+                    base_url=ATSConfig.OLLAMA_BASE_URL,
+                    model=ATSConfig.OLLAMA_MODEL
+                )
+                self.ai_model = ATSConfig.OLLAMA_MODEL
             else:
                 logger.warning("=" * 60)
                 logger.warning("RESUME PARSER AI SERVICE: No LLM configuration found. AI extraction disabled.")
@@ -1100,6 +1100,122 @@ Resume Text (look for name in FIRST FEW LINES):
             return "Information Technology"
         
         return None
+
+    def _filter_domain_by_profile_type(self, domain: str, profile_type: Optional[str]) -> str:
+        """
+        Post-process extracted domain string based on detected profile type.
+
+        Goal:
+        - For clearly IT/software profiles (Java, .Net, full stack, etc.), drop
+          stray business domains that only come from project context (e.g. Pharmaceuticals,
+          Energy) and keep only core IT domains.
+
+        This is a conservative, profile_type-driven filter _on top of_ the
+        pure text-based domain extraction in domain_extraction.py.
+        """
+        if not domain:
+            return ''
+
+        if not profile_type:
+            return domain
+
+        # Split "Information Technology, Data Science, Energy" -> ["Information Technology", "Data Science", "Energy"]
+        domain_parts = [d.strip() for d in domain.split(',') if d.strip()]
+        if not domain_parts:
+            return ''
+
+        pt_lower = profile_type.lower()
+
+        # Heuristic: treat these profile_type keywords as strongly IT / software engineering.
+        it_profile_keywords = [
+            'java',
+            'python',
+            '.net',
+            'full stack',
+            'frontend',
+            'backend',
+            'software engineer',
+            'developer',
+            'devops',
+            'sre',
+            'cloud',
+            'javascript',
+            'react',
+            'angular',
+            'vue',
+            'node',
+            'nodejs',
+        ]
+
+        is_it_profile = any(k in pt_lower for k in it_profile_keywords)
+
+        if is_it_profile:
+            # For clear IT profiles, only keep core IT-related domains.
+            # This intentionally drops project-only business domains like
+            # "Pharmaceuticals" or "Energy" when the candidate is really a Java/.Net dev.
+            allowed_it_domains = {
+                'Information Technology',
+                'Software Development',
+                'Cloud Computing',
+            }
+            filtered = [d for d in domain_parts if d in allowed_it_domains]
+
+            if filtered:
+                logger.info(
+                    f"Filtered domains based on IT profile_type '{profile_type}': "
+                    f"original={domain_parts} -> filtered={filtered}"
+                )
+                return ', '.join(filtered)
+            
+            # If nothing matched but we KNOW the profile_type is IT (Python, Java, etc.),
+            # fall back to a safe default: label as Information Technology.
+            # This prevents wrong domains like "Agriculture" from appearing for IT professionals.
+            logger.info(
+                f"No IT-specific domains matched for profile_type '{profile_type}'. "
+                f"Falling back to 'Information Technology' instead of {domain_parts}."
+            )
+            return 'Information Technology'
+
+        # Heuristic: treat these profile_type keywords as strongly Business Development / Sales / Marketing.
+        bd_profile_keywords = [
+            'business development',
+            'bd ',
+            'sales',
+            'inside sales',
+            'presales',
+            'pre-sales',
+            'marketing',
+            'lead generation',
+        ]
+
+        is_bd_profile = any(k in pt_lower for k in bd_profile_keywords)
+
+        if is_bd_profile:
+            # For Business Development / Sales / Marketing profiles, prefer BD/Marketing domains
+            # and drop one-off client industries like "Construction", "Healthcare", etc.
+            allowed_bd_domains = {
+                'Business Development',
+                'Advertising & Marketing',
+            }
+            filtered = [d for d in domain_parts if d in allowed_bd_domains]
+
+            if filtered:
+                logger.info(
+                    f"Filtered domains based on BD profile_type '{profile_type}': "
+                    f"original={domain_parts} -> filtered={filtered}"
+                )
+                return ', '.join(filtered)
+
+            # If nothing matched but we KNOW the profile_type is Business Development,
+            # fall back to a safe default: label as Business Development.
+            logger.info(
+                f"No BD-specific domains matched for profile_type '{profile_type}'. "
+                f"Falling back to 'Business Development' instead of {domain_parts}."
+            )
+            return 'Business Development'
+
+        # Default: return original domain string
+        return ', '.join(domain_parts)
     
     def extract_education(self, text: str, store_in_db: bool = False, candidate_id: Optional[int] = None) -> Dict[str, Any]:
         """
@@ -1350,29 +1466,18 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 logger.info(f"✓ Python-only extraction completed: {len(technical_skills)} technical skills, {len(secondary_skills)} soft skills")
                 
-                # Get domains using dedicated AI extraction
-                domain_list = extract_domain_with_ai(
-                    text=resume_text,
-                    ai_client=self.ai_client,
-                    ai_model=self.ai_model
-                ) if self.use_ai_extraction and self.ai_client else None
-                
-                # If AI extraction failed or not available, try fallback
-                if not domain_list:
-                    fallback_domain = self.extract_domain(resume_text)
-                    if fallback_domain:
-                        domain_list = [fallback_domain]
-                    else:
-                        domain_list = []
+                # Get domains using Python-based keyword extraction (no AI)
+                domain_list = extract_domains(resume_text)
                 
                 # Ensure it's a list
                 if not isinstance(domain_list, list):
                     domain_list = [domain_list] if domain_list else []
                 
-                # Auto-add "Information Technology" if tech skills are present
-                if technical_skills and "Information Technology" not in domain_list:
-                    domain_list.insert(0, "Information Technology")
-                    logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
+                # If no domains found, try fallback method
+                if not domain_list:
+                    fallback_domain = self.extract_domain(resume_text)
+                    if fallback_domain:
+                        domain_list = [fallback_domain]
                 
                 domain = ', '.join(domain_list) if domain_list else ''
                 
@@ -1417,12 +1522,8 @@ Resume Text (look for name in FIRST FEW LINES):
                     ai_model=self.ai_model
                 ) if self.use_ai_extraction and self.ai_client else ''
                 
-                # Get current designation using dedicated AI extraction
-                current_designation = extract_designation_with_ai(
-                    text=resume_text,
-                    ai_client=self.ai_client,
-                    ai_model=self.ai_model
-                ) if self.use_ai_extraction and self.ai_client else ''
+                # Get current designation using Python-based extraction (no AI)
+                current_designation = extract_designation(resume_text) or ''
                 
                 # Get summary using dedicated AI extraction
                 summary = extract_summary_with_ai(
@@ -1572,6 +1673,9 @@ Resume Text (look for name in FIRST FEW LINES):
             except Exception as e:
                 logger.warning(f"Failed to calculate sub_profile_type: {e}")
             
+            # Apply profile-type-aware domain filtering (e.g., for Java/.Net drop stray pharma domains)
+            domain = self._filter_domain_by_profile_type(domain, profile_type)
+
             # Prepare parsed data
             parsed_data = {
                 'name': name,

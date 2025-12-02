@@ -35,10 +35,10 @@ class ATSConfig:
     MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))
     MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306')))
     
-    # Ollama Configuration (Preferred - Local LLM)
+    # Ollama Configuration (Local LLM - Disabled by default, use OpenAI instead)
     OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
     OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:4b')
-    USE_OLLAMA = os.getenv('USE_OLLAMA', 'True').lower() == 'true'
+    USE_OLLAMA = os.getenv('USE_OLLAMA', 'False').lower() == 'true'
     
     # Azure OpenAI Configuration (Fallback)
     AZURE_OPENAI_API_KEY = os.getenv('AZURE_OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
@@ -48,9 +48,9 @@ class ATSConfig:
     AZURE_OPENAI_MODEL = os.getenv('AZURE_OPENAI_MODEL', 'gpt-4o')
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT', 'text-embedding-ada-002')
     
-    # Alternative: Use OpenAI directly if not using Azure
+    # OpenAI Configuration (Preferred - Direct OpenAI API)
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')  # Default to gpt-4o for better performance
     OPENAI_EMBEDDING_MODEL = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-ada-002')
     
     # Pinecone Configuration (Optional - for vector search at scale)

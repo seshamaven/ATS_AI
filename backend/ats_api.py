@@ -3363,7 +3363,7 @@ def comprehensive_profile_ranking():
         if role_subrole_result:
             detected_role_from_pair, detected_subrole = role_subrole_result
             # Map subrole to standard format: Backend, Frontend, or Full Stack
-        if detected_subrole:
+            if detected_subrole:
                 # Normalize subrole names to standard format
                 subrole_lower = detected_subrole.lower()
                 if 'backend' in subrole_lower or 'back-end' in subrole_lower:
@@ -3391,9 +3391,9 @@ def comprehensive_profile_ranking():
                 extracted_job_metadata['sub_role'] = 'Full Stack'
             elif frontend_count > 0:
                 extracted_job_metadata['sub_role'] = 'Frontend'
-        else:
-            # Default to Backend if no clear indication
-            extracted_job_metadata['sub_role'] = 'Backend'
+            else:
+                # Default to Backend if no clear indication
+                extracted_job_metadata['sub_role'] = 'Backend'
         
         # 3. Extract PROFILE_TYPE (Java, Python, .Net, JavaScript, etc.)
         required_skills_list = required_skills.split(',') if isinstance(required_skills, str) else required_skills

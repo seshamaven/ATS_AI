@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS job_descriptions (
     location VARCHAR(255),
     employment_type VARCHAR(50) COMMENT 'Full-time, Part-time, Contract',
     
+    -- Extracted Job Metadata (AI-extracted)
+    role VARCHAR(255) COMMENT 'Main job title/role (e.g., Software Engineer, Data Scientist)',
+    sub_role VARCHAR(50) COMMENT 'Sub-role: Frontend, Backend, or Full Stack',
+    profile_type VARCHAR(100) COMMENT 'Primary technology profile (e.g., Java, Python, .Net)',
+    profile_sub_type VARCHAR(500) COMMENT 'Specific technologies/frameworks (comma-separated)',
+    primary_skills TEXT COMMENT 'Primary technical skills (comma-separated)',
+    
     -- Compensation
     salary_range VARCHAR(100),
     

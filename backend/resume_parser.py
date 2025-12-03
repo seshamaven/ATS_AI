@@ -49,7 +49,11 @@ logger = logging.getLogger(__name__)
 
 from profile_type_utils import determine_primary_profile_type, determine_profile_types_enhanced, format_profile_types_for_storage, get_all_profile_type_scores
 from phone_extractor import extract_phone_numbers
-from location_identifier import extract_location as extract_location_advanced
+try:
+    from location_identifier import extract_location as extract_location_advanced
+except ImportError:
+    # Fallback if location_identifier module is not available
+    extract_location_advanced = None
 from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
 from email_extractor import extract_email_and_provider
 from name_AI_extraction import extract_name_with_ai
@@ -1202,11 +1206,26 @@ Resume Text (look for name in FIRST FEW LINES):
         multi-line addresses, and various noisy resume formats.
         """
         # Use the dedicated location extractor (pure Python, no AI/NLP)
-        location = extract_location_advanced(text)
+        if extract_location_advanced:
+            location = extract_location_advanced(text)
+            # Return the extracted location if valid
+            if location and location != "Unknown":
+                return location
         
-        # Return the extracted location if valid
-        if location and location != "Unknown":
-            return location
+        # Fallback: simple location extraction if module not available
+        # Try to find common location patterns
+        import re
+        location_patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b',  # City, State
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z][a-z]+)\b',  # City, Country
+        ]
+        
+        for pattern in location_patterns:
+            match = re.search(pattern, text)
+            if match:
+                return f"{match.group(1)}, {match.group(2)}"
+        
+        return None
         
         return None
     

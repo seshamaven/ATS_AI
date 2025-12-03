@@ -130,6 +130,371 @@ PROFILE_TYPE_RULES = [
         "marketing executive", "email marketing", "e-mail marketing", "market research",
         "identifying prospects", "cold calling", "prospecting", "mba marketing"
     }),
+    # New Profile Types (50 additional)
+    ("Go / Golang", {
+        "go", "golang", "go language", "go programming", "go developer",
+        "goroutine", "go routines", "go modules", "go kit", "gin", "echo", "fiber"
+    }),
+    ("Ruby", {
+        "ruby", "ruby on rails", "rails", "ruby developer", "ruby programmer",
+        "sinatra", "rack", "rspec", "capybara", "rubygems", "bundler", "rake"
+    }),
+    ("PHP", {
+        "php", "php developer", "php programmer", "laravel", "symfony", "codeigniter",
+        "zend", "yii", "cakephp", "wordpress", "drupal", "magento", "composer"
+    }),
+    ("Rust", {
+        "rust", "rust programming", "rust developer", "rustlang", "cargo", "rustc",
+        "tokio", "actix", "rocket", "rust web", "rust backend"
+    }),
+    ("Scala", {
+        "scala", "scala developer", "scala programming", "akka", "play framework",
+        "spark scala", "scalatra", "sbt", "scala functional", "cats", "zio"
+    }),
+    ("C/C++", {
+        "c++", "cpp", "c programming", "c++ programming", "c developer", "cpp developer",
+        "qt", "boost", "stl", "cmake", "gcc", "clang", "visual c++", "mfc"
+    }),
+    ("React", {
+        "react", "react.js", "reactjs", "react developer", "react native", "redux",
+        "mobx", "next.js", "gatsby", "react hooks", "jsx", "react router"
+    }),
+    ("Angular", {
+        "angular", "angularjs", "angular 2", "angular developer", "typescript angular",
+        "angular cli", "rxjs", "ngrx", "angular material", "ionic angular"
+    }),
+    ("Vue.js", {
+        "vue", "vue.js", "vuejs", "vue developer", "nuxt.js", "vuex", "vue router",
+        "vuetify", "quasar", "vue 3", "composition api"
+    }),
+    ("Node.js", {
+        "node.js", "nodejs", "node", "node developer", "express.js", "nest.js",
+        "koa", "hapi", "socket.io", "npm", "yarn", "pm2", "node backend"
+    }),
+    ("Microservices", {
+        "microservices", "microservice", "microservice architecture", "service mesh",
+        "istio", "consul", "eureka", "api gateway", "distributed systems"
+    }),
+    ("Serverless", {
+        "serverless", "serverless architecture", "aws lambda", "azure functions",
+        "google cloud functions", "serverless framework", "faas", "function as a service"
+    }),
+    ("AWS", {
+        "aws", "amazon web services", "aws cloud", "ec2", "s3", "lambda", "rds",
+        "dynamodb", "cloudformation", "eks", "ecs", "iam", "vpc", "route53"
+    }),
+    ("Azure", {
+        "azure", "microsoft azure", "azure cloud", "azure functions", "azure devops",
+        "aks", "app service", "azure sql", "cosmos db", "azure ad", "arm templates"
+    }),
+    ("GCP", {
+        "gcp", "google cloud", "google cloud platform", "gke", "cloud functions",
+        "bigquery", "cloud storage", "app engine", "cloud run", "cloud sql"
+    }),
+    ("Kubernetes", {
+        "kubernetes", "k8s", "kubernetes engineer", "kubectl", "helm", "kustomize",
+        "kubernetes operator", "crd", "pod", "deployment", "service mesh"
+    }),
+    ("Docker", {
+        "docker", "docker container", "dockerfile", "docker compose", "docker swarm",
+        "containerization", "containers", "docker engine", "docker hub"
+    }),
+    ("Terraform", {
+        "terraform", "terraform iac", "infrastructure as code", "terraform cloud",
+        "terraform state", "terraform modules", "hcl", "terraform provider"
+    }),
+    ("Ansible", {
+        "ansible", "ansible playbook", "ansible tower", "ansible automation",
+        "ansible roles", "ansible vault", "configuration management"
+    }),
+    ("Jenkins", {
+        "jenkins", "jenkins pipeline", "jenkinsfile", "jenkins ci/cd", "jenkins x",
+        "blue ocean", "jenkins plugins", "continuous integration"
+    }),
+    ("GitLab CI/CD", {
+        "gitlab ci", "gitlab cicd", "gitlab pipeline", "gitlab runner", ".gitlab-ci.yml",
+        "gitlab devops", "gitlab automation"
+    }),
+    ("GitHub Actions", {
+        "github actions", "github ci/cd", "github workflow", "github automation",
+        "actions runner", "github pipelines"
+    }),
+    ("MongoDB", {
+        "mongodb", "mongo", "mongodb developer", "mongoose", "mongodb atlas",
+        "nosql mongodb", "document database", "mongodb compass"
+    }),
+    ("PostgreSQL", {
+        "postgresql", "postgres", "postgresql developer", "postgresql dba",
+        "pgadmin", "postgis", "postgresql performance", "plpgsql"
+    }),
+    ("MySQL", {
+        "mysql", "mysql developer", "mysql dba", "mysql database", "mariadb",
+        "mysql performance", "mysql optimization", "innodb", "myisam"
+    }),
+    ("Redis", {
+        "redis", "redis cache", "redis developer", "redis cluster", "redis sentinel",
+        "redis pub/sub", "redis streams", "redis cache"
+    }),
+    ("Elasticsearch", {
+        "elasticsearch", "elastic", "elasticsearch developer", "elk stack", "kibana",
+        "logstash", "elastic apm", "elastic cloud", "search engine"
+    }),
+    ("Apache Kafka", {
+        "kafka", "apache kafka", "kafka developer", "kafka streams", "kafka connect",
+        "kafka producer", "kafka consumer", "event streaming", "confluent"
+    }),
+    ("Apache Spark", {
+        "spark", "apache spark", "spark developer", "pyspark", "spark sql",
+        "spark streaming", "databricks spark", "spark ml", "spark rdd"
+    }),
+    ("Hadoop", {
+        "hadoop", "apache hadoop", "hadoop developer", "hdfs", "mapreduce",
+        "yarn", "hive", "pig", "hbase", "hadoop ecosystem"
+    }),
+    ("Machine Learning", {
+        "machine learning", "ml", "ml engineer", "ml developer", "scikit-learn",
+        "xgboost", "lightgbm", "mlops", "model training", "feature engineering"
+    }),
+    ("Deep Learning", {
+        "deep learning", "neural networks", "cnn", "rnn", "lstm", "transformer",
+        "pytorch", "tensorflow", "keras", "deep neural networks", "ai models"
+    }),
+    ("Computer Vision", {
+        "computer vision", "cv", "opencv", "image processing", "image recognition",
+        "object detection", "yolo", "faster r-cnn", "image classification"
+    }),
+    ("NLP", {
+        "nlp", "natural language processing", "nlp engineer", "text processing",
+        "sentiment analysis", "named entity recognition", "bert", "gpt", "transformer"
+    }),
+    ("Blockchain", {
+        "blockchain", "blockchain developer", "blockchain engineer", "ethereum",
+        "solidity", "smart contracts", "web3", "defi", "cryptocurrency"
+    }),
+    ("Web3", {
+        "web3", "web 3", "web3 developer", "ethereum", "solidity", "smart contracts",
+        "nft", "defi", "dapp", "metamask", "ipfs", "polygon"
+    }),
+    ("IoT", {
+        "iot", "internet of things", "iot developer", "iot engineer", "embedded iot",
+        "arduino", "raspberry pi", "mqtt", "iot sensors", "edge computing"
+    }),
+    ("Embedded Systems", {
+        "embedded systems", "embedded developer", "embedded engineer", "firmware",
+        "microcontroller", "arm", "stm32", "embedded c", "rtos", "bare metal"
+    }),
+    ("Game Development", {
+        "game development", "game developer", "unity", "unreal engine", "game engine",
+        "c# unity", "c++ game", "game programming", "game design", "gamedev"
+    }),
+    ("AR/VR", {
+        "ar", "vr", "augmented reality", "virtual reality", "ar developer", "vr developer",
+        "unity ar", "unreal vr", "oculus", "hololens", "ar/vr", "mixed reality"
+    }),
+    ("FinTech", {
+        "fintech", "financial technology", "fintech developer", "payment systems",
+        "banking software", "trading systems", "cryptocurrency", "blockchain finance"
+    }),
+    ("Healthcare IT", {
+        "healthcare it", "healthcare software", "hl7", "fhir", "ehr", "emr",
+        "health informatics", "medical software", "healthcare systems"
+    }),
+    ("E-commerce", {
+        "ecommerce", "e-commerce", "ecommerce developer", "online shopping",
+        "payment gateway", "shopping cart", "magento", "shopify", "woocommerce"
+    }),
+    ("Content Management", {
+        "cms", "content management", "wordpress", "drupal", "joomla", "contentful",
+        "headless cms", "strapi", "ghost", "cms developer"
+    }),
+    ("Video Streaming", {
+        "video streaming", "streaming media", "ffmpeg", "video processing", "hls",
+        "dash", "webrtc", "video codec", "streaming platform", "video engineer"
+    }),
+    ("Network Engineering", {
+        "network engineer", "network administrator", "ccna", "ccnp", "cisco",
+        "routing", "switching", "firewall", "vpn", "network security", "tcp/ip"
+    }),
+    ("System Administration", {
+        "system administrator", "sysadmin", "linux admin", "windows admin", "unix",
+        "server administration", "system management", "it operations", "infrastructure"
+    }),
+    ("GraphQL", {
+        "graphql", "graph ql", "graphql api", "graphql developer", "apollo",
+        "relay", "graphql schema", "graphql query", "graphql mutation"
+    }),
+    ("TypeScript", {
+        "typescript", "ts", "typescript developer", "tsx", "typescript programming",
+        "angular typescript", "react typescript", "node typescript"
+    }),
+    ("Linux", {
+        "linux", "linux admin", "linux developer", "linux system", "ubuntu", "centos",
+        "red hat", "debian", "bash scripting", "shell scripting", "linux kernel"
+    }),
+    # Additional 50 Profile Types
+    ("Swift", {
+        "swift", "swift programming", "swift developer", "ios swift", "swiftui",
+        "swift language", "apple swift", "swift ios", "swift macos"
+    }),
+    ("Kotlin", {
+        "kotlin", "kotlin developer", "kotlin android", "kotlin programming",
+        "kotlin coroutines", "kotlin multiplatform", "android kotlin"
+    }),
+    ("Perl", {
+        "perl", "perl programming", "perl developer", "perl scripting", "cpan"
+    }),
+    ("Shell Scripting", {
+        "shell scripting", "bash", "shell script", "bash scripting", "zsh",
+        "shell programming", "bash developer", "unix shell"
+    }),
+    ("PowerShell", {
+        "powershell", "powershell scripting", "powershell automation", "ps1",
+        "powershell developer", "azure powershell"
+    }),
+    ("Groovy", {
+        "groovy", "groovy programming", "groovy developer", "apache groovy",
+        "gradle groovy", "groovy scripting"
+    }),
+    ("Clojure", {
+        "clojure", "clojure programming", "clojure developer", "clojurescript"
+    }),
+    ("Erlang", {
+        "erlang", "erlang programming", "erlang developer", "elixir erlang"
+    }),
+    ("Elixir", {
+        "elixir", "elixir programming", "elixir developer", "phoenix framework",
+        "elixir phoenix", "elixir otp"
+    }),
+    ("Haskell", {
+        "haskell", "haskell programming", "haskell developer", "functional haskell"
+    }),
+    ("F#", {
+        "f#", "fsharp", "f sharp", "f# programming", "f# developer", ".net f#"
+    }),
+    ("VB.NET", {
+        "vb.net", "vbnet", "visual basic", "vb.net programming", "vb.net developer"
+    }),
+    ("COBOL", {
+        "cobol", "cobol programming", "cobol developer", "mainframe cobol"
+    }),
+    ("Fortran", {
+        "fortran", "fortran programming", "fortran developer", "scientific computing", "scientific fortran"
+    }),
+    ("Assembly", {
+        "assembly", "assembly language", "asm", "x86 assembly", "arm assembly"
+    }),
+    ("MATLAB", {
+        "matlab", "matlab programming", "matlab developer", "matlab simulink",
+        "mathematical computing", "matlab scripting"
+    }),
+    ("R", {
+        "r programming", "r language", "r developer", "r statistical", "rstudio",
+        "r data analysis", "r programming language"
+    }),
+    ("Julia", {
+        "julia", "julia programming", "julia developer", "julia language",
+        "scientific julia"
+    }),
+    ("Lua", {
+        "lua", "lua programming", "lua developer", "lua scripting", "lua game"
+    }),
+    ("Dart", {
+        "dart", "dart programming", "dart developer", "flutter dart", "dart language"
+    }),
+    ("Objective-C", {
+        "objective-c", "objective c", "objc", "objective-c developer", "ios objective-c"
+    }),
+    ("Delphi", {
+        "delphi", "delphi programming", "delphi developer", "pascal delphi"
+    }),
+    ("Pascal", {
+        "pascal", "pascal programming", "pascal developer", "object pascal"
+    }),
+    ("Ada", {
+        "ada", "ada programming", "ada developer", "ada language"
+    }),
+    ("Prolog", {
+        "prolog", "prolog programming", "prolog developer", "logic programming"
+    }),
+    ("Lisp", {
+        "lisp", "lisp programming", "common lisp", "scheme", "clojure lisp"
+    }),
+    ("Smalltalk", {
+        "smalltalk", "smalltalk programming", "smalltalk developer"
+    }),
+    ("OCaml", {
+        "ocaml", "ocaml programming", "ocaml developer", "functional ocaml"
+    }),
+    ("Racket", {
+        "racket", "racket programming", "racket developer", "racket language"
+    }),
+    ("Crystal", {
+        "crystal", "crystal programming", "crystal developer", "crystal language"
+    }),
+    ("Nim", {
+        "nim", "nim programming", "nim developer", "nim language"
+    }),
+    ("Zig", {
+        "zig", "zig programming", "zig developer", "zig language"
+    }),
+    ("V", {
+        "v language", "v programming", "v developer", "vlang"
+    }),
+    ("D", {
+        "d programming", "d language", "d developer", "dlang"
+    }),
+    ("Nix", {
+        "nix", "nixos", "nix package manager", "nix developer"
+    }),
+    ("Terraform Cloud", {
+        "terraform cloud", "terraform enterprise", "terraform sentinel"
+    }),
+    ("Pulumi", {
+        "pulumi", "pulumi iac", "pulumi developer", "infrastructure pulumi"
+    }),
+    ("CloudFormation", {
+        "cloudformation", "aws cloudformation", "cfn", "cloudformation templates"
+    }),
+    ("ARM Templates", {
+        "arm templates", "azure resource manager", "arm bicep", "azure arm"
+    }),
+    ("Bicep", {
+        "bicep", "azure bicep", "bicep language", "bicep iac"
+    }),
+    ("CDK", {
+        "cdk", "aws cdk", "cloud development kit", "cdk typescript", "cdk python"
+    }),
+    ("Serverless Framework", {
+        "serverless framework", "serverless.yml", "serverless deploy", "serverless plugin"
+    }),
+    ("SAM", {
+        "sam", "aws sam", "serverless application model", "sam template"
+    }),
+    ("Zappa", {
+        "zappa", "zappa python", "zappa serverless", "python zappa"
+    }),
+    ("Chalice", {
+        "chalice", "aws chalice", "python chalice", "serverless chalice"
+    }),
+    ("Vercel", {
+        "vercel", "vercel deploy", "vercel platform", "next.js vercel"
+    }),
+    ("Netlify", {
+        "netlify", "netlify deploy", "netlify functions", "netlify cms"
+    }),
+    ("Firebase", {
+        "firebase", "firebase developer", "firebase functions", "firebase hosting",
+        "firestore", "firebase auth", "firebase cloud"
+    }),
+    ("Supabase", {
+        "supabase", "supabase developer", "supabase database", "postgres supabase"
+    }),
+    ("Appwrite", {
+        "appwrite", "appwrite backend", "appwrite developer"
+    }),
+    ("Hasura", {
+        "hasura", "hasura graphql", "hasura developer", "graphql hasura"
+    }),
 ]
 
 # Enhanced rules with weights and expanded keywords
@@ -391,6 +756,736 @@ PROFILE_TYPE_RULES_ENHANCED: List[Tuple[str, Dict[str, float]]] = [
             "mba marketing": 4.0, "sales and marketing": 4.5,
         }
     ),
+    # New Profile Types Enhanced (50 additional)
+    (
+        "Go / Golang",
+        {
+            "go": 5.0, "golang": 5.0, "go language": 4.5, "go programming": 4.5,
+            "go developer": 4.5, "goroutine": 3.5, "go routines": 3.5,
+            "go modules": 3.0, "go kit": 2.5, "gin": 3.0, "echo": 2.5, "fiber": 2.5,
+        }
+    ),
+    (
+        "Ruby",
+        {
+            "ruby": 5.0, "ruby on rails": 4.5, "rails": 4.5, "ruby developer": 4.5,
+            "ruby programmer": 4.0, "sinatra": 3.0, "rack": 2.5, "rspec": 2.5,
+            "capybara": 2.0, "rubygems": 2.0, "bundler": 2.0, "rake": 2.0,
+        }
+    ),
+    (
+        "PHP",
+        {
+            "php": 5.0, "php developer": 4.5, "php programmer": 4.0,
+            "laravel": 4.0, "symfony": 3.5, "codeigniter": 3.0, "zend": 2.5,
+            "yii": 2.5, "cakephp": 2.5, "wordpress": 3.0, "drupal": 2.5,
+            "magento": 3.0, "composer": 2.5,
+        }
+    ),
+    (
+        "Rust",
+        {
+            "rust": 5.0, "rust programming": 4.5, "rust developer": 4.5,
+            "rustlang": 4.0, "cargo": 3.5, "rustc": 3.0, "tokio": 3.0,
+            "actix": 2.5, "rocket": 2.5, "rust web": 2.5, "rust backend": 2.5,
+        }
+    ),
+    (
+        "Scala",
+        {
+            "scala": 5.0, "scala developer": 4.5, "scala programming": 4.5,
+            "akka": 3.5, "play framework": 3.5, "spark scala": 3.0,
+            "scalatra": 2.5, "sbt": 2.5, "scala functional": 3.0, "cats": 2.0, "zio": 2.0,
+        }
+    ),
+    (
+        "C/C++",
+        {
+            "c++": 5.0, "cpp": 4.5, "c programming": 4.0, "c++ programming": 4.5,
+            "c developer": 4.0, "cpp developer": 4.5, "qt": 3.5, "boost": 3.0,
+            "stl": 3.0, "cmake": 2.5, "gcc": 2.5, "clang": 2.5, "visual c++": 3.0, "mfc": 2.5,
+        }
+    ),
+    (
+        "React",
+        {
+            "react": 5.0, "react.js": 4.5, "reactjs": 4.5, "react developer": 4.5,
+            "react native": 3.5, "redux": 3.5, "mobx": 2.5, "next.js": 3.0,
+            "gatsby": 2.5, "react hooks": 3.0, "jsx": 2.5, "react router": 2.5,
+        }
+    ),
+    (
+        "Angular",
+        {
+            "angular": 5.0, "angularjs": 4.0, "angular 2": 4.5, "angular developer": 4.5,
+            "typescript angular": 3.5, "angular cli": 3.0, "rxjs": 3.0, "ngrx": 2.5,
+            "angular material": 2.5, "ionic angular": 2.5,
+        }
+    ),
+    (
+        "Vue.js",
+        {
+            "vue": 5.0, "vue.js": 4.5, "vuejs": 4.5, "vue developer": 4.5,
+            "nuxt.js": 3.5, "vuex": 3.0, "vue router": 2.5, "vuetify": 2.5,
+            "quasar": 2.0, "vue 3": 3.0, "composition api": 2.5,
+        }
+    ),
+    (
+        "Node.js",
+        {
+            "node.js": 5.0, "nodejs": 4.5, "node": 4.0, "node developer": 4.5,
+            "express.js": 3.5, "nest.js": 3.0, "koa": 2.5, "hapi": 2.0,
+            "socket.io": 2.5, "npm": 2.0, "yarn": 2.0, "pm2": 2.0, "node backend": 3.0,
+        }
+    ),
+    (
+        "Microservices",
+        {
+            "microservices": 5.0, "microservice": 4.5, "microservice architecture": 4.5,
+            "service mesh": 3.5, "istio": 3.0, "consul": 2.5, "eureka": 2.5,
+            "api gateway": 3.0, "distributed systems": 3.0,
+        }
+    ),
+    (
+        "Serverless",
+        {
+            "serverless": 5.0, "serverless architecture": 4.5, "aws lambda": 3.5,
+            "azure functions": 3.0, "google cloud functions": 3.0, "serverless framework": 3.5,
+            "faas": 3.0, "function as a service": 3.0,
+        }
+    ),
+    (
+        "AWS",
+        {
+            "aws": 5.0, "amazon web services": 4.5, "aws cloud": 4.0, "ec2": 3.5,
+            "s3": 3.5, "lambda": 3.0, "rds": 3.0, "dynamodb": 3.0, "cloudformation": 2.5,
+            "eks": 3.0, "ecs": 2.5, "iam": 2.5, "vpc": 2.5, "route53": 2.0,
+        }
+    ),
+    (
+        "Azure",
+        {
+            "azure": 5.0, "microsoft azure": 4.5, "azure cloud": 4.0, "azure functions": 3.5,
+            "azure devops": 3.5, "aks": 3.0, "app service": 3.0, "azure sql": 3.0,
+            "cosmos db": 2.5, "azure ad": 2.5, "arm templates": 2.5,
+        }
+    ),
+    (
+        "GCP",
+        {
+            "gcp": 5.0, "google cloud": 4.5, "google cloud platform": 4.5, "gke": 3.5,
+            "cloud functions": 3.0, "bigquery": 3.0, "cloud storage": 2.5,
+            "app engine": 2.5, "cloud run": 2.5, "cloud sql": 2.5,
+        }
+    ),
+    (
+        "Kubernetes",
+        {
+            "kubernetes": 5.0, "k8s": 4.5, "kubernetes engineer": 4.5, "kubectl": 3.5,
+            "helm": 3.5, "kustomize": 2.5, "kubernetes operator": 3.0, "crd": 2.5,
+            "pod": 2.0, "deployment": 2.0, "service mesh": 2.5,
+        }
+    ),
+    (
+        "Docker",
+        {
+            "docker": 5.0, "docker container": 4.5, "dockerfile": 4.0, "docker compose": 3.5,
+            "docker swarm": 3.0, "containerization": 3.5, "containers": 3.0,
+            "docker engine": 2.5, "docker hub": 2.0,
+        }
+    ),
+    (
+        "Terraform",
+        {
+            "terraform": 5.0, "terraform iac": 4.5, "infrastructure as code": 4.0,
+            "terraform cloud": 3.0, "terraform state": 3.0, "terraform modules": 3.0,
+            "hcl": 2.5, "terraform provider": 2.5,
+        }
+    ),
+    (
+        "Ansible",
+        {
+            "ansible": 5.0, "ansible playbook": 4.0, "ansible tower": 3.5,
+            "ansible automation": 3.5, "ansible roles": 3.0, "ansible vault": 2.5,
+            "configuration management": 3.0,
+        }
+    ),
+    (
+        "Jenkins",
+        {
+            "jenkins": 5.0, "jenkins pipeline": 4.0, "jenkinsfile": 4.0, "jenkins ci/cd": 4.0,
+            "jenkins x": 3.0, "blue ocean": 2.5, "jenkins plugins": 2.5,
+            "continuous integration": 3.0,
+        }
+    ),
+    (
+        "GitLab CI/CD",
+        {
+            "gitlab ci": 5.0, "gitlab cicd": 4.5, "gitlab pipeline": 4.0, "gitlab runner": 3.5,
+            ".gitlab-ci.yml": 3.5, "gitlab devops": 3.0, "gitlab automation": 3.0,
+        }
+    ),
+    (
+        "GitHub Actions",
+        {
+            "github actions": 5.0, "github ci/cd": 4.5, "github workflow": 4.0,
+            "github automation": 3.5, "actions runner": 3.0, "github pipelines": 3.0,
+        }
+    ),
+    (
+        "MongoDB",
+        {
+            "mongodb": 5.0, "mongo": 4.5, "mongodb developer": 4.5, "mongoose": 3.5,
+            "mongodb atlas": 3.0, "nosql mongodb": 3.0, "document database": 2.5,
+            "mongodb compass": 2.0,
+        }
+    ),
+    (
+        "PostgreSQL",
+        {
+            "postgresql": 5.0, "postgres": 4.5, "postgresql developer": 4.5, "postgresql dba": 4.0,
+            "pgadmin": 2.5, "postgis": 2.5, "postgresql performance": 3.0, "plpgsql": 3.0,
+        }
+    ),
+    (
+        "MySQL",
+        {
+            "mysql": 5.0, "mysql developer": 4.5, "mysql dba": 4.0, "mysql database": 3.5,
+            "mariadb": 3.0, "mysql performance": 3.0, "mysql optimization": 3.0,
+            "innodb": 2.5, "myisam": 2.0,
+        }
+    ),
+    (
+        "Redis",
+        {
+            "redis": 5.0, "redis cache": 4.0, "redis developer": 4.5, "redis cluster": 3.5,
+            "redis sentinel": 3.0, "redis pub/sub": 2.5, "redis streams": 2.5, "redis cache": 3.5,
+        }
+    ),
+    (
+        "Elasticsearch",
+        {
+            "elasticsearch": 5.0, "elastic": 4.0, "elasticsearch developer": 4.5, "elk stack": 4.0,
+            "kibana": 3.5, "logstash": 3.0, "elastic apm": 2.5, "elastic cloud": 2.5,
+            "search engine": 2.5,
+        }
+    ),
+    (
+        "Apache Kafka",
+        {
+            "kafka": 5.0, "apache kafka": 4.5, "kafka developer": 4.5, "kafka streams": 3.5,
+            "kafka connect": 3.0, "kafka producer": 2.5, "kafka consumer": 2.5,
+            "event streaming": 3.0, "confluent": 2.5,
+        }
+    ),
+    (
+        "Apache Spark",
+        {
+            "spark": 5.0, "apache spark": 4.5, "spark developer": 4.5, "pyspark": 3.5,
+            "spark sql": 3.5, "spark streaming": 3.0, "databricks spark": 3.0,
+            "spark ml": 2.5, "spark rdd": 2.5,
+        }
+    ),
+    (
+        "Hadoop",
+        {
+            "hadoop": 5.0, "apache hadoop": 4.5, "hadoop developer": 4.5, "hdfs": 4.0,
+            "mapreduce": 3.5, "yarn": 3.0, "hive": 3.0, "pig": 2.5, "hbase": 2.5,
+            "hadoop ecosystem": 3.0,
+        }
+    ),
+    (
+        "Machine Learning",
+        {
+            "machine learning": 5.0, "ml": 4.0, "ml engineer": 4.5, "ml developer": 4.0,
+            "scikit-learn": 3.5, "xgboost": 3.0, "lightgbm": 2.5, "mlops": 3.0,
+            "model training": 3.0, "feature engineering": 2.5,
+        }
+    ),
+    (
+        "Deep Learning",
+        {
+            "deep learning": 5.0, "neural networks": 4.0, "cnn": 3.0, "rnn": 2.5,
+            "lstm": 2.5, "transformer": 3.0, "pytorch": 3.5, "tensorflow": 3.5,
+            "keras": 3.0, "deep neural networks": 3.5, "ai models": 2.5,
+        }
+    ),
+    (
+        "Computer Vision",
+        {
+            "computer vision": 5.0, "cv": 4.0, "opencv": 4.0, "image processing": 3.5,
+            "image recognition": 3.5, "object detection": 3.0, "yolo": 2.5,
+            "faster r-cnn": 2.0, "image classification": 3.0,
+        }
+    ),
+    (
+        "NLP",
+        {
+            "nlp": 5.0, "natural language processing": 4.5, "nlp engineer": 4.5,
+            "text processing": 3.0, "sentiment analysis": 3.0, "named entity recognition": 2.5,
+            "bert": 3.0, "gpt": 2.5, "transformer": 2.5,
+        }
+    ),
+    (
+        "Blockchain",
+        {
+            "blockchain": 5.0, "blockchain developer": 4.5, "blockchain engineer": 4.5,
+            "ethereum": 4.0, "solidity": 4.0, "smart contracts": 4.0, "web3": 3.0,
+            "defi": 2.5, "cryptocurrency": 2.5,
+        }
+    ),
+    (
+        "Web3",
+        {
+            "web3": 5.0, "web 3": 4.5, "web3 developer": 4.5, "ethereum": 3.5,
+            "solidity": 3.5, "smart contracts": 3.5, "nft": 2.5, "defi": 2.5,
+            "dapp": 3.0, "metamask": 2.0, "ipfs": 2.0, "polygon": 2.0,
+        }
+    ),
+    (
+        "IoT",
+        {
+            "iot": 5.0, "internet of things": 4.5, "iot developer": 4.5, "iot engineer": 4.5,
+            "embedded iot": 3.5, "arduino": 3.0, "raspberry pi": 3.0, "mqtt": 3.0,
+            "iot sensors": 2.5, "edge computing": 2.5,
+        }
+    ),
+    (
+        "Embedded Systems",
+        {
+            "embedded systems": 5.0, "embedded developer": 4.5, "embedded engineer": 4.5,
+            "firmware": 4.0, "microcontroller": 3.5, "arm": 3.0, "stm32": 2.5,
+            "embedded c": 3.5, "rtos": 3.0, "bare metal": 2.5,
+        }
+    ),
+    (
+        "Game Development",
+        {
+            "game development": 5.0, "game developer": 4.5, "unity": 4.0, "unreal engine": 4.0,
+            "game engine": 3.5, "c# unity": 3.5, "c++ game": 3.0, "game programming": 3.5,
+            "game design": 2.5, "gamedev": 3.0,
+        }
+    ),
+    (
+        "AR/VR",
+        {
+            "ar": 4.0, "vr": 4.0, "augmented reality": 4.5, "virtual reality": 4.5,
+            "ar developer": 4.0, "vr developer": 4.0, "unity ar": 3.0, "unreal vr": 3.0,
+            "oculus": 2.5, "hololens": 2.5, "ar/vr": 4.0, "mixed reality": 3.5,
+        }
+    ),
+    (
+        "FinTech",
+        {
+            "fintech": 5.0, "financial technology": 4.5, "fintech developer": 4.5,
+            "payment systems": 3.5, "banking software": 3.5, "trading systems": 3.0,
+            "cryptocurrency": 2.5, "blockchain finance": 2.5,
+        }
+    ),
+    (
+        "Healthcare IT",
+        {
+            "healthcare it": 5.0, "healthcare software": 4.5, "hl7": 3.5, "fhir": 3.5,
+            "ehr": 3.5, "emr": 3.5, "health informatics": 3.0, "medical software": 3.5,
+            "healthcare systems": 3.0,
+        }
+    ),
+    (
+        "E-commerce",
+        {
+            "ecommerce": 5.0, "e-commerce": 4.5, "ecommerce developer": 4.5,
+            "online shopping": 3.0, "payment gateway": 3.0, "shopping cart": 2.5,
+            "magento": 3.0, "shopify": 2.5, "woocommerce": 2.5,
+        }
+    ),
+    (
+        "Content Management",
+        {
+            "cms": 4.0, "content management": 4.5, "wordpress": 3.5, "drupal": 3.0,
+            "joomla": 2.5, "contentful": 2.5, "headless cms": 3.0, "strapi": 2.5,
+            "ghost": 2.0, "cms developer": 3.5,
+        }
+    ),
+    (
+        "Video Streaming",
+        {
+            "video streaming": 5.0, "streaming media": 4.0, "ffmpeg": 3.5, "video processing": 3.5,
+            "hls": 3.0, "dash": 2.5, "webrtc": 3.0, "video codec": 2.5,
+            "streaming platform": 3.0, "video engineer": 4.0,
+        }
+    ),
+    (
+        "Network Engineering",
+        {
+            "network engineer": 5.0, "network administrator": 4.5, "ccna": 3.5, "ccnp": 3.5,
+            "cisco": 3.5, "routing": 3.0, "switching": 3.0, "firewall": 3.0,
+            "vpn": 2.5, "network security": 3.0, "tcp/ip": 2.5,
+        }
+    ),
+    (
+        "System Administration",
+        {
+            "system administrator": 5.0, "sysadmin": 4.5, "linux admin": 4.0, "windows admin": 3.5,
+            "unix": 3.0, "server administration": 3.5, "system management": 3.0,
+            "it operations": 3.0, "infrastructure": 2.5,
+        }
+    ),
+    (
+        "GraphQL",
+        {
+            "graphql": 5.0, "graph ql": 4.5, "graphql api": 4.0, "graphql developer": 4.5,
+            "apollo": 3.5, "relay": 2.5, "graphql schema": 3.0, "graphql query": 2.5,
+            "graphql mutation": 2.5,
+        }
+    ),
+    (
+        "TypeScript",
+        {
+            "typescript": 5.0, "ts": 4.0, "typescript developer": 4.5, "tsx": 3.0,
+            "typescript programming": 4.0, "angular typescript": 3.0, "react typescript": 3.0,
+            "node typescript": 3.0,
+        }
+    ),
+    (
+        "Linux",
+        {
+            "linux": 5.0, "linux admin": 4.5, "linux developer": 4.0, "linux system": 3.5,
+            "ubuntu": 3.0, "centos": 2.5, "red hat": 2.5, "debian": 2.5,
+            "bash scripting": 3.0, "shell scripting": 3.0, "linux kernel": 2.5,
+        }
+    ),
+    # Additional 50 Profile Types Enhanced
+    (
+        "Swift",
+        {
+            "swift": 5.0, "swift programming": 4.5, "swift developer": 4.5, "ios swift": 4.0,
+            "swiftui": 3.5, "swift language": 4.0, "apple swift": 3.5, "swift ios": 4.0,
+            "swift macos": 3.0,
+        }
+    ),
+    (
+        "Kotlin",
+        {
+            "kotlin": 5.0, "kotlin developer": 4.5, "kotlin android": 4.0, "kotlin programming": 4.5,
+            "kotlin coroutines": 3.5, "kotlin multiplatform": 3.0, "android kotlin": 4.0,
+        }
+    ),
+    (
+        "Perl",
+        {
+            "perl": 5.0, "perl programming": 4.5, "perl developer": 4.5, "perl scripting": 4.0,
+            "cpan": 2.5,
+        }
+    ),
+    (
+        "Shell Scripting",
+        {
+            "shell scripting": 5.0, "bash": 4.5, "shell script": 4.5, "bash scripting": 4.5,
+            "zsh": 3.0, "shell programming": 4.0, "bash developer": 3.5, "unix shell": 3.5,
+        }
+    ),
+    (
+        "PowerShell",
+        {
+            "powershell": 5.0, "powershell scripting": 4.5, "powershell automation": 4.0,
+            "ps1": 3.5, "powershell developer": 4.0, "azure powershell": 3.5,
+        }
+    ),
+    (
+        "Groovy",
+        {
+            "groovy": 5.0, "groovy programming": 4.5, "groovy developer": 4.5, "apache groovy": 4.0,
+            "gradle groovy": 3.5, "groovy scripting": 3.5,
+        }
+    ),
+    (
+        "Clojure",
+        {
+            "clojure": 5.0, "clojure programming": 4.5, "clojure developer": 4.5,
+            "clojurescript": 3.5,
+        }
+    ),
+    (
+        "Erlang",
+        {
+            "erlang": 5.0, "erlang programming": 4.5, "erlang developer": 4.5, "elixir erlang": 3.0,
+        }
+    ),
+    (
+        "Elixir",
+        {
+            "elixir": 5.0, "elixir programming": 4.5, "elixir developer": 4.5, "phoenix framework": 4.0,
+            "elixir phoenix": 4.0, "elixir otp": 3.5,
+        }
+    ),
+    (
+        "Haskell",
+        {
+            "haskell": 5.0, "haskell programming": 4.5, "haskell developer": 4.5,
+            "functional haskell": 3.5,
+        }
+    ),
+    (
+        "F#",
+        {
+            "f#": 5.0, "fsharp": 4.5, "f sharp": 4.5, "f# programming": 4.5, "f# developer": 4.5,
+            ".net f#": 3.5,
+        }
+    ),
+    (
+        "VB.NET",
+        {
+            "vb.net": 5.0, "vbnet": 4.5, "visual basic": 4.0, "vb.net programming": 4.5,
+            "vb.net developer": 4.5,
+        }
+    ),
+    (
+        "COBOL",
+        {
+            "cobol": 5.0, "cobol programming": 4.5, "cobol developer": 4.5, "mainframe cobol": 4.0,
+        }
+    ),
+    (
+        "Fortran",
+        {
+            "fortran": 5.0, "fortran programming": 4.5, "fortran developer": 4.5,
+            "scientific computing": 3.0,
+        }
+    ),
+    (
+        "Assembly",
+        {
+            "assembly": 5.0, "assembly language": 4.5, "asm": 4.0, "x86 assembly": 3.5,
+            "arm assembly": 3.5,
+        }
+    ),
+    (
+        "MATLAB",
+        {
+            "matlab": 5.0, "matlab programming": 4.5, "matlab developer": 4.5, "matlab simulink": 3.5,
+            "mathematical computing": 3.0, "matlab scripting": 3.5,
+        }
+    ),
+    (
+        "R",
+        {
+            "r programming": 5.0, "r language": 4.5, "r developer": 4.5, "r statistical": 4.0,
+            "rstudio": 3.5, "r data analysis": 4.0, "r programming language": 4.5,
+        }
+    ),
+    (
+        "Julia",
+        {
+            "julia": 5.0, "julia programming": 4.5, "julia developer": 4.5, "julia language": 4.5,
+            "scientific julia": 3.5,
+        }
+    ),
+    (
+        "Lua",
+        {
+            "lua": 5.0, "lua programming": 4.5, "lua developer": 4.5, "lua scripting": 4.0,
+            "lua game": 3.0,
+        }
+    ),
+    (
+        "Dart",
+        {
+            "dart": 5.0, "dart programming": 4.5, "dart developer": 4.5, "flutter dart": 3.5,
+            "dart language": 4.0,
+        }
+    ),
+    (
+        "Objective-C",
+        {
+            "objective-c": 5.0, "objective c": 4.5, "objc": 4.0, "objective-c developer": 4.5,
+            "ios objective-c": 4.0,
+        }
+    ),
+    (
+        "Delphi",
+        {
+            "delphi": 5.0, "delphi programming": 4.5, "delphi developer": 4.5, "pascal delphi": 3.5,
+        }
+    ),
+    (
+        "Pascal",
+        {
+            "pascal": 5.0, "pascal programming": 4.5, "pascal developer": 4.5, "object pascal": 3.5,
+        }
+    ),
+    (
+        "Ada",
+        {
+            "ada": 5.0, "ada programming": 4.5, "ada developer": 4.5, "ada language": 4.0,
+        }
+    ),
+    (
+        "Prolog",
+        {
+            "prolog": 5.0, "prolog programming": 4.5, "prolog developer": 4.5,
+            "logic programming": 3.5,
+        }
+    ),
+    (
+        "Lisp",
+        {
+            "lisp": 5.0, "lisp programming": 4.5, "common lisp": 4.0, "scheme": 3.5,
+            "clojure lisp": 2.5,
+        }
+    ),
+    (
+        "Smalltalk",
+        {
+            "smalltalk": 5.0, "smalltalk programming": 4.5, "smalltalk developer": 4.5,
+        }
+    ),
+    (
+        "OCaml",
+        {
+            "ocaml": 5.0, "ocaml programming": 4.5, "ocaml developer": 4.5, "functional ocaml": 3.5,
+        }
+    ),
+    (
+        "Racket",
+        {
+            "racket": 5.0, "racket programming": 4.5, "racket developer": 4.5, "racket language": 4.0,
+        }
+    ),
+    (
+        "Crystal",
+        {
+            "crystal": 5.0, "crystal programming": 4.5, "crystal developer": 4.5, "crystal language": 4.0,
+        }
+    ),
+    (
+        "Nim",
+        {
+            "nim": 5.0, "nim programming": 4.5, "nim developer": 4.5, "nim language": 4.0,
+        }
+    ),
+    (
+        "Zig",
+        {
+            "zig": 5.0, "zig programming": 4.5, "zig developer": 4.5, "zig language": 4.0,
+        }
+    ),
+    (
+        "V",
+        {
+            "v language": 5.0, "v programming": 4.5, "v developer": 4.5, "vlang": 4.0,
+        }
+    ),
+    (
+        "D",
+        {
+            "d programming": 5.0, "d language": 4.5, "d developer": 4.5, "dlang": 4.0,
+        }
+    ),
+    (
+        "Nix",
+        {
+            "nix": 5.0, "nixos": 4.0, "nix package manager": 3.5, "nix developer": 4.0,
+        }
+    ),
+    (
+        "Terraform Cloud",
+        {
+            "terraform cloud": 5.0, "terraform enterprise": 4.0, "terraform sentinel": 3.5,
+        }
+    ),
+    (
+        "Pulumi",
+        {
+            "pulumi": 5.0, "pulumi iac": 4.5, "pulumi developer": 4.5, "infrastructure pulumi": 4.0,
+        }
+    ),
+    (
+        "CloudFormation",
+        {
+            "cloudformation": 5.0, "aws cloudformation": 4.5, "cfn": 4.0, "cloudformation templates": 4.0,
+        }
+    ),
+    (
+        "ARM Templates",
+        {
+            "arm templates": 5.0, "azure resource manager": 4.5, "arm bicep": 4.0, "azure arm": 4.0,
+        }
+    ),
+    (
+        "Bicep",
+        {
+            "bicep": 5.0, "azure bicep": 4.5, "bicep language": 4.0, "bicep iac": 4.0,
+        }
+    ),
+    (
+        "CDK",
+        {
+            "cdk": 5.0, "aws cdk": 4.5, "cloud development kit": 4.5, "cdk typescript": 3.5,
+            "cdk python": 3.5,
+        }
+    ),
+    (
+        "Serverless Framework",
+        {
+            "serverless framework": 5.0, "serverless.yml": 4.0, "serverless deploy": 3.5,
+            "serverless plugin": 3.0,
+        }
+    ),
+    (
+        "SAM",
+        {
+            "sam": 5.0, "aws sam": 4.5, "serverless application model": 4.5, "sam template": 4.0,
+        }
+    ),
+    (
+        "Zappa",
+        {
+            "zappa": 5.0, "zappa python": 4.5, "zappa serverless": 4.0, "python zappa": 4.0,
+        }
+    ),
+    (
+        "Chalice",
+        {
+            "chalice": 5.0, "aws chalice": 4.5, "python chalice": 4.5, "serverless chalice": 4.0,
+        }
+    ),
+    (
+        "Vercel",
+        {
+            "vercel": 5.0, "vercel deploy": 4.0, "vercel platform": 4.0, "next.js vercel": 3.5,
+        }
+    ),
+    (
+        "Netlify",
+        {
+            "netlify": 5.0, "netlify deploy": 4.0, "netlify functions": 3.5, "netlify cms": 3.0,
+        }
+    ),
+    (
+        "Firebase",
+        {
+            "firebase": 5.0, "firebase developer": 4.5, "firebase functions": 4.0, "firebase hosting": 3.5,
+            "firestore": 4.0, "firebase auth": 3.5, "firebase cloud": 3.5,
+        }
+    ),
+    (
+        "Supabase",
+        {
+            "supabase": 5.0, "supabase developer": 4.5, "supabase database": 4.0, "postgres supabase": 3.5,
+        }
+    ),
+    (
+        "Appwrite",
+        {
+            "appwrite": 5.0, "appwrite backend": 4.0, "appwrite developer": 4.5,
+        }
+    ),
+    (
+        "Hasura",
+        {
+            "hasura": 5.0, "hasura graphql": 4.5, "hasura developer": 4.5, "graphql hasura": 4.0,
+        }
+    ),
 ]
 
 # Negative keywords to exclude false positives
@@ -478,6 +1573,109 @@ PROFILE_TYPE_COMPATIBILITY = {
     "Cyber Security": ["DevOps", "Cloud / Infra"],
     "Business Development": [],  # Standalone profile
     "Support": [],  # Standalone profile
+    # New Profile Types Compatibility
+    "Go / Golang": ["Backend", "Full Stack", "Microservices", "DevOps"],
+    "Ruby": ["Full Stack", "Backend"],
+    "PHP": ["Full Stack", "Backend", "E-commerce", "Content Management"],
+    "Rust": ["Backend", "Embedded Systems"],
+    "Scala": ["Data Engineering", "Backend", "Apache Spark"],
+    "C/C++": ["Embedded Systems", "Game Development"],
+    "React": ["JavaScript", "Full Stack", "Frontend"],
+    "Angular": ["JavaScript", "Full Stack", "Frontend"],
+    "Vue.js": ["JavaScript", "Full Stack", "Frontend"],
+    "Node.js": ["JavaScript", "Backend", "Full Stack"],
+    "Microservices": ["Java", ".Net", "Go / Golang", "Node.js", "DevOps"],
+    "Serverless": ["AWS", "Azure", "GCP", "Cloud / Infra"],
+    "AWS": ["Cloud / Infra", "DevOps", "Serverless"],
+    "Azure": ["Cloud / Infra", "DevOps", "Microsoft Power Platform"],
+    "GCP": ["Cloud / Infra", "DevOps", "Data Engineering"],
+    "Kubernetes": ["DevOps", "Docker", "Cloud / Infra"],
+    "Docker": ["DevOps", "Kubernetes"],
+    "Terraform": ["DevOps", "Cloud / Infra", "AWS", "Azure", "GCP"],
+    "Ansible": ["DevOps", "System Administration"],
+    "Jenkins": ["DevOps"],
+    "GitLab CI/CD": ["DevOps"],
+    "GitHub Actions": ["DevOps"],
+    "MongoDB": ["Backend", "Full Stack", "Node.js"],
+    "PostgreSQL": ["Backend", "Database", "Full Stack"],
+    "MySQL": ["Backend", "Database", "Full Stack"],
+    "Redis": ["Backend", "Full Stack"],
+    "Elasticsearch": ["Data Engineering", "Backend"],
+    "Apache Kafka": ["Data Engineering", "Microservices"],
+    "Apache Spark": ["Data Engineering", "Scala"],
+    "Hadoop": ["Data Engineering"],
+    "Machine Learning": ["Python", "Data Science"],
+    "Deep Learning": ["Machine Learning", "Data Science", "Python"],
+    "Computer Vision": ["Deep Learning", "Machine Learning", "Python"],
+    "NLP": ["Deep Learning", "Machine Learning", "Python"],
+    "Blockchain": ["Web3", "Backend"],
+    "Web3": ["Blockchain", "JavaScript", "Backend"],
+    "IoT": ["Embedded Systems", "C/C++", "Python"],
+    "Embedded Systems": ["C/C++", "IoT"],
+    "Game Development": ["C/C++", ".Net", "Unity"],
+    "AR/VR": ["Game Development"],
+    "FinTech": ["Backend", "Java", ".Net", "Python"],
+    "Healthcare IT": ["Backend", "Integration / APIs"],
+    "E-commerce": ["Full Stack", "PHP", "JavaScript"],
+    "Content Management": ["PHP", "Full Stack"],
+    "Video Streaming": ["Backend", "Python", "Node.js"],
+    "Network Engineering": ["System Administration"],
+    "System Administration": ["Network Engineering", "DevOps", "Linux"],
+    "GraphQL": ["JavaScript", "Node.js", "Backend", "Full Stack"],
+    "TypeScript": ["JavaScript", "Angular", "React", "Node.js"],
+    "Linux": ["System Administration", "DevOps", "Backend"],
+    # Additional 50 Profile Types Compatibility
+    "Swift": ["iOS", "Mobile Development"],
+    "Kotlin": ["Android", "Mobile Development"],
+    "Perl": ["Backend", "Scripting"],
+    "Shell Scripting": ["Linux", "System Administration", "DevOps"],
+    "PowerShell": ["Azure", "System Administration", "Windows"],
+    "Groovy": ["Java", "Gradle", "Backend"],
+    "Clojure": ["Backend", "Functional Programming"],
+    "Erlang": ["Backend", "Elixir"],
+    "Elixir": ["Backend", "Erlang", "Phoenix"],
+    "Haskell": ["Backend", "Functional Programming"],
+    "F#": [".Net", "Backend"],
+    "VB.NET": [".Net", "Backend"],
+    "COBOL": ["Mainframe", "Legacy Systems"],
+    "Fortran": ["Scientific Computing", "HPC"],
+    "Assembly": ["Embedded Systems", "Systems Programming"],
+    "MATLAB": ["Scientific Computing", "Data Science"],
+    "R": ["Data Science", "Statistics", "Business Intelligence (BI)"],
+    "Julia": ["Data Science", "Scientific Computing"],
+    "Lua": ["Game Development", "Scripting"],
+    "Dart": ["Flutter", "Mobile Development"],
+    "Objective-C": ["iOS", "Mobile Development"],
+    "Delphi": ["Desktop Development", "Windows"],
+    "Pascal": ["Desktop Development", "Legacy Systems"],
+    "Ada": ["Embedded Systems", "Safety-Critical"],
+    "Prolog": ["AI", "Logic Programming"],
+    "Lisp": ["Functional Programming", "AI"],
+    "Smalltalk": ["Object-Oriented", "Legacy Systems"],
+    "OCaml": ["Functional Programming", "Backend"],
+    "Racket": ["Functional Programming", "Education"],
+    "Crystal": ["Backend", "Ruby"],
+    "Nim": ["Systems Programming", "Backend"],
+    "Zig": ["Systems Programming", "Embedded Systems"],
+    "V": ["Systems Programming", "Backend"],
+    "D": ["Systems Programming", "Backend"],
+    "Nix": ["DevOps", "Package Management"],
+    "Terraform Cloud": ["Terraform", "DevOps", "Cloud / Infra"],
+    "Pulumi": ["DevOps", "Cloud / Infra", "Infrastructure as Code"],
+    "CloudFormation": ["AWS", "DevOps", "Cloud / Infra"],
+    "ARM Templates": ["Azure", "DevOps", "Cloud / Infra"],
+    "Bicep": ["Azure", "DevOps", "Cloud / Infra"],
+    "CDK": ["AWS", "DevOps", "TypeScript", "Python"],
+    "Serverless Framework": ["Serverless", "AWS", "Node.js"],
+    "SAM": ["AWS", "Serverless", "Cloud / Infra"],
+    "Zappa": ["Python", "Serverless", "AWS"],
+    "Chalice": ["Python", "Serverless", "AWS"],
+    "Vercel": ["Next.js", "Serverless", "Frontend"],
+    "Netlify": ["Frontend", "Serverless", "JAMstack"],
+    "Firebase": ["Backend", "Mobile Development", "Serverless"],
+    "Supabase": ["PostgreSQL", "Backend", "Full Stack"],
+    "Appwrite": ["Backend", "Full Stack", "Mobile Development"],
+    "Hasura": ["GraphQL", "Backend", "PostgreSQL"],
 }
 
 def are_profile_types_compatible(profile1: str, profile2: str) -> bool:

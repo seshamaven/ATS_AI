@@ -44,6 +44,7 @@ from profile_type_utils import (
     infer_profile_type_from_requirements,
     canonicalize_profile_type_list,
 )
+from role_extract import detect_role_subrole, detect_role_only, detect_subrole_only
 
 # Configure logging
 logging.basicConfig(
@@ -1907,6 +1908,139 @@ def normalize_text(text: str) -> str:
     return re.sub(r'\s+', ' ', text.lower().strip())
 
 
+def detect_subrole_frontend_backend(text: str) -> Optional[str]:
+    """
+    Detect sub_role: Frontend, Backend, or Full Stack Developer.
+    Returns one of: 'Frontend', 'Backend', 'Full Stack Developer', or None
+    """
+    text_lower = normalize_text(text)
+    
+    # Frontend keywords
+    frontend_keywords = [
+        'frontend', 'front-end', 'front end', 'ui developer', 'ui/ux', 'user interface',
+        'react', 'angular', 'vue', 'javascript', 'typescript', 'html', 'css', 'sass',
+        'scss', 'less', 'bootstrap', 'tailwind', 'material-ui', 'jquery', 'webpack',
+        'babel', 'gulp', 'grunt', 'responsive design', 'mobile-first'
+    ]
+    
+    # Backend keywords
+    backend_keywords = [
+        'backend', 'back-end', 'back end', 'server-side', 'server side', 'api developer',
+        'rest api', 'graphql', 'microservices', 'spring boot', 'django', 'flask',
+        'express', 'node.js', 'asp.net', '.net core', 'java', 'python', 'php',
+        'ruby', 'database', 'sql', 'nosql', 'mongodb', 'postgresql', 'mysql',
+        'oracle', 'redis', 'elasticsearch'
+    ]
+    
+    # Full Stack keywords
+    fullstack_keywords = [
+        'full stack', 'fullstack', 'full-stack', 'end-to-end', 'end to end',
+        'mern', 'mean', 'mevn', 'lamp', 'lemp'
+    ]
+    
+    # Count matches
+    frontend_count = sum(1 for keyword in frontend_keywords if keyword in text_lower)
+    backend_count = sum(1 for keyword in backend_keywords if keyword in text_lower)
+    fullstack_count = sum(1 for keyword in fullstack_keywords if keyword in text_lower)
+    
+    # Check for explicit full stack mention first
+    if fullstack_count > 0 or (frontend_count > 0 and backend_count > 0):
+        return 'Full Stack Developer'
+    
+    # If only frontend keywords
+    if frontend_count > 0 and backend_count == 0:
+        return 'Frontend'
+    
+    # If only backend keywords
+    if backend_count > 0 and frontend_count == 0:
+        return 'Backend'
+    
+    # Default: if both present but no explicit full stack, return Full Stack
+    if frontend_count > 0 and backend_count > 0:
+        return 'Full Stack Developer'
+    
+    return None
+
+
+def extract_specific_technologies(text: str, required_skills: str = '') -> List[str]:
+    """
+    Extract specific technologies for profile_sub_type.
+    Returns list of technologies like: ['React', 'SQL', 'Angular', 'Node.js']
+    """
+    text_lower = normalize_text(text + ' ' + str(required_skills))
+    
+    # Specific technology keywords (case-sensitive for output)
+    technology_map = {
+        # Frontend
+        'react': 'React',
+        'angular': 'Angular',
+        'vue': 'Vue',
+        'typescript': 'TypeScript',
+        'javascript': 'JavaScript',
+        'jquery': 'jQuery',
+        'next.js': 'Next.js',
+        'nuxt': 'Nuxt',
+        'svelte': 'Svelte',
+        
+        # Backend/Database
+        'sql': 'SQL',
+        'postgresql': 'PostgreSQL',
+        'mysql': 'MySQL',
+        'mongodb': 'MongoDB',
+        'redis': 'Redis',
+        'oracle': 'Oracle',
+        'sql server': 'SQL Server',
+        'dynamodb': 'DynamoDB',
+        'cassandra': 'Cassandra',
+        
+        # Frameworks
+        'spring boot': 'Spring Boot',
+        'django': 'Django',
+        'flask': 'Flask',
+        'express': 'Express',
+        'node.js': 'Node.js',
+        'asp.net': 'ASP.NET',
+        '.net core': '.NET Core',
+        'laravel': 'Laravel',
+        'rails': 'Rails',
+        
+        # BI/Data Tools
+        'power bi': 'Power BI',
+        'tableau': 'Tableau',
+        'qlik': 'Qlik',
+        'looker': 'Looker',
+        'ssis': 'SSIS',
+        'ssrs': 'SSRS',
+        'cognos': 'Cognos',
+        'microstrategy': 'MicroStrategy',
+        'spotfire': 'Spotfire',
+        'excel': 'Excel',
+        'sql': 'SQL',
+        'python': 'Python',
+        # 'r ': 'R',  # Removed - causes false positives in profile_sub_type
+        'sas': 'SAS',
+        'spss': 'SPSS',
+        
+        # Tools/Others
+        'docker': 'Docker',
+        'kubernetes': 'Kubernetes',
+        'aws': 'AWS',
+        'azure': 'Azure',
+        'gcp': 'GCP',
+        'terraform': 'Terraform',
+        'jenkins': 'Jenkins',
+        'git': 'Git'
+    }
+    
+    detected_techs = []
+    for keyword, tech_name in technology_map.items():
+        if keyword in text_lower and tech_name not in detected_techs:
+            detected_techs.append(tech_name)
+    
+    # Return top 3 most relevant
+    return detected_techs[:3]
+
+
 def looks_like_name(text: str) -> bool:
     """Detect if input looks like a candidate name."""
     words = text.strip().split()
@@ -2354,14 +2488,84 @@ def profile_ranking_by_jd():
             extracted_skills = extract_skills_from_text(job_description)
             extracted_experience = extract_experience_from_text(job_description)
             
+            # Convert extracted skills to list if needed
+            if isinstance(extracted_skills, str):
+                extracted_skills = [s.strip() for s in extracted_skills.split(',') if s.strip()]
+            elif not isinstance(extracted_skills, list):
+                extracted_skills = []
+            
+            # Filter out non-technical words that might have been incorrectly extracted
+            # Words like "dashboards", "datasets" are tasks/features, not skills
+            # Also filter out single-letter skills like "R" that might be false positives
+            non_skill_words = {'dashboards', 'dashboard', 'datasets', 'dataset', 'insights', 'insight', 
+                             'strategies', 'strategy', 'decisions', 'decision', 'teams', 'team',
+                             'r', 'R', 'accuracy', 'documentation', 'reporting', 'communication',
+                             'leadership', 'teamwork', 'collaboration', 'problem solving', 'analytical thinking'}  # Filter out non-technical words and soft skills
+            # Filter out non-skill words and single-letter skills (especially "R" which is often false positive)
+            extracted_skills = [s for s in extracted_skills 
+                              if s.strip().lower() not in non_skill_words and len(s.strip()) > 1]
+            
+            # If BI/Data Analyst keywords detected, add common BI skills
+            job_desc_lower = job_description.lower()
+            bi_keywords_detected = any(kw in job_desc_lower for kw in ['dashboard', 'dataset', 'data visualization', 
+                                                                      'data-driven', 'insights', 'business intelligence', 
+                                                                      'bi', 'reporting', 'analytics', 'data analysis',
+                                                                      'data analyst', 'business analyst'])
+            
+            if bi_keywords_detected:
+                # Common BI/Data Analyst skills to check for/add
+                # NOTE: "R" is EXCLUDED - it's handled separately with strict regex patterns to avoid false positives
+                bi_skills_to_check = ['SQL', 'Excel', 'Power BI', 'Tableau', 'Python', 'SAS', 'SPSS', 
+                                     'data visualization', 'statistical analysis', 'data mining', 'ETL']
+                
+                # First, check if these skills are explicitly mentioned in the job description
+                # Use word boundary matching to avoid false positives (e.g., "reporting" matching "r")
+                import re
+                for skill in bi_skills_to_check:
+                    skill_lower = skill.lower()
+                    # Use word boundary regex to ensure exact match, not substring
+                    # Escape special characters in skill name for regex
+                    skill_pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                    if re.search(skill_pattern, job_desc_lower, re.IGNORECASE):
+                        # Add to extracted_skills if not already present (case-insensitive check)
+                        if not any(s.lower() == skill_lower for s in extracted_skills):
+                            extracted_skills.append(skill)
+                
+                # Remove "R" completely - it's often a false positive from words like "reporting", "Power BI", etc.
+                # We don't add "R" even if explicitly mentioned to avoid confusion
+                extracted_skills = [s for s in extracted_skills 
+                                  if s.strip().lower() not in ['r', 'R']]
+                
+                # If very few or no real skills were extracted, add default BI skills for Data Analyst roles
+                # This helps when job description is generic and doesn't mention specific tools
+                # Filter out single-letter false positives
+                real_skills = [s for s in extracted_skills if len(s.strip()) > 1 and s.lower() not in {'r'}]
+                if len(real_skills) < 3:
+                    # Default essential BI skills for Data Analyst (always add these for BI roles)
+                    default_bi_skills = ['SQL', 'Excel', 'data visualization']
+                    for skill in default_bi_skills:
+                        if not any(s.lower() == skill.lower() for s in extracted_skills):
+                            extracted_skills.append(skill)
+            
             # Convert extracted skills to string if needed
             if not required_skills:
-                required_skills = extracted_skills[:15] if isinstance(extracted_skills, list) else extracted_skills
-                if isinstance(required_skills, list):
-                    required_skills = ', '.join(required_skills[:15])
+                # Use first 10 skills as required/primary
+                required_skills = ', '.join(extracted_skills[:10]) if extracted_skills else ''
             
-            if not preferred_skills and isinstance(extracted_skills, list):
-                preferred_skills = ', '.join(extracted_skills[15:]) if len(extracted_skills) > 15 else ''
+            # ALWAYS extract secondary skills from remaining skills if preferred_skills not provided
+            if not preferred_skills and extracted_skills:
+                if len(extracted_skills) > 10:
+                    # Use skills after the first 10 as preferred/secondary
+                    preferred_skills = ', '.join(extracted_skills[10:])
+                elif len(extracted_skills) > 5:
+                    # If we have 6-10 skills, split: first 5 primary, rest secondary
+                    preferred_skills = ', '.join(extracted_skills[5:])
+                else:
+                    # If we have 5 or fewer skills, use last 2-3 as secondary (if any)
+                    if len(extracted_skills) > 2:
+                        preferred_skills = ', '.join(extracted_skills[2:])
+                    else:
+                        preferred_skills = ''
             
             if min_experience is None:
                 min_experience = extracted_experience
@@ -2402,6 +2606,116 @@ def profile_ranking_by_jd():
         logger.info("Generating embedding for job description...")
         jd_embedding = embedding_service.generate_embedding(job_description)
         
+        # Extract job metadata (role, sub_role, profile_type, profile_sub_type, primary_skills) using Python only (NO AI)
+        extracted_job_metadata = {}
+        logger.info("Extracting job metadata using Python-only extraction (no AI)...")
+        
+        # Build searchable text from job description and skills
+        searchable_text = job_description
+        if required_skills_list:
+            searchable_text += ' ' + ', '.join(required_skills_list)
+        if preferred_skills_list:
+            searchable_text += ' ' + ', '.join(preferred_skills_list)
+        
+        # 1. Extract ROLE using role_extract.py
+        job_title = data.get('job_title', '')
+        if job_title:
+            extracted_job_metadata['role'] = job_title
+        else:
+            # Use role_extract.py to detect role from job description
+            detected_role = detect_role_only(searchable_text)
+            if detected_role:
+                extracted_job_metadata['role'] = detected_role
+            else:
+                # Default fallback
+                extracted_job_metadata['role'] = 'Software Engineer'
+        
+        # 2. Extract SUB_ROLE using role_extract.py
+        # Use detect_role_subrole to get both role and subrole, then extract subrole
+        role_subrole_result = detect_role_subrole(searchable_text)
+        if role_subrole_result:
+            detected_role_from_pair, detected_subrole = role_subrole_result
+            # For Data Analyst / BI roles, sub_role doesn't apply
+            searchable_lower_for_subrole = searchable_text.lower()
+            if 'data analyst' in searchable_lower_for_subrole or 'business analyst' in searchable_lower_for_subrole or 'business intelligence' in searchable_lower_for_subrole:
+                extracted_job_metadata['sub_role'] = None
+            else:
+                extracted_job_metadata['sub_role'] = detected_subrole
+        else:
+            # If no subrole detected, check for Frontend/Backend keywords as fallback
+            searchable_lower_for_subrole = searchable_text.lower()
+            if 'data analyst' in searchable_lower_for_subrole or 'business analyst' in searchable_lower_for_subrole or 'business intelligence' in searchable_lower_for_subrole:
+                extracted_job_metadata['sub_role'] = None
+            else:
+                # Default to Backend if no clear indication
+                extracted_job_metadata['sub_role'] = 'Backend'
+        
+        # 3. Extract PROFILE_TYPE (Java, Python, .Net, JavaScript, etc.)
+        # First check for Data Analyst / BI specific keywords
+        searchable_lower = searchable_text.lower()
+        profile_type_detected = None
+        
+        # Check if this is a Data Analyst role first
+        is_data_analyst_role = ('data analyst' in searchable_lower or 
+                                'business analyst' in searchable_lower or 
+                                'business intelligence' in searchable_lower or
+                                'bi analyst' in searchable_lower)
+        
+        # Check for BI/Data Science keywords
+        bi_keywords = ['dashboard', 'dashboards', 'dataset', 'datasets', 'data visualization', 
+                      'data-driven', 'insights', 'business intelligence', 'bi', 'reporting',
+                      'analytics', 'data analysis']
+        
+        # Strong Data Science indicators (ML/AI specific)
+        data_science_keywords = ['machine learning', 'deep learning', 'ml engineer', 'ai engineer',
+                                'artificial intelligence', 'neural network', 'tensorflow', 'pytorch',
+                                'computer vision', 'nlp', 'natural language processing']
+        
+        # Always try to detect technology-based profile_type first (Java, Python, .Net, etc.)
+        # Use standard inference from skills and job description
+        inferred_profile_types = infer_profile_type_from_requirements(required_skills_list, job_description)
+        if inferred_profile_types:
+            profile_type_detected = inferred_profile_types[0]
+        else:
+            # Fallback: use detect_profile_types_from_text
+            detected_profiles = detect_profile_types_from_text(job_description, ', '.join(required_skills_list) if required_skills_list else '')
+            if detected_profiles:
+                profile_type_detected = detected_profiles[0]
+            else:
+                # Only use BI/Data Science if no technology profile detected
+                if is_data_analyst_role or any(keyword in searchable_lower for keyword in bi_keywords):
+                    # Check if it's more Data Science (strong ML/AI indicators)
+                    if any(kw in searchable_lower for kw in data_science_keywords):
+                        profile_type_detected = 'Data Science'
+                    else:
+                        profile_type_detected = 'Business Intelligence (BI)'
+                else:
+                    profile_type_detected = 'Generalist'
+        
+        extracted_job_metadata['profile_type'] = profile_type_detected
+        
+        # 4. Extract PROFILE_SUB_TYPE (specific technologies: React, SQL, Angular, etc.)
+        # Take the second highest (second technology) if available, otherwise first
+        specific_techs = extract_specific_technologies(searchable_text, ', '.join(required_skills_list) if required_skills_list else '')
+        if specific_techs:
+            # Remove "R" from profile_sub_type (it's often a false positive)
+            specific_techs = [tech for tech in specific_techs if tech.strip() not in ['R', 'r']]
+            if len(specific_techs) >= 2:
+                # Take second highest (second technology)
+                extracted_job_metadata['profile_sub_type'] = specific_techs[1]
+            elif len(specific_techs) == 1:
+                # If only one technology, use it
+                extracted_job_metadata['profile_sub_type'] = specific_techs[0]
+            else:
+                extracted_job_metadata['profile_sub_type'] = None
+        else:
+            extracted_job_metadata['profile_sub_type'] = None
+        
+        # 5. Extract PRIMARY_SKILLS (use required_skills_list)
+        extracted_job_metadata['primary_skills'] = required_skills_list[:15] if required_skills_list else []
+        
+        logger.info(f"Extracted job metadata (Python-only): {extracted_job_metadata}")
+        
         # Store job description in database (optional)
         with create_ats_database() as db:
             jd_data = {
@@ -2413,14 +2727,71 @@ def profile_ranking_by_jd():
                 'min_experience': job_requirements['min_experience'],
                 'max_experience': job_requirements['max_experience'],
                 'domain': job_requirements['domain'],
-                'education_required': job_requirements['education_required']
+                'education_required': job_requirements['education_required'],
+                # Add extracted metadata
+                'role': extracted_job_metadata.get('role', ''),
+                'sub_role': extracted_job_metadata.get('sub_role', ''),
+                'profile_type': extracted_job_metadata.get('profile_type', ''),
+                'profile_sub_type': extracted_job_metadata.get('profile_sub_type', ''),
+                'primary_skills': extracted_job_metadata.get('primary_skills', [])
             }
             
-            # Try to insert (will fail if job_id already exists, which is ok)
+            # Try to insert (will update if job_id already exists)
             try:
                 db.insert_job_description(jd_data, jd_embedding)
-            except Exception:
-                logger.info(f"Job description {job_id} may already exist in database")
+                logger.info(f"Successfully stored job description with metadata for job_id: {job_id}")
+                
+                # Also insert into job_description table (singular)
+                try:
+                    # Prepare primary_skills - use from extracted_job_metadata (already a list from Python extraction)
+                    primary_skills_for_desc = extracted_job_metadata.get('primary_skills', [])
+                    if isinstance(primary_skills_for_desc, str):
+                        primary_skills_for_desc = [s.strip() for s in primary_skills_for_desc.split(',') if s.strip()]
+                    elif not isinstance(primary_skills_for_desc, list):
+                        primary_skills_for_desc = []
+                    
+                    # Prepare secondary_skills from preferred_skills_list
+                    # preferred_skills_list is already extracted above (line ~2493-2498)
+                    secondary_skills_for_desc = preferred_skills_list.copy() if preferred_skills_list else []
+                    
+                    # If still empty, try to extract from job description text directly
+                    if not secondary_skills_for_desc:
+                        logger.info("preferred_skills_list is empty, attempting to extract secondary skills from job description...")
+                        from resume_parser import extract_skills_from_text
+                        all_extracted_skills = extract_skills_from_text(job_description)
+                        if isinstance(all_extracted_skills, list) and len(all_extracted_skills) > 10:
+                            # Use skills after first 10 as secondary
+                            secondary_skills_for_desc = all_extracted_skills[10:]
+                            logger.info(f"Extracted {len(secondary_skills_for_desc)} secondary skills from job description")
+                        elif isinstance(all_extracted_skills, str):
+                            skills_list = [s.strip() for s in all_extracted_skills.split(',') if s.strip()]
+                            if len(skills_list) > 10:
+                                secondary_skills_for_desc = skills_list[10:]
+                                logger.info(f"Extracted {len(secondary_skills_for_desc)} secondary skills from job description")
+                    
+                    logger.info(f"Final secondary_skills_for_desc: {len(secondary_skills_for_desc)} skills - {secondary_skills_for_desc[:5] if secondary_skills_for_desc else 'EMPTY'}")
+                    
+                    job_desc_metadata = {
+                        'role': extracted_job_metadata.get('role', ''),
+                        'sub_role': extracted_job_metadata.get('sub_role', ''),
+                        'profile_type': extracted_job_metadata.get('profile_type', ''),
+                        'profile_sub_type': extracted_job_metadata.get('profile_sub_type', ''),
+                        'primary_skills': primary_skills_for_desc,
+                        'secondary_skills': secondary_skills_for_desc
+                    }
+                    logger.info(f"Attempting to insert into job_description table with metadata:")
+                    logger.info(f"  - primary_skills: {len(primary_skills_for_desc)} skills")
+                    logger.info(f"  - secondary_skills: {len(secondary_skills_for_desc)} skills")
+                    success = db.insert_into_job_description(job_desc_metadata)
+                    if success:
+                        logger.info(f"Successfully inserted into job_description table for job_id: {job_id}")
+                    else:
+                        logger.warning(f"Failed to insert into job_description table (returned False)")
+                except Exception as e:
+                    logger.error(f"Error inserting into job_description table: {e}")
+                    logger.error(traceback.format_exc())
+            except Exception as e:
+                logger.error(f"Error storing job description: {e}")
         
         # Determine profile types relevant to this JD
         inferred_profile_types = infer_profile_type_from_requirements(required_skills_list, job_description)
@@ -2453,6 +2824,14 @@ def profile_ranking_by_jd():
                     'max_experience': max_experience,
                     'domain': domain,
                     'education_required': education_required
+                },
+                'extracted_job_metadata': {
+                    'role': extracted_job_metadata.get('role', ''),
+                    'sub_role': extracted_job_metadata.get('sub_role', ''),
+                    'profile_type': extracted_job_metadata.get('profile_type', ''),
+                    'profile_sub_type': extracted_job_metadata.get('profile_sub_type', ''),
+                    'primary_skills': extracted_job_metadata.get('primary_skills', []),
+                    'secondary_skills': preferred_skills_list
                 },
                 'timestamp': datetime.now().isoformat()
             }), 200
@@ -2528,6 +2907,14 @@ def profile_ranking_by_jd():
                 'max_experience': max_experience,
                 'domain': domain,
                 'education_required': education_required
+            },
+            'extracted_job_metadata': {
+                'role': extracted_job_metadata.get('role', ''),
+                'sub_role': extracted_job_metadata.get('sub_role', ''),
+                'profile_type': extracted_job_metadata.get('profile_type', ''),
+                'profile_sub_type': extracted_job_metadata.get('profile_sub_type', ''),
+                'primary_skills': extracted_job_metadata.get('primary_skills', []),
+                'secondary_skills': preferred_skills_list
             },
             'ranking_criteria': {
                 'weights': ATSConfig.RANKING_WEIGHTS,
@@ -2638,6 +3025,173 @@ def comprehensive_profile_ranking():
         # Update job_requirements with normalized skills
         job_requirements['required_skills'] = required_skills
         job_requirements['preferred_skills'] = preferred_skills
+        
+        # Extract role, sub_role, profile_type, and profile_sub_type from job description
+        extracted_job_metadata = {}
+        job_description_text = job_requirements.get('job_description', '')
+        if not job_description_text:
+            # Try to get from job_requirements as text
+            job_description_text = str(job_requirements.get('job_description', ''))
+        
+        # Build searchable text from job requirements for detection
+        searchable_text = job_description_text
+        if required_skills:
+            searchable_text += ' ' + (required_skills if isinstance(required_skills, str) else ', '.join(required_skills))
+        if preferred_skills:
+            searchable_text += ' ' + (preferred_skills if isinstance(preferred_skills, str) else ', '.join(preferred_skills))
+        
+        # 1. Extract ROLE using role_extract.py
+        job_title = job_requirements.get('job_title', '')
+        if job_title:
+            extracted_job_metadata['role'] = job_title
+        else:
+            # Use role_extract.py to detect role from job description
+            detected_role = detect_role_only(searchable_text)
+            if detected_role:
+                extracted_job_metadata['role'] = detected_role
+            else:
+                # Default fallback
+                extracted_job_metadata['role'] = 'Software Engineer'
+        
+        # 2. Extract SUB_ROLE using role_extract.py
+        # Use detect_role_subrole to get both role and subrole, then extract subrole
+        role_subrole_result = detect_role_subrole(searchable_text)
+        if role_subrole_result:
+            detected_role_from_pair, detected_subrole = role_subrole_result
+            # Map subrole to standard format: Backend, Frontend, or Full Stack
+        if detected_subrole:
+                # Normalize subrole names to standard format
+                subrole_lower = detected_subrole.lower()
+                if 'backend' in subrole_lower or 'back-end' in subrole_lower:
+                    extracted_job_metadata['sub_role'] = 'Backend'
+                elif 'frontend' in subrole_lower or 'front-end' in subrole_lower or 'ui' in subrole_lower:
+                    extracted_job_metadata['sub_role'] = 'Frontend'
+                elif 'full stack' in subrole_lower or 'fullstack' in subrole_lower:
+                    extracted_job_metadata['sub_role'] = 'Full Stack'
+                else:
+                    # Use detected subrole as-is, or default to Backend
+                    extracted_job_metadata['sub_role'] = 'Backend'
+            else:
+                extracted_job_metadata['sub_role'] = 'Backend'
+        else:
+            # If no subrole detected, use keyword matching as fallback
+            searchable_lower_for_subrole = searchable_text.lower()
+            # Check for Frontend/Backend keywords
+            frontend_keywords = ['frontend', 'front-end', 'react', 'angular', 'vue', 'ui', 'javascript', 'html', 'css']
+            backend_keywords = ['backend', 'back-end', 'api', 'database', 'sql', 'server', 'spring', 'django']
+            
+            frontend_count = sum(1 for kw in frontend_keywords if kw in searchable_lower_for_subrole)
+            backend_count = sum(1 for kw in backend_keywords if kw in searchable_lower_for_subrole)
+            
+            if frontend_count > 0 and backend_count > 0:
+                extracted_job_metadata['sub_role'] = 'Full Stack'
+            elif frontend_count > 0:
+                extracted_job_metadata['sub_role'] = 'Frontend'
+        else:
+            # Default to Backend if no clear indication
+            extracted_job_metadata['sub_role'] = 'Backend'
+        
+        # 3. Extract PROFILE_TYPE (Java, Python, .Net, JavaScript, etc.)
+        required_skills_list = required_skills.split(',') if isinstance(required_skills, str) else required_skills
+        if not isinstance(required_skills_list, list):
+            required_skills_list = []
+        
+        # First check for Data Analyst / BI specific keywords
+        searchable_lower_profile = searchable_text.lower()
+        profile_type_detected = None
+        
+        # Check if this is a Data Analyst role first
+        is_data_analyst_role = ('data analyst' in searchable_lower_profile or 
+                                'business analyst' in searchable_lower_profile or 
+                                'business intelligence' in searchable_lower_profile or
+                                'bi analyst' in searchable_lower_profile)
+        
+        # Check for BI/Data Science keywords
+        bi_keywords = ['dashboard', 'dashboards', 'dataset', 'datasets', 'data visualization', 
+                      'data-driven', 'insights', 'business intelligence', 'bi', 'reporting',
+                      'analytics', 'data analysis']
+        
+        # Strong Data Science indicators (ML/AI specific)
+        data_science_keywords = ['machine learning', 'deep learning', 'ml engineer', 'ai engineer',
+                                'artificial intelligence', 'neural network', 'tensorflow', 'pytorch',
+                                'computer vision', 'nlp', 'natural language processing']
+        
+        # Always try to detect technology-based profile_type first (Java, Python, .Net, etc.)
+        # Use standard inference from skills and job description
+        inferred_profile_types = infer_profile_type_from_requirements(required_skills_list, job_description_text)
+        if inferred_profile_types:
+            profile_type_detected = inferred_profile_types[0]
+        else:
+            # Fallback: use detect_profile_types_from_text
+            detected_profiles = detect_profile_types_from_text(job_description_text, str(required_skills))
+            if detected_profiles:
+                profile_type_detected = detected_profiles[0]
+            else:
+                # Only use BI/Data Science if no technology profile detected
+                if is_data_analyst_role or any(keyword in searchable_lower_profile for keyword in bi_keywords):
+                    # Check if it's more Data Science (strong ML/AI indicators)
+                    if any(kw in searchable_lower_profile for kw in data_science_keywords):
+                        profile_type_detected = 'Data Science'
+                    else:
+                        profile_type_detected = 'Business Intelligence (BI)'
+                else:
+                    profile_type_detected = None
+        
+        extracted_job_metadata['profile_type'] = profile_type_detected
+        
+        # 4. Extract PROFILE_SUB_TYPE (specific technologies: React, SQL, Angular, etc.)
+        # Take the second highest (second technology) if available, otherwise first
+        specific_techs = extract_specific_technologies(searchable_text, required_skills)
+        if specific_techs:
+            # Remove "R" from profile_sub_type (it's often a false positive)
+            specific_techs = [tech for tech in specific_techs if tech.strip() not in ['R', 'r']]
+            if len(specific_techs) >= 2:
+                # Take second highest (second technology)
+                extracted_job_metadata['profile_sub_type'] = specific_techs[1]
+            elif len(specific_techs) == 1:
+                # If only one technology, use it
+                extracted_job_metadata['profile_sub_type'] = specific_techs[0]
+            else:
+                extracted_job_metadata['profile_sub_type'] = None
+        else:
+            extracted_job_metadata['profile_sub_type'] = None
+        
+        # Extract primary_skills and secondary_skills for response
+        if isinstance(required_skills, str):
+            primary_skills_list = [s.strip() for s in required_skills.split(',') if s.strip()][:10]
+        else:
+            primary_skills_list = required_skills[:10] if isinstance(required_skills, list) else []
+        
+        if isinstance(preferred_skills, str):
+            secondary_skills_list = [s.strip() for s in preferred_skills.split(',') if s.strip()]
+        else:
+            secondary_skills_list = preferred_skills if isinstance(preferred_skills, list) else []
+        
+        # Store extracted metadata in SQL database (job_description table)
+        try:
+            with create_ats_database() as db:
+                metadata_to_store = {
+                    'role': extracted_job_metadata.get('role'),
+                    'sub_role': extracted_job_metadata.get('sub_role'),
+                    'profile_type': extracted_job_metadata.get('profile_type'),
+                    'profile_sub_type': extracted_job_metadata.get('profile_sub_type'),
+                    'primary_skills': primary_skills_list,  # Pass as list, method will convert
+                    'secondary_skills': secondary_skills_list  # Pass as list, method will convert
+                }
+                
+                logger.info(f"Attempting to insert into job_description table with metadata:")
+                logger.info(f"  - primary_skills: {len(primary_skills_list)} skills")
+                logger.info(f"  - secondary_skills: {len(secondary_skills_list)} skills")
+                # Insert into job_description table (singular)
+                success = db.insert_into_job_description(metadata_to_store)
+                if success:
+                    logger.info(f"Successfully stored job metadata in job_description table with {len(primary_skills_list)} primary and {len(secondary_skills_list)} secondary skills")
+                else:
+                    logger.warning("Failed to store job metadata in job_description table (returned False)")
+        except Exception as e:
+            logger.error(f"Error storing job metadata in job_description table: {e}")
+            logger.error(traceback.format_exc())
+            # Don't fail the entire request if database insert fails
         
         profiles_dir = data.get('profiles_directory', os.path.join(os.getcwd(), 'profiles'))
         top_k = data.get('top_k', 10)
@@ -2833,6 +3387,14 @@ def comprehensive_profile_ranking():
             'total_candidates_evaluated': len(candidates),
             'top_candidates_returned': len(ranked_profiles),
             'job_requirements': job_requirements,
+            'extracted_job_metadata': {
+                'role': extracted_job_metadata.get('role'),
+                'sub_role': extracted_job_metadata.get('sub_role'),
+                'profile_type': extracted_job_metadata.get('profile_type'),
+                'profile_sub_type': extracted_job_metadata.get('profile_sub_type'),
+                'primary_skills': ', '.join(primary_skills_list) if primary_skills_list else '',
+                'secondary_skills': ', '.join(secondary_skills_list) if secondary_skills_list else ''
+            },
             'ranking_criteria': {
                 'weights': ATSConfig.RANKING_WEIGHTS,
                 'semantic_similarity': 'enabled',

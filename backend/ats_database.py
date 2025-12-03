@@ -27,6 +27,7 @@ class ATSDatabase:
         self.config = config or ATSConfig.get_mysql_config()
         self.connection = None
         self.cursor = None
+        self._connection_error = None
     
     def connect(self) -> bool:
         """Establish MySQL connection."""
@@ -36,7 +37,11 @@ class ATSDatabase:
             logger.info(f"Connected to MySQL database: {self.config['database']}")
             return True
         except Error as e:
-            logger.error(f"Error connecting to MySQL: {e}")
+            error_msg = str(e)
+            logger.error(f"Error connecting to MySQL: {error_msg}")
+            logger.error(f"Connection config: host={self.config.get('host')}, user={self.config.get('user')}, database={self.config.get('database')}, port={self.config.get('port')}")
+            # Store error for better error messages
+            self._connection_error = error_msg
             return False
     
     def disconnect(self):
@@ -52,7 +57,22 @@ class ATSDatabase:
     
     def __enter__(self):
         """Context manager entry."""
-        self.connect()
+        connected = self.connect()
+        if not connected:
+            # Fail fast so callers don't try to use a None cursor/connection
+            error_detail = getattr(self, '_connection_error', 'Unknown error')
+            config_info = f"host={self.config.get('host')}, user={self.config.get('user')}, database={self.config.get('database')}, port={self.config.get('port')}"
+            raise RuntimeError(
+                f"Failed to connect to MySQL database.\n"
+                f"Error: {error_detail}\n"
+                f"Config: {config_info}\n"
+                f"Please check:\n"
+                f"1. MySQL server is running\n"
+                f"2. Database '{self.config.get('database')}' exists\n"
+                f"3. User '{self.config.get('user')}' has access\n"
+                f"4. Password is correct\n"
+                f"5. .env file is in ATS_AI/backend/ directory"
+            )
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -470,6 +490,7 @@ class ATSDatabase:
                     min_experience, max_experience,
                     domain, sub_domain, education_required,
                     location, employment_type, salary_range,
+                    role, sub_role, profile_type, profile_sub_type, primary_skills,
                     jd_summary, embedding, embedding_model, status
                 ) VALUES (
                     %(job_id)s, %(job_title)s, %(job_description)s,
@@ -477,9 +498,38 @@ class ATSDatabase:
                     %(min_experience)s, %(max_experience)s,
                     %(domain)s, %(sub_domain)s, %(education_required)s,
                     %(location)s, %(employment_type)s, %(salary_range)s,
+                    %(role)s, %(sub_role)s, %(profile_type)s, %(profile_sub_type)s, %(primary_skills)s,
                     %(jd_summary)s, %(embedding)s, %(embedding_model)s, %(status)s
                 )
+                ON DUPLICATE KEY UPDATE
+                    job_title = VALUES(job_title),
+                    job_description = VALUES(job_description),
+                    required_skills = VALUES(required_skills),
+                    preferred_skills = VALUES(preferred_skills),
+                    min_experience = VALUES(min_experience),
+                    max_experience = VALUES(max_experience),
+                    domain = VALUES(domain),
+                    sub_domain = VALUES(sub_domain),
+                    education_required = VALUES(education_required),
+                    location = VALUES(location),
+                    employment_type = VALUES(employment_type),
+                    salary_range = VALUES(salary_range),
+                    role = VALUES(role),
+                    sub_role = VALUES(sub_role),
+                    profile_type = VALUES(profile_type),
+                    profile_sub_type = VALUES(profile_sub_type),
+                    primary_skills = VALUES(primary_skills),
+                    jd_summary = VALUES(jd_summary),
+                    embedding = VALUES(embedding),
+                    embedding_model = VALUES(embedding_model),
+                    status = VALUES(status),
+                    updated_at = CURRENT_TIMESTAMP
             """
+            
+            # Convert primary_skills list to comma-separated string if needed
+            primary_skills = jd_data.get('primary_skills', '')
+            if isinstance(primary_skills, list):
+                primary_skills = ', '.join([str(s).strip() for s in primary_skills if s])
             
             data = {
                 'job_id': jd_data.get('job_id'),
@@ -495,6 +545,11 @@ class ATSDatabase:
                 'location': jd_data.get('location'),
                 'employment_type': jd_data.get('employment_type'),
                 'salary_range': jd_data.get('salary_range'),
+                'role': jd_data.get('role'),
+                'sub_role': jd_data.get('sub_role'),
+                'profile_type': jd_data.get('profile_type'),
+                'profile_sub_type': jd_data.get('profile_sub_type'),
+                'primary_skills': primary_skills,
                 'jd_summary': jd_data.get('jd_summary'),
                 'embedding': embedding_json,
                 'embedding_model': jd_data.get('embedding_model', 'text-embedding-ada-002'),
@@ -507,6 +562,133 @@ class ATSDatabase:
             return True
         except Error as e:
             logger.error(f"Error inserting job description: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+    
+    def update_job_description_metadata(self, job_id: str, metadata: Dict[str, Any]) -> bool:
+        """
+        Update extracted job metadata in job_descriptions table.
+        
+        Args:
+            job_id: Job ID to update
+            metadata: Dictionary with keys: role, sub_role, profile_type, 
+                     profile_sub_type, primary_skills
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Convert primary_skills list to comma-separated string if needed
+            primary_skills = metadata.get('primary_skills', '')
+            if isinstance(primary_skills, list):
+                primary_skills = ', '.join([str(s).strip() for s in primary_skills if s])
+            
+            query = """
+                UPDATE job_descriptions SET
+                    role = %(role)s,
+                    sub_role = %(sub_role)s,
+                    profile_type = %(profile_type)s,
+                    profile_sub_type = %(profile_sub_type)s,
+                    primary_skills = %(primary_skills)s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = %(job_id)s
+            """
+            
+            data = {
+                'job_id': job_id,
+                'role': metadata.get('role'),
+                'sub_role': metadata.get('sub_role'),
+                'profile_type': metadata.get('profile_type'),
+                'profile_sub_type': metadata.get('profile_sub_type'),
+                'primary_skills': primary_skills
+            }
+            
+            self.cursor.execute(query, data)
+            self.connection.commit()
+            logger.info(f"Updated job description metadata for job_id: {job_id}")
+            return True
+        except Error as e:
+            logger.error(f"Error updating job description metadata: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+    
+    def insert_job_description_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        DEPRECATED: Use update_job_description_metadata instead.
+        Kept for backward compatibility.
+        """
+        logger.warning("insert_job_description_metadata is deprecated. Use update_job_description_metadata with job_id instead.")
+        return False
+    
+    def insert_into_job_description(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Insert job metadata into job_description table (singular).
+        
+        Args:
+            metadata: Dictionary with keys: role, sub_role, profile_type, 
+                     profile_sub_type, primary_skills, secondary_skills
+                     Optional: job_id (string like "JD_123" - will be ignored, uses auto-increment)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        query = """
+            INSERT INTO job_description (
+                role, sub_role, profile_type, profile_sub_type, 
+                primary_skills, secondary_skills
+            ) VALUES (
+                %(role)s, %(sub_role)s, %(profile_type)s, 
+                %(profile_sub_type)s, %(primary_skills)s, %(secondary_skills)s
+            )
+        """
+        
+        try:
+            # Convert primary_skills and secondary_skills to strings if needed
+            primary_skills = metadata.get('primary_skills', '')
+            if isinstance(primary_skills, list):
+                primary_skills = ', '.join([str(s).strip() for s in primary_skills if s])
+            
+            secondary_skills = metadata.get('secondary_skills', '')
+            if isinstance(secondary_skills, list):
+                secondary_skills = ', '.join([str(s).strip() for s in secondary_skills if s])
+            
+            # Always use auto-increment (job_id is INT in job_description table)
+            # The job_id from metadata (string like "JD_123") is ignored
+            # This table has its own auto-incrementing INT primary key
+            data = {
+                'role': metadata.get('role') or None,
+                'sub_role': metadata.get('sub_role') or None,
+                'profile_type': metadata.get('profile_type') or None,
+                'profile_sub_type': metadata.get('profile_sub_type') or None,
+                'primary_skills': primary_skills or None,
+                'secondary_skills': secondary_skills or None
+            }
+            
+            logger.info(f"Executing insert into job_description with data:")
+            logger.info(f"  - role: {data.get('role')}")
+            logger.info(f"  - profile_type: {data.get('profile_type')}")
+            logger.info(f"  - primary_skills count: {len(primary_skills.split(', ')) if primary_skills else 0}")
+            logger.info(f"  - secondary_skills count: {len(secondary_skills.split(', ')) if secondary_skills else 0}")
+            self.cursor.execute(query, data)
+            self.connection.commit()
+            inserted_id = self.cursor.lastrowid
+            logger.info(f"✓ Successfully inserted into job_description table with auto-increment id: {inserted_id}")
+            logger.info(f"  - role: {data.get('role')}")
+            logger.info(f"  - sub_role: {data.get('sub_role')}")
+            logger.info(f"  - profile_type: {data.get('profile_type')}")
+            logger.info(f"  - profile_sub_type: {data.get('profile_sub_type')}")
+            logger.info(f"  - primary_skills: {primary_skills[:100] if primary_skills else 'None'}...")
+            logger.info(f"  - secondary_skills: {secondary_skills[:100] if secondary_skills else 'None'}...")
+            return True
+        except Error as e:
+            error_msg = str(e)
+            logger.error(f"✗ Error inserting into job_description: {error_msg}")
+            logger.error(f"  Query: {query}")
+            logger.error(f"  Metadata received: {metadata}")
+            if 'data' in locals():
+                logger.error(f"  Data prepared: {data}")
             if self.connection:
                 self.connection.rollback()
             return False

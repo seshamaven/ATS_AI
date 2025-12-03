@@ -1,0 +1,337 @@
+# ===========================================
+# REGULATION LIBRARY API - CURL TEST COMMANDS
+# ===========================================
+# Embed API Server: http://localhost:5000
+# Chat API Server: http://localhost:5001
+# API Endpoints: /embed, /chat, /compare, /search
+# ===========================================
+
+# ===========================================
+# 0. EMBED API TESTS
+# ===========================================
+
+# Test 0.1: Basic Embed Process - Process all regulations
+curl -X POST http://localhost:5000/embed \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Test 0.2: Embed Process with Verbose Output
+curl -X POST http://localhost:5000/embed \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  -v
+
+# Test 0.3: Check Embed API Health (if server is running)
+curl -X GET http://localhost:5000/
+
+# ===========================================
+
+# ===========================================
+# 1. CHAT ENDPOINT TESTS
+# ===========================================
+
+# Test 1.1: Basic Chat Query - RBI Guidelines
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the RBI guidelines for NBFC risk management?"
+  }'
+
+# Test 1.2: Chat Query - SEBI Regulations
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Tell me about SEBI regulations for mutual funds"
+  }'
+
+# Test 1.3: Chat Query - Insurance Regulations
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the IRDAI guidelines for life insurance companies?"
+  }'
+
+# Test 1.4: Chat Query - Banking Compliance
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the compliance requirements for commercial banks regarding capital adequacy?"
+  }'
+
+# Test 1.5: Chat Query - Payment Banks
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the regulations for payment banks and small finance banks?"
+  }'
+
+# Test 1.6: Chat Query - Error Case (Empty Query)
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": ""
+  }'
+
+# Test 1.7: Chat Query - Error Case (Missing Query Field)
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Hello"
+  }'
+
+# ===========================================
+# 2. COMPARE ENDPOINT TESTS
+# ===========================================
+
+# Test 2.1: Compare Query - RBI Circular
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "RBI circular on digital lending guidelines"
+  }'
+
+# Test 2.2: Compare Query - SEBI Framework
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SEBI framework for algorithmic trading"
+  }'
+
+# Test 2.3: Compare Query - IRDAI Guidelines
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "IRDAI guidelines for health insurance portability"
+  }'
+
+# Test 2.4: Compare Query - Banking Risk Management
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Basel III capital adequacy requirements for banks"
+  }'
+
+# Test 2.5: Compare Query - Fintech Regulations
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Regulatory framework for fintech companies and digital payments"
+  }'
+
+# Test 2.6: Compare Query - Specific Regulation Number
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "RBI/2023-24/123 circular on cybersecurity framework"
+  }'
+
+# Test 2.7: Compare Query - Error Case (Empty Query)
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": ""
+  }'
+
+# ===========================================
+# 3. SEARCH ENDPOINT TESTS
+# ===========================================
+
+# Test 3.1: Basic Search - No Filters
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "risk management guidelines"
+  }'
+
+# Test 3.2: Search with Regulator Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "capital adequacy requirements",
+    "filters": {
+      "regulator": "Reserve Bank of India"
+    }
+  }'
+
+# Test 3.3: Search with Industry Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "compliance reporting",
+    "filters": {
+      "industry": "Banking"
+    }
+  }'
+
+# Test 3.4: Search with Multiple Filters
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "cybersecurity framework",
+    "filters": {
+      "regulator": "Reserve Bank of India",
+      "industry": "Banking",
+      "task_category": "Technology"
+    }
+  }'
+
+# Test 3.5: Search with AI Match Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "digital lending",
+    "filters": {
+      "AI_Match": "Matched"
+    }
+  }'
+
+# Test 3.6: Search with Risk Category Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "operational risk",
+    "filters": {
+      "risk_category": "High"
+    }
+  }'
+
+# Test 3.7: Search with Department Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "compliance monitoring",
+    "filters": {
+      "department": "Compliance"
+    }
+  }'
+
+# Test 3.8: Search with Regulation Type Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "master circular",
+    "filters": {
+      "reg_category": "Circular"
+    }
+  }'
+
+# Test 3.9: Search with Multiple Values Filter
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "regulatory reporting",
+    "filters": {
+      "regulator": ["Reserve Bank of India", "SEBI"],
+      "industry": ["Banking", "Capital Markets"]
+    }
+  }'
+
+# Test 3.10: Search - Error Case (Empty Query)
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": ""
+  }'
+
+# ===========================================
+# 4. EDGE CASE TESTS
+# ===========================================
+
+# Test 4.1: Very Long Query
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the comprehensive RBI guidelines for NBFCs regarding risk management, capital adequacy, liquidity management, cybersecurity framework, operational risk controls, credit risk assessment, market risk management, and compliance reporting requirements for the financial year 2023-24?"
+  }'
+
+# Test 4.2: Query with Special Characters
+curl -X POST http://localhost:5001/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "RBI/2023-24/123 & SEBI (LODR) Regulations, 2015 - Compliance requirements"
+  }'
+
+# Test 4.3: Query with Numbers and Dates
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Basel III framework implementation by March 31, 2024",
+    "filters": {
+      "regulator": "Reserve Bank of India"
+    }
+  }'
+
+# Test 4.4: Non-Regulatory Query (Should return limited results)
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the weather like today?"
+  }'
+
+# Test 4.5: Invalid JSON Format
+curl -X POST http://localhost:5001/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "test query"
+  '
+
+# ===========================================
+# 5. PERFORMANCE TESTS
+# ===========================================
+
+# Test 5.1: Multiple Rapid Requests (Run these in sequence quickly)
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "RBI guidelines"}' &
+
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SEBI regulations"}' &
+
+curl -X POST http://localhost:5001/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "IRDAI framework"}' &
+
+# ===========================================
+# 6. HEALTH CHECK TESTS
+# ===========================================
+
+# Test 6.1: Server Health Check (if you add a health endpoint)
+# curl -X GET http://localhost:5001/health
+
+# Test 6.2: Check if server is running
+curl -X GET http://localhost:5001/
+
+# ===========================================
+# USAGE INSTRUCTIONS
+# ===========================================
+# 1. Start both APIs:
+#    - Embed API: python embed_api.py (port 5000)
+#    - Chat API: python chatbot_api.py (port 5001)
+#    - Or use: .\startapi.ps1
+# 2. Run embed API first to populate Pinecone with vectors
+# 3. Then test chat/search/compare endpoints
+# 4. Copy and paste each curl command one by one
+# 5. Check the response for expected results
+# 6. Monitor server logs for any errors
+# 7. Test both success and error scenarios
+# 8. Verify database updates for /compare endpoint
+# 9. Check AI_Match and notes columns are updated correctly
+# ===========================================
+
+# ===========================================
+# EXPECTED RESPONSES
+# ===========================================
+# Embed API (/embed):
+# - HTTP 200 status
+# - JSON with processed_regulations count
+# - total_vectors_created count
+# - timestamp of completion
+# 
+# Chat/Search/Compare APIs:
+# - HTTP 200 status
+# - JSON response with relevant data
+# - Proper error handling for invalid requests
+# - Database updates for /compare endpoint
+# - AI_Match and notes updates in database
+# ===========================================

@@ -22,3 +22,4 @@ ORDER BY created_at DESC;
 -- Show full details of latest record
 SELECT * FROM Chat_history ORDER BY created_at DESC LIMIT 1;
 
+

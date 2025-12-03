@@ -31,3 +31,4 @@ SELECT * FROM Chat_history ORDER BY id DESC LIMIT 1;
 -- Step 6: View all columns for all records
 SELECT * FROM Chat_history ORDER BY created_at DESC LIMIT 10;
 
+

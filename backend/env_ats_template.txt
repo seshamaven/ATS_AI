@@ -9,6 +9,14 @@ ATS_MYSQL_USER=root
 ATS_MYSQL_PASSWORD=your_password_here
 ATS_MYSQL_DATABASE=ats_db
 ATS_MYSQL_PORT=3306
+# ==========================================
+# Ollama Configuration (Disabled by default)
+# ==========================================
+USE_OLLAMA=False
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:4b
+
+# ==========================================
 
 # ==========================================
 # Azure OpenAI Configuration (Preferred)

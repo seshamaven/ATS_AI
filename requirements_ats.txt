@@ -1,0 +1,50 @@
+# ATS (Application Tracking System) Dependencies
+
+# Web Framework
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# Database
+mysql-connector-python==8.2.0
+
+# OpenAI / Azure OpenAI
+openai==1.109.1
+
+# Vector Database (Optional - for scale)
+pinecone-client>=5.0.0
+
+# Data Processing
+numpy>=1.26.0
+pandas>=2.0.0
+
+# NLP and Text Processing
+spacy>=3.7.0
+# Download spaCy model: python -m spacy download en_core_web_sm
+
+# Embeddings Fallback (when Ollama model doesn't support embeddings)
+sentence-transformers>=2.2.0
+
+# Resume Parsing - PDF
+PyPDF2>=3.0.0
+
+# Resume Parsing - DOCX
+python-docx>=0.8.11
+
+# Resume Parsing - DOC (older binary format)
+# Option 1: NT-TextFileLoader (recommended - works well on Windows)
+NT-TextFileLoader>=2.0.0
+# Alternative Option 2: textract (may have installation issues on newer pip)
+# textract>=1.6.5
+# Alternative Option 3: pypandoc (requires pandoc installation)
+# pypandoc>=1.11
+# Install pandoc separately: https://pandoc.org/installing.html
+
+# Environment Configuration
+python-dotenv==1.0.0
+
+# HTTP Requests
+requests==2.32.3
+
+# Additional utilities
+python-dateutil>=2.8.2
+

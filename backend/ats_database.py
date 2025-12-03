@@ -40,11 +40,17 @@ class ATSDatabase:
             self._ensure_role_columns_exist()
             return True
         except Error as e:
+<<<<<<< HEAD
             error_msg = str(e)
             error_msg_lower = error_msg.lower()
             
             # Store error for better error messages
             self._connection_error = error_msg
+=======
+            error_msg = str(e).lower()
+            # Store error for better error messages
+            self._connection_error = str(e)
+>>>>>>> da27202cf3d89d3aafdb0d3b5822e254c31bb0b2
             
             # Check if database doesn't exist (error 1049)
             if "1049" in str(e) or "unknown database" in error_msg_lower:
@@ -334,45 +340,6 @@ class ATSDatabase:
             self.last_error_code = error_code
             return None
     
-    def get_all_resumes(self) -> List[Dict[str, Any]]:
-        """Get all resumes from database."""
-        try:
-            if not self.is_connected():
-                logger.error("Database not connected. Cannot get resumes.")
-                return []
-            
-            query = """
-                SELECT 
-                    candidate_id, name, email, phone,
-                    total_experience, primary_skills, secondary_skills, all_skills, profile_type,
-                    domain, sub_domain,
-                    education, education_details,
-                    current_location, preferred_locations,
-                    current_company, current_designation,
-                    notice_period, expected_salary, current_salary,
-                    resume_summary,
-                    file_name, file_type, file_size_kb, file_base64,
-                    status,
-                    created_at, updated_at
-                FROM resume_metadata 
-                ORDER BY created_at DESC
-            """
-            
-            self.cursor.execute(query)
-            columns = [desc[0] for desc in self.cursor.description]
-            results = []
-            
-            for row in self.cursor.fetchall():
-                resume_dict = dict(zip(columns, row))
-                results.append(resume_dict)
-            
-            logger.info(f"Retrieved {len(results)} resumes from database")
-            return results
-            
-        except Error as e:
-            logger.error(f"Error retrieving resumes: {e}")
-            return []
-    
     def get_resume_by_id(self, candidate_id: int) -> Optional[Dict[str, Any]]:
         """Get resume by candidate ID."""
         try:
@@ -393,7 +360,7 @@ class ATSDatabase:
         try:
             if not self.is_connected():
                 logger.error("Database not connected. Cannot get resume.")
-                return None
+                return []
             query = """
                 SELECT 
                     candidate_id,

@@ -1753,137 +1753,146 @@ def search_resumes():
                     'resume_summary': r.get('resume_summary', ''),
                 })
         
-        # === STEP 8: Semantic Search (Hybrid Approach) ===
+        # === STEP 8: Semantic Search using Process_Search_Query (Query Correct Index) ===
         semantic_applied = False
-        final_candidates = sql_candidates
+        final_candidates = sql_candidates.copy()  # Start with SQL candidates as fallback
         semantic_scores = {}
         
         # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
         for candidate in final_candidates:
             candidate['match_score'] = 1.0  # Perfect SQL match (default)
         
-        if use_semantic and sql_candidates and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+        if use_semantic and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
             try:
-                logger.info(f"Applying semantic search to {len(sql_candidates)} SQL-filtered candidates")
+                logger.info(f"Using Process_Search_Query to search correct Pinecone index for query: {query}")
                 
-                # Generate query embedding
-                query_embedding = embedding_service.generate_embedding(query)
-                logger.info(f"Generated query embedding with {len(query_embedding)} dimensions")
+                # Use Process_Search_Query to extract metadata and query the correct index
+                from summary_AI_extraction import Process_Search_Query
                 
-                # Initialize Pinecone manager
-                from enhanced_pinecone_manager import EnhancedPineconeManager
-                pinecone_manager = EnhancedPineconeManager(
-                    api_key=ATSConfig.PINECONE_API_KEY,
-                    index_name=ATSConfig.PINECONE_INDEX_NAME,
-                    dimension=ATSConfig.EMBEDDING_DIMENSION
+                # Determine profile_type from detected profile types for better index selection
+                search_profile_type = detected_profile_type_from_role or first_skill_profile_type
+                
+                # Call Process_Search_Query to get results from the correct index
+                search_result = Process_Search_Query(
+                    query=query,
+                    profile_type=search_profile_type,  # Pass detected profile_type if available
+                    top_k=limit * 3 if limit else 200,  # Get more results for better ranking
+                    include_metadata=True
                 )
-                pinecone_manager.get_or_create_index()
                 
-                # Get candidate IDs from SQL results (limit to 1000 for performance)
-                candidate_ids = [c['candidate_id'] for c in sql_candidates[:1000]]
-                
-                if candidate_ids:
-                    # Perform semantic search on SQL-filtered candidates
-                    # Use larger top_k to get better ranking, then limit later
-                    # Handle None limit - use all candidates (up to 200) when limit is not provided
-                    if limit is None:
-                        vector_top_k = min(len(candidate_ids), 200)
-                    else:
-                        vector_top_k = min(limit * 3, len(candidate_ids), 200)
+                if search_result.get('success') and search_result.get('results'):
+                    logger.info(f"✅ Process_Search_Query found {len(search_result['results'].matches)} results from index '{search_result.get('index_name')}'")
                     
-                    # Build Pinecone filter for candidate IDs
-                    # Pinecone filter format: {'candidate_id': {'$in': [id1, id2, ...]}}
-                    pinecone_filter = {'candidate_id': {'$in': candidate_ids}}
-                    
-                    logger.info(f"Querying Pinecone with {len(candidate_ids)} candidate IDs, top_k={vector_top_k}")
-                    
-                    # Query across multiple namespaces since candidates can be in different namespaces
-                    # Common namespaces to query
-                    common_namespaces = ['java', 'python', 'dotnet', 'business-analyst', 'sql', 'project-manager', 'others']
-                    
-                    all_matches = []
-                    for namespace in common_namespaces:
-                        try:
-                            vector_results = pinecone_manager.query_vectors(
-                                query_vector=query_embedding,
-                                top_k=vector_top_k,
-                                include_metadata=True,
-                                filter=pinecone_filter,
-                                namespace=namespace
-                            )
-                            all_matches.extend(vector_results.matches)
-                            logger.debug(f"Found {len(vector_results.matches)} matches in namespace '{namespace}'")
-                        except Exception as e:
-                            logger.warning(f"Error querying namespace '{namespace}': {e}")
-                            # Continue with other namespaces
-                    
-                    # Also query default namespace (empty string or None)
-                    try:
-                        vector_results = pinecone_manager.query_vectors(
-                            query_vector=query_embedding,
-                            top_k=vector_top_k,
-                            include_metadata=True,
-                            filter=pinecone_filter,
-                            namespace=None
-                        )
-                        all_matches.extend(vector_results.matches)
-                        logger.debug(f"Found {len(vector_results.matches)} matches in default namespace")
-                    except Exception as e:
-                        logger.warning(f"Error querying default namespace: {e}")
-                    
-                    # Deduplicate matches by candidate_id (keep highest score)
-                    match_dict = {}
-                    for match in all_matches:
+                    # Extract candidate IDs and scores from Pinecone results
+                    pinecone_candidate_ids = []
+                    for match in search_result['results'].matches:
                         candidate_id = match.metadata.get('candidate_id')
-                        if candidate_id and candidate_id in candidate_ids:
-                            if candidate_id not in match_dict or match.score > match_dict[candidate_id].score:
-                                match_dict[candidate_id] = match
+                        if candidate_id:
+                            pinecone_candidate_ids.append(candidate_id)
+                            semantic_scores[candidate_id] = match.score
                     
-                    # Extract semantic scores from deduplicated matches
-                    for candidate_id, match in match_dict.items():
-                        semantic_scores[candidate_id] = match.score
+                    logger.info(f"Found {len(pinecone_candidate_ids)} unique candidates from Pinecone index")
                     
-                    logger.info(f"Semantic search found {len(semantic_scores)} candidates with scores across all namespaces")
-                    
-                    # Merge SQL candidates with semantic scores
-                    # Create a map for fast lookup
-                    candidate_map = {c['candidate_id']: c for c in sql_candidates}
-                    
-                    # Add semantic scores and calculate combined scores
-                    for candidate_id, semantic_score in semantic_scores.items():
-                        if candidate_id in candidate_map:
-                            candidate_map[candidate_id]['semantic_score'] = round(semantic_score, 4)
-                            # Combined score: 30% SQL match (implicit 1.0) + 70% semantic similarity
-                            candidate_map[candidate_id]['combined_score'] = round(0.3 + (semantic_score * 0.7), 4)
-                            # Set match_score to combined_score
-                            candidate_map[candidate_id]['match_score'] = candidate_map[candidate_id]['combined_score']
-                    
-                    # For candidates without semantic scores, set match_score to 1.0 (perfect SQL match)
-                    for candidate_id, candidate in candidate_map.items():
-                        if 'match_score' not in candidate:
-                            candidate['match_score'] = 1.0  # Perfect SQL match when no semantic score
-                    
-                    # Sort by combined_score (or semantic_score if available), then by experience
-                    final_candidates = list(candidate_map.values())
-                    final_candidates.sort(
-                        key=lambda x: (
-                            x.get('combined_score', x.get('semantic_score', 0)),
-                            x.get('total_experience', 0)
-                        ),
-                        reverse=True
-                    )
-                    
-                    semantic_applied = True
-                    logger.info(f"Hybrid search completed: {len(final_candidates)} candidates ranked")
+                    # Fetch full candidate details from database using candidate IDs from Pinecone
+                    if pinecone_candidate_ids:
+                        with create_ats_database() as db:
+                            # Build SQL query to fetch candidates by IDs
+                            placeholders = ','.join(['%s'] * len(pinecone_candidate_ids))
+                            sql = f"""
+                                SELECT 
+                                    rm.candidate_id,
+                                    rm.name,
+                                    rm.email,
+                                    rm.phone,
+                                    rm.total_experience,
+                                    rm.primary_skills,
+                                    rm.secondary_skills,
+                                    rm.all_skills,
+                                    rm.profile_type,
+                                    rm.role_type,
+                                    rm.subrole_type,
+                                    rm.sub_profile_type,
+                                    rm.current_designation,
+                                    rm.current_location,
+                                    rm.current_company,
+                                    rm.domain,
+                                    rm.education,
+                                    rm.resume_summary,
+                                    rm.created_at
+                                FROM resume_metadata rm
+                                WHERE rm.status = 'active'
+                                  AND rm.candidate_id IN ({placeholders})
+                                ORDER BY FIELD(rm.candidate_id, {placeholders})
+                            """
+                            # Order by IDs in the same order as Pinecone results (by score)
+                            ordered_ids = pinecone_candidate_ids.copy()
+                            db.cursor.execute(sql, ordered_ids + ordered_ids)
+                            results = db.cursor.fetchall()
+                            
+                            # Build candidates list with semantic scores
+                            for r in results:
+                                candidate_id = r['candidate_id']
+                                candidate = {
+                                    'candidate_id': candidate_id,
+                                    'name': r['name'],
+                                    'email': r.get('email', ''),
+                                    'phone': r.get('phone', ''),
+                                    'total_experience': r.get('total_experience', 0),
+                                    'primary_skills': r.get('primary_skills', ''),
+                                    'secondary_skills': r.get('secondary_skills', ''),
+                                    'all_skills': r.get('all_skills', ''),
+                                    'profile_type': r.get('profile_type', ''),
+                                    'role_type': r.get('role_type', ''),
+                                    'subrole_type': r.get('subrole_type', ''),
+                                    'sub_profile_type': r.get('sub_profile_type', ''),
+                                    'current_designation': r.get('current_designation', ''),
+                                    'current_location': r.get('current_location', ''),
+                                    'current_company': r.get('current_company', ''),
+                                    'domain': r.get('domain', ''),
+                                    'education': r.get('education', ''),
+                                    'resume_summary': r.get('resume_summary', ''),
+                                    'semantic_score': round(semantic_scores.get(candidate_id, 0), 4),
+                                    'match_score': round(semantic_scores.get(candidate_id, 0), 4)  # Use semantic score as match_score
+                                }
+                                final_candidates.append(candidate)
+                            
+                            # Sort by semantic score (already ordered by Pinecone, but ensure consistency)
+                            final_candidates.sort(
+                                key=lambda x: x.get('semantic_score', 0),
+                                reverse=True
+                            )
+                            
+                            # Apply limit if specified
+                            if limit:
+                                final_candidates = final_candidates[:limit]
+                            
+                            semantic_applied = True
+                            logger.info(f"✅ Semantic search completed: {len(final_candidates)} candidates from Pinecone index '{search_result.get('index_name')}'")
+                    else:
+                        logger.warning("No candidate IDs found in Pinecone results")
+                        # Fallback to SQL results
+                        final_candidates = sql_candidates
+                        for candidate in final_candidates:
+                            candidate['match_score'] = 1.0
+                else:
+                    error_msg = search_result.get('error', 'Unknown error')
+                    logger.warning(f"Process_Search_Query failed: {error_msg}, falling back to SQL-only results")
+                    # Fallback to SQL results
+                    final_candidates = sql_candidates
+                    for candidate in final_candidates:
+                        candidate['match_score'] = 1.0
                     
             except Exception as e:
                 logger.warning(f"Semantic search failed: {e}, falling back to SQL-only results")
                 logger.error(traceback.format_exc())
-                # Fallback to SQL-only results (already in final_candidates)
+                # Fallback to SQL-only results
+                if not final_candidates:
+                    final_candidates = sql_candidates
                 semantic_applied = False
                 # Set match_score to 1.0 for SQL-only candidates (perfect SQL match)
                 for candidate in final_candidates:
-                    candidate['match_score'] = 1.0
+                    if 'match_score' not in candidate:
+                        candidate['match_score'] = 1.0
         
         # === STEP 9: Boolean Filter ===
         boolean_applied = False
@@ -1957,9 +1966,9 @@ def search_resumes():
         
         # Determine search type
         if boolean_applied and semantic_applied:
-            search_type = 'sql_vector_boolean'
+            search_type = 'pinecone_vector_boolean'
         elif semantic_applied:
-            search_type = 'sql_vector'
+            search_type = 'pinecone_vector'  # Changed from 'sql_vector' since we query Pinecone first
         else:
             search_type = 'sql_only'
         
@@ -2634,12 +2643,7 @@ def search_resume():
         where_clauses = ["rm.status = 'active'"]
         params = []
         
-        # Role filter (only role_type)
-        if detected_main_role:
-            where_clauses.append("rm.role_type = %s")
-            params.append(detected_main_role)
-        
-        # Profile Type filter
+        # Profile Type filter ONLY (no role_type filter - too strict, causes 0 results)
         profile_type_filters = []
         if detected_profile_type_from_role:
             profile_type_filters.append("rm.profile_type LIKE %s")
@@ -2652,6 +2656,9 @@ def search_resume():
         
         if profile_type_filters:
             where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
+        else:
+            # If no profile_type detected, don't filter by it (return all active candidates)
+            logger.warning("No profile_type detected, returning all active candidates")
         
         # Multi-skill AND filter (all scores > 0) - Only apply when multiple skills detected
         if skill_score_columns and len(detected_skills) > 1:
@@ -2698,9 +2705,9 @@ def search_resume():
             db.cursor.execute(sql, params)
             results = db.cursor.fetchall()
             
-            candidates = []
+            sql_candidates = []
             for r in results:
-                candidates.append({
+                sql_candidates.append({
                     'candidate_id': r['candidate_id'],
                     'name': r['name'],
                     'email': r.get('email', ''),
@@ -2721,6 +2728,177 @@ def search_resume():
                     'resume_summary': r.get('resume_summary', ''),
                 })
         
+        # === STEP 8: Pinecone Semantic Search (Hybrid Approach) ===
+        semantic_applied = False
+        final_candidates = sql_candidates.copy()  # Start with SQL results as fallback
+        semantic_scores = {}
+        
+        # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
+        for candidate in final_candidates:
+            candidate['match_score'] = 1.0  # Perfect SQL match (default)
+        
+        # Apply Pinecone semantic search
+        # If SQL returned 0 results, still try Pinecone (might have candidates in Pinecone but not in DB, or SQL filter too strict)
+        if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+            try:
+                # Determine profile_type for index selection
+                search_profile_type = detected_profile_type_from_role or first_skill_profile_type
+                
+                # Get candidate IDs from SQL results (if any)
+                candidate_ids = [c['candidate_id'] for c in sql_candidates[:1000]] if sql_candidates else []
+                
+                if sql_candidates:
+                    logger.info(f"Applying Pinecone semantic search to {len(sql_candidates)} SQL-filtered candidates")
+                else:
+                    logger.info(f"SQL returned 0 candidates. Searching Pinecone directly for profile_type '{search_profile_type}'")
+                
+                # Query Pinecone - get more results than limit for better ranking
+                vector_top_k = min(limit * 3, 200) if limit else 200
+                
+                logger.info(f"Querying Pinecone with profile_type '{search_profile_type}', top_k={vector_top_k}")
+                
+                # Query Pinecone directly
+                # Generate query embedding
+                query_embedding = embedding_service.generate_embedding(query)
+                logger.info(f"Generated query embedding with {len(query_embedding)} dimensions")
+                
+                # Get the correct index name
+                index_name = get_index_name_from_profile_type(search_profile_type) if search_profile_type else 'others'
+                
+                # Connect to Pinecone
+                from pinecone import Pinecone
+                pc = Pinecone(api_key=ATSConfig.PINECONE_API_KEY)
+                
+                # Check if index exists
+                existing_indexes = pc.list_indexes()
+                existing_names = [idx.name for idx in existing_indexes]
+                
+                if index_name not in existing_names:
+                    logger.warning(f"Index '{index_name}' does not exist. Available: {existing_names}. Using first available index.")
+                    if existing_names:
+                        index_name = existing_names[0]
+                    else:
+                        raise Exception(f"No Pinecone indexes available")
+                
+                index = pc.Index(index_name)
+                
+                # Build filter - only filter by candidate IDs if SQL returned results
+                pinecone_filter = None
+                if candidate_ids:
+                    pinecone_filter = {'candidate_id': {'$in': candidate_ids}}
+                    logger.info(f"Filtering Pinecone search to {len(candidate_ids)} SQL candidate IDs")
+                
+                # Query Pinecone
+                vector_results = index.query(
+                    vector=query_embedding,
+                    top_k=vector_top_k,
+                    include_metadata=True,
+                    filter=pinecone_filter
+                )
+                
+                if vector_results and vector_results.matches:
+                    logger.info(f"✅ Pinecone search found {len(vector_results.matches)} results from index '{index_name}'")
+                    
+                    # Extract candidate IDs and scores from Pinecone
+                    pinecone_candidate_ids = []
+                    for match in vector_results.matches:
+                        candidate_id = match.metadata.get('candidate_id')
+                        if candidate_id:
+                            pinecone_candidate_ids.append(candidate_id)
+                            semantic_scores[candidate_id] = match.score
+                    
+                    logger.info(f"Found {len(pinecone_candidate_ids)} unique candidates from Pinecone")
+                    
+                    # Fetch full candidate details from database using candidate IDs from Pinecone
+                    if pinecone_candidate_ids:
+                        with create_ats_database() as db:
+                            # Build SQL query to fetch candidates by IDs
+                            placeholders = ','.join(['%s'] * len(pinecone_candidate_ids))
+                            sql = f"""
+                                SELECT 
+                                    rm.candidate_id,
+                                    rm.name,
+                                    rm.email,
+                                    rm.phone,
+                                    rm.total_experience,
+                                    rm.primary_skills,
+                                    rm.secondary_skills,
+                                    rm.all_skills,
+                                    rm.profile_type,
+                                    rm.role_type,
+                                    rm.subrole_type,
+                                    rm.sub_profile_type,
+                                    rm.current_designation,
+                                    rm.current_location,
+                                    rm.current_company,
+                                    rm.domain,
+                                    rm.education,
+                                    rm.resume_summary,
+                                    rm.created_at
+                                FROM resume_metadata rm
+                                WHERE rm.status = 'active'
+                                  AND rm.candidate_id IN ({placeholders})
+                                ORDER BY FIELD(rm.candidate_id, {placeholders})
+                            """
+                            # Order by IDs in the same order as Pinecone results (by score)
+                            ordered_ids = pinecone_candidate_ids.copy()
+                            db.cursor.execute(sql, ordered_ids + ordered_ids)
+                            results = db.cursor.fetchall()
+                            
+                            # Build candidates list with semantic scores
+                            for r in results:
+                                candidate_id = r['candidate_id']
+                                candidate = {
+                                    'candidate_id': candidate_id,
+                                    'name': r['name'],
+                                    'email': r.get('email', ''),
+                                    'phone': r.get('phone', ''),
+                                    'total_experience': r.get('total_experience', 0),
+                                    'primary_skills': r.get('primary_skills', ''),
+                                    'secondary_skills': r.get('secondary_skills', ''),
+                                    'all_skills': r.get('all_skills', ''),
+                                    'profile_type': r.get('profile_type', ''),
+                                    'role_type': r.get('role_type', ''),
+                                    'subrole_type': r.get('subrole_type', ''),
+                                    'sub_profile_type': r.get('sub_profile_type', ''),
+                                    'current_designation': r.get('current_designation', ''),
+                                    'current_location': r.get('current_location', ''),
+                                    'current_company': r.get('current_company', ''),
+                                    'domain': r.get('domain', ''),
+                                    'education': r.get('education', ''),
+                                    'resume_summary': r.get('resume_summary', ''),
+                                    'semantic_score': round(semantic_scores.get(candidate_id, 0), 4),
+                                    'match_score': round(semantic_scores.get(candidate_id, 0), 4)  # Use semantic score as match_score
+                                }
+                                final_candidates.append(candidate)
+                            
+                            # Sort by semantic score (already ordered by Pinecone, but ensure consistency)
+                            final_candidates.sort(
+                                key=lambda x: x.get('semantic_score', 0),
+                                reverse=True
+                            )
+                            
+                            # Apply limit if specified
+                            if limit:
+                                final_candidates = final_candidates[:limit]
+                            
+                            semantic_applied = True
+                            logger.info(f"✅ Pinecone search completed: {len(final_candidates)} candidates from index '{index_name}'")
+                    else:
+                        logger.warning("No candidate IDs found in Pinecone results")
+                        # Keep SQL results if available
+                        if not sql_candidates:
+                            final_candidates = []
+                    
+            except Exception as e:
+                logger.warning(f"Pinecone semantic search failed: {e}, using SQL-only results")
+                logger.error(traceback.format_exc())
+                # Fallback to SQL-only results (already in final_candidates)
+                semantic_applied = False
+                # Set match_score to 1.0 for SQL-only candidates
+                for candidate in final_candidates:
+                    candidate['match_score'] = 1.0
+        
         # Build analysis response
         analysis = {
             'detected_subrole': detected_subrole,
@@ -2729,14 +2907,23 @@ def search_resume():
             'detected_skills': [s['skill'] for s in detected_skills],
             'skill_profile_types': skill_profile_types,
             'skill_score_columns': skill_score_columns,
+            'semantic_search_applied': semantic_applied,
+            'sql_candidates_count': len(sql_candidates),
+            'final_candidates_count': len(final_candidates),
         }
+        
+        # Determine search type
+        if semantic_applied:
+            search_type = 'sql_pinecone_hybrid'
+        else:
+            search_type = 'role_skill_search'
         
         return jsonify({
             'query': query,
-            'search_type': 'role_skill_search',
+            'search_type': search_type,
             'analysis': analysis,
-            'count': len(candidates),
-            'results': candidates,
+            'count': len(final_candidates),
+            'results': final_candidates,
             'processing_time_ms': int((time.time() - start_time) * 1000),
             'timestamp': datetime.now().isoformat()
         }), 200

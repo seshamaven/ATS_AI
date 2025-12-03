@@ -40,17 +40,11 @@ class ATSDatabase:
             self._ensure_role_columns_exist()
             return True
         except Error as e:
-<<<<<<< HEAD
             error_msg = str(e)
             error_msg_lower = error_msg.lower()
             
             # Store error for better error messages
             self._connection_error = error_msg
-=======
-            error_msg = str(e).lower()
-            # Store error for better error messages
-            self._connection_error = str(e)
->>>>>>> da27202cf3d89d3aafdb0d3b5822e254c31bb0b2
             
             # Check if database doesn't exist (error 1049)
             if "1049" in str(e) or "unknown database" in error_msg_lower:

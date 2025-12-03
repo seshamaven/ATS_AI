@@ -27,11 +27,7 @@ class ATSDatabase:
         self.config = config or ATSConfig.get_mysql_config()
         self.connection = None
         self.cursor = None
-<<<<<<< HEAD
         self._connection_error = None
-=======
-        
->>>>>>> 0bd7747f6a378d96bf35c0e205096951236d2a58
     
     def connect(self) -> bool:
         """Establish MySQL connection. Attempts to create database if it doesn't exist."""
@@ -44,17 +40,14 @@ class ATSDatabase:
             self._ensure_role_columns_exist()
             return True
         except Error as e:
-<<<<<<< HEAD
             error_msg = str(e)
-            logger.error(f"Error connecting to MySQL: {error_msg}")
-            logger.error(f"Connection config: host={self.config.get('host')}, user={self.config.get('user')}, database={self.config.get('database')}, port={self.config.get('port')}")
+            error_msg_lower = error_msg.lower()
+            
             # Store error for better error messages
             self._connection_error = error_msg
-=======
-            error_msg = str(e).lower()
             
             # Check if database doesn't exist (error 1049)
-            if "1049" in str(e) or "unknown database" in error_msg:
+            if "1049" in str(e) or "unknown database" in error_msg_lower:
                 logger.warning(f"Database '{self.config['database']}' does not exist. Attempting to create it...")
                 try:
                     # Connect without specifying database
@@ -76,6 +69,8 @@ class ATSDatabase:
                     self.connection = mysql.connector.connect(**self.config)
                     self.cursor = self.connection.cursor(dictionary=True)
                     logger.info(f"Connected to MySQL database: {self.config['database']}")
+                    # Ensure required columns exist (role_type, subrole_type)
+                    self._ensure_role_columns_exist()
                     return True
                 except Error as create_error:
                     logger.error(f"Failed to create database: {create_error}")
@@ -85,14 +80,8 @@ class ATSDatabase:
                     return False
             else:
                 # Other connection errors
-                logger.error(f"Error connecting to MySQL: {e}")
-                logger.error(
-                    "Connection config: host=%s, user=%s, database=%s, port=%s",
-                    self.config.get('host'),
-                    self.config.get('user'),
-                    self.config.get('database'),
-                    self.config.get('port'),
-                )
+                logger.error(f"Error connecting to MySQL: {error_msg}")
+                logger.error(f"Connection config: host={self.config.get('host')}, user={self.config.get('user')}, database={self.config.get('database')}, port={self.config.get('port')}")
                 logger.error("Please check:")
                 logger.error("  1. MySQL server is running")
                 logger.error("  2. Database credentials are correct")
@@ -174,10 +163,6 @@ class ATSDatabase:
             logger.warning(f"Could not verify/add role columns: {e}")
             # Don't fail connection if columns can't be added - might be permission issue
     
-            logger.error(f"Error connecting to MySQL: {e}")
->>>>>>> 0bd7747f6a378d96bf35c0e205096951236d2a58
-            return False
-    
     def disconnect(self):
         """Close MySQL connection."""
         try:
@@ -191,7 +176,6 @@ class ATSDatabase:
     
     def __enter__(self):
         """Context manager entry."""
-<<<<<<< HEAD
         connected = self.connect()
         if not connected:
             # Fail fast so callers don't try to use a None cursor/connection
@@ -208,13 +192,7 @@ class ATSDatabase:
                 f"4. Password is correct\n"
                 f"5. .env file is in ATS_AI/backend/ directory"
             )
-=======
-        if not self.connect():
-            raise ConnectionError(f"Failed to connect to MySQL database: {self.config.get('database', 'unknown')}")
->>>>>>> 0bd7747f6a378d96bf35c0e205096951236d2a58
         return self
-        #self.connect()
-        #return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""

@@ -100,8 +100,83 @@ class EnhancedPineconeManager:
                 logger.info(f"Successfully connected to existing index '{self.index_name}' with dimension {existing_dimension}")
                 
             else:
-                logger.info("Creating new index since none found...")
-                self._create_new_index()
+                # Index doesn't exist - check if we've hit the limit
+                logger.warning(f"Index '{self.index_name}' not found. Checking available indexes...")
+                
+                # Try to use an existing index as fallback
+                if index_names:
+                    # Find an index with matching dimension, or use the first one
+                    fallback_index = None
+                    for idx_name in index_names:
+                        try:
+                            temp_index = self.pc.Index(idx_name)
+                            stats = temp_index.describe_index_stats()
+                            if stats.dimension == self.dimension:
+                                fallback_index = idx_name
+                                break
+                        except:
+                            continue
+                    
+                    # If no matching dimension found, use the first index
+                    if not fallback_index:
+                        fallback_index = index_names[0]
+                        logger.warning(
+                            f"⚠️  No index found with dimension {self.dimension}.\n"
+                            f"   Using '{fallback_index}' (may have different dimension)."
+                        )
+                    
+                    logger.warning(
+                        f"⚠️  Index '{self.index_name}' does not exist.\n"
+                        f"   You have {len(index_names)} existing index(es): {index_names}\n"
+                        f"   Using fallback index: '{fallback_index}'\n"
+                        f"   💡 Tip: Set PINECONE_INDEX_NAME environment variable to '{fallback_index}' to avoid this warning."
+                    )
+                    self.index_name = fallback_index
+                    self.index = self.pc.Index(fallback_index)
+                    
+                    # Verify dimension (warn but don't fail)
+                    try:
+                        index_stats = self.index.describe_index_stats()
+                        existing_dimension = index_stats.dimension
+                        if existing_dimension != self.dimension:
+                            logger.warning(
+                                f"⚠️  Dimension mismatch: Index '{fallback_index}' has dimension {existing_dimension}, "
+                                f"but expected {self.dimension}. This may cause issues."
+                            )
+                        else:
+                            logger.info(f"✅ Connected to fallback index '{fallback_index}' with matching dimension {existing_dimension}")
+                    except:
+                        logger.info(f"Connected to fallback index: {fallback_index}")
+                else:
+                    # No indexes exist - try to create one, but handle limit errors gracefully
+                    logger.info(f"No indexes found. Attempting to create '{self.index_name}'...")
+                    try:
+                        self._create_new_index()
+                    except Exception as create_error:
+                        error_str = str(create_error).lower()
+                        # Check if it's a 403/limit error
+                        if "403" in str(create_error) or "forbidden" in error_str or "max serverless indexes" in error_str:
+                            # Try to get the default index name
+                            try:
+                                from ats_config import ATSConfig
+                                default_index = ATSConfig.PINECONE_INDEX_NAME
+                            except:
+                                default_index = 'ats-resumes'
+                            
+                            error_msg = (
+                                f"Failed to create Pinecone index '{self.index_name}': {create_error}\n"
+                                f"⚠️  You've reached the Pinecone free tier limit of 5 indexes.\n"
+                                f"💡 Solutions:\n"
+                                f"   1. Delete unused indexes from your Pinecone dashboard\n"
+                                f"   2. Use an existing index by setting PINECONE_INDEX_NAME to one of your existing indexes\n"
+                                f"   3. Upgrade your Pinecone plan for more indexes\n"
+                                f"   4. The system uses namespaces, so you only need ONE index for all profile types."
+                            )
+                            logger.error(error_msg)
+                            raise Exception(error_msg)
+                        else:
+                            # Re-raise other errors
+                            raise
             
             self._index_initialized = True
             return self.index

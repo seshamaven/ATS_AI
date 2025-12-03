@@ -6,6 +6,9 @@ Usage:
     # Create all indexes
     python create_all_pinecone_indexes.py
     
+    # Delete all existing indexes and create new ones
+    python create_all_pinecone_indexes.py --delete-all
+    
     # Create specific index
     python create_all_pinecone_indexes.py --index python
     
@@ -48,12 +51,10 @@ except ImportError:
 # All indexes to create
 ALL_INDEXES = [
     'java',
+    '.net',
     'python',
-    'dotnet',  # .net
-    'business-analyst',
-    'sql',
-    'project-manager',
-    'others'
+    'Business Analyst',
+    'Others'
 ]
 
 
@@ -96,6 +97,10 @@ Get your API key from: https://app.pinecone.io/
         """Normalize index name for Pinecone requirements."""
         # Convert to lowercase
         name = name.lower().strip()
+        
+        # Special handling for .net -> dotnet
+        if name == '.net' or name == 'net':
+            return 'dotnet'
         
         # Replace spaces and special characters with hyphens
         name = name.replace(' ', '-').replace('.', '').replace('/', '-')
@@ -278,6 +283,121 @@ Get your API key from: https://app.pinecone.io/
         normalized = self.normalize_index_name(index_name)
         all_indexes = self.list_all_indexes()
         return normalized in all_indexes
+    
+    def delete_index(self, index_name: str) -> dict:
+        """
+        Delete a single index.
+        
+        Args:
+            index_name: Name of the index to delete (will be normalized)
+        
+        Returns:
+            dict with status: 'deleted', 'not_found', or 'failed'
+        """
+        normalized_name = self.normalize_index_name(index_name)
+        
+        logger.info(f"Deleting index: '{index_name}' -> '{normalized_name}'")
+        
+        try:
+            # Check if index exists
+            existing_indexes = self.pc.list_indexes()
+            existing_names = [idx.name for idx in existing_indexes]
+            
+            if normalized_name not in existing_names:
+                logger.info(f"ℹ️  Index '{normalized_name}' does not exist")
+                return {
+                    'index_name': normalized_name,
+                    'original_name': index_name,
+                    'status': 'not_found',
+                    'success': True
+                }
+            
+            # Delete the index
+            logger.info(f"Deleting index '{normalized_name}'...")
+            self.pc.delete_index(normalized_name)
+            
+            # Wait a moment for deletion to complete
+            time.sleep(2)
+            
+            logger.info(f"✅ Successfully deleted '{normalized_name}' index!")
+            
+            return {
+                'index_name': normalized_name,
+                'original_name': index_name,
+                'status': 'deleted',
+                'success': True
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete '{normalized_name}': {e}")
+            return {
+                'index_name': normalized_name,
+                'original_name': index_name,
+                'status': 'failed',
+                'success': False,
+                'error': str(e)
+            }
+    
+    def delete_all_indexes(self) -> dict:
+        """
+        Delete all existing indexes.
+        
+        Returns:
+            dict with results for each deleted index
+        """
+        logger.info("=" * 60)
+        logger.info("Deleting All Existing Pinecone Indexes")
+        logger.info("=" * 60)
+        
+        try:
+            existing_indexes = self.pc.list_indexes()
+            existing_names = [idx.name for idx in existing_indexes]
+            
+            if not existing_names:
+                logger.info("No indexes found to delete")
+                return {}
+            
+            logger.info(f"Found {len(existing_names)} indexes to delete: {', '.join(existing_names)}")
+            logger.info("")
+            
+            results = {}
+            
+            for index_name in existing_names:
+                logger.info("-" * 60)
+                result = self.delete_index(index_name)
+                results[index_name] = result
+                logger.info("")
+            
+            # Print summary
+            deleted = [name for name, result in results.items() if result['status'] == 'deleted']
+            not_found = [name for name, result in results.items() if result['status'] == 'not_found']
+            failed = [name for name, result in results.items() if result['status'] == 'failed']
+            
+            logger.info("=" * 60)
+            logger.info("Deletion Summary")
+            logger.info("=" * 60)
+            
+            if deleted:
+                logger.info(f"\n✅ Deleted ({len(deleted)}):")
+                for name in deleted:
+                    logger.info(f"   - {name}")
+            
+            if not_found:
+                logger.info(f"\nℹ️  Not found ({len(not_found)}):")
+                for name in not_found:
+                    logger.info(f"   - {name}")
+            
+            if failed:
+                logger.info(f"\n❌ Failed ({len(failed)}):")
+                for name in failed:
+                    error = results[name].get('error', 'Unknown error')
+                    logger.info(f"   - {name}: {error}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Error listing/deleting indexes: {e}")
+            return {}
 
 
 def main():
@@ -291,6 +411,9 @@ def main():
 Examples:
   # Create all default indexes
   python create_all_pinecone_indexes.py
+  
+  # Delete all existing indexes and create new ones
+  python create_all_pinecone_indexes.py --delete-all
   
   # Create specific index
   python create_all_pinecone_indexes.py --index python
@@ -322,6 +445,12 @@ Examples:
         help='List all existing indexes and exit'
     )
     
+    parser.add_argument(
+        '--delete-all',
+        action='store_true',
+        help='Delete all existing indexes before creating new ones'
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -340,6 +469,19 @@ Examples:
             else:
                 logger.info("No indexes found")
             return
+        
+        # Delete all existing indexes if requested
+        if args.delete_all:
+            logger.info("")
+            logger.info("⚠️  WARNING: This will delete ALL existing indexes!")
+            logger.info("")
+            deletion_results = creator.delete_all_indexes()
+            
+            # Wait a bit for deletions to complete
+            if deletion_results:
+                logger.info("Waiting 5 seconds for deletions to complete...")
+                time.sleep(5)
+                logger.info("")
         
         # Create indexes
         if args.indexes:

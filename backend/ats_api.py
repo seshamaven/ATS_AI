@@ -309,6 +309,58 @@ def chunk_list(items: List[Any], chunk_size: int) -> List[List[Any]]:
     return [items[i:i + chunk_size] for i in range(0, len(items), max(chunk_size, 1))]
 
 
+def get_index_name_from_profile_type(profile_type: str) -> str:
+    """
+    Map profile_type to Pinecone index name.
+    
+    Args:
+        profile_type: Profile type string (e.g., 'Java', 'Python', 'Business Analyst')
+    
+    Returns:
+        Pinecone index name (e.g., 'java', 'python', 'dotnet', 'business-analyst', 'others')
+    """
+    if not profile_type:
+        return 'others'
+    
+    # Normalize profile type
+    profile_lower = profile_type.lower().strip()
+    
+    # Handle multi-profile types (comma-separated)
+    if ',' in profile_lower:
+        profile_lower = profile_lower.split(',')[0].strip()
+    
+    # Map to index names (matching the user's existing indexes: java, dotnet, python, business analyst, others)
+    # Note: Pinecone index names are case-insensitive and may have spaces or hyphens
+    index_mapping = {
+        'java': 'java',
+        'python': 'python',
+        '.net': 'dotnet',
+        'dotnet': 'dotnet',
+        'net': 'dotnet',
+        'c#': 'dotnet',
+        'csharp': 'dotnet',
+        'business analyst': 'business analyst',  # Try exact match first
+        'business-analyst': 'business analyst',
+        'ba': 'business analyst',
+        'others': 'others',
+        'other': 'others',
+        'generalist': 'others',
+        'general': 'others'
+    }
+    
+    # Direct match
+    if profile_lower in index_mapping:
+        return index_mapping[profile_lower]
+    
+    # Partial match
+    for key, index_name in index_mapping.items():
+        if key in profile_lower or profile_lower in key:
+            return index_name
+    
+    # Default to others
+    return 'others'
+
+
 def get_namespace_from_profile_type(profile_type: str) -> str:
     """
     Map profile_type to Pinecone namespace.
@@ -663,12 +715,17 @@ def process_resume():
             else:
                 try:
                     logger.info(f"Attempting to index resume {candidate_id} in Pinecone...")
-                    logger.info(f"Pinecone config: index={ATSConfig.PINECONE_INDEX_NAME}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
+                    
+                    # Determine the correct index based on profile_type
+                    profile_type = parsed_data.get('profile_type') or 'Generalist'
+                    index_name = get_index_name_from_profile_type(profile_type)
+                    logger.info(f"Profile type '{profile_type}' mapped to index '{index_name}'")
+                    logger.info(f"Pinecone config: index={index_name}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
                     
                     from enhanced_pinecone_manager import EnhancedPineconeManager
                     pinecone_manager = EnhancedPineconeManager(
                         api_key=ATSConfig.PINECONE_API_KEY,
-                        index_name=ATSConfig.PINECONE_INDEX_NAME,
+                        index_name=index_name,  # Use the profile-specific index
                         dimension=ATSConfig.EMBEDDING_DIMENSION
                     )
                     pinecone_manager.get_or_create_index()
@@ -700,15 +757,10 @@ def process_resume():
                         'metadata': pinecone_metadata
                     }
                     
-                    # Determine namespace from profile_type
-                    profile_type = parsed_data.get('profile_type') or 'Generalist'
-                    namespace = get_namespace_from_profile_type(profile_type)
-                    logger.info(f"Using namespace '{namespace}' for profile_type '{profile_type}'")
-                    
-                    # Upsert to Pinecone with namespace
-                    pinecone_manager.upsert_vectors([vector_data], namespace=namespace)
+                    # Upsert to Pinecone without namespace (using separate indexes)
+                    pinecone_manager.upsert_vectors([vector_data], namespace=None)
                     pinecone_indexed = True
-                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone namespace '{namespace}'")
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone index '{index_name}'")
                     
                 except Exception as e:
                     error_msg = str(e)
@@ -909,12 +961,17 @@ def process_resume_base64():
             else:
                 try:
                     logger.info(f"Attempting to index resume {candidate_id} in Pinecone...")
-                    logger.info(f"Pinecone config: index={ATSConfig.PINECONE_INDEX_NAME}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
+                    
+                    # Determine the correct index based on profile_type
+                    profile_type = parsed_data.get('profile_type') or 'Generalist'
+                    index_name = get_index_name_from_profile_type(profile_type)
+                    logger.info(f"Profile type '{profile_type}' mapped to index '{index_name}'")
+                    logger.info(f"Pinecone config: index={index_name}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
                     
                     from enhanced_pinecone_manager import EnhancedPineconeManager
                     pinecone_manager = EnhancedPineconeManager(
                         api_key=ATSConfig.PINECONE_API_KEY,
-                        index_name=ATSConfig.PINECONE_INDEX_NAME,
+                        index_name=index_name,  # Use the profile-specific index
                         dimension=ATSConfig.EMBEDDING_DIMENSION
                     )
                     pinecone_manager.get_or_create_index()
@@ -945,14 +1002,10 @@ def process_resume_base64():
                         'metadata': pinecone_metadata
                     }
 
-                    # Determine namespace from profile_type
-                    profile_type = parsed_data.get('profile_type') or 'Generalist'
-                    namespace = get_namespace_from_profile_type(profile_type)
-                    logger.info(f"Using namespace '{namespace}' for profile_type '{profile_type}'")
-
-                    pinecone_manager.upsert_vectors([vector_data], namespace=namespace)
+                    # Upsert to Pinecone without namespace (using separate indexes)
+                    pinecone_manager.upsert_vectors([vector_data], namespace=None)
                     pinecone_indexed = True
-                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone namespace '{namespace}'")
+                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone index '{index_name}'")
                 except Exception as e:
                     error_msg = str(e)
                     logger.error(f"Failed to index resume {candidate_id} in Pinecone: {error_msg}", exc_info=True)
@@ -3363,7 +3416,7 @@ def comprehensive_profile_ranking():
         if role_subrole_result:
             detected_role_from_pair, detected_subrole = role_subrole_result
             # Map subrole to standard format: Backend, Frontend, or Full Stack
-        if detected_subrole:
+            if detected_subrole:
                 # Normalize subrole names to standard format
                 subrole_lower = detected_subrole.lower()
                 if 'backend' in subrole_lower or 'back-end' in subrole_lower:
@@ -3391,9 +3444,9 @@ def comprehensive_profile_ranking():
                 extracted_job_metadata['sub_role'] = 'Full Stack'
             elif frontend_count > 0:
                 extracted_job_metadata['sub_role'] = 'Frontend'
-        else:
-            # Default to Backend if no clear indication
-            extracted_job_metadata['sub_role'] = 'Backend'
+            else:
+                # Default to Backend if no clear indication
+                extracted_job_metadata['sub_role'] = 'Backend'
         
         # 3. Extract PROFILE_TYPE (Java, Python, .Net, JavaScript, etc.)
         required_skills_list = required_skills.split(',') if isinstance(required_skills, str) else required_skills

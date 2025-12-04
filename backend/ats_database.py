@@ -38,19 +38,15 @@ class ATSDatabase:
             logger.info(f"Connected to MySQL database: {self.config['database']}")
             # Ensure required columns exist (role_type, subrole_type)
             self._ensure_role_columns_exist()
+            # Ensure Chat_history table exists
+            self._ensure_chat_history_table_exists()
             return True
         except Error as e:
-
             error_msg = str(e)
             error_msg_lower = error_msg.lower()
             
             # Store error for better error messages
             self._connection_error = error_msg
-
-            error_msg = str(e).lower()
-            # Store error for better error messages
-            self._connection_error = str(e)
-
             
             # Check if database doesn't exist (error 1049)
             if "1049" in str(e) or "unknown database" in error_msg_lower:
@@ -77,6 +73,8 @@ class ATSDatabase:
                     logger.info(f"Connected to MySQL database: {self.config['database']}")
                     # Ensure required columns exist (role_type, subrole_type)
                     self._ensure_role_columns_exist()
+                    # Ensure Chat_history table exists
+                    self._ensure_chat_history_table_exists()
                     return True
                 except Error as create_error:
                     logger.error(f"Failed to create database: {create_error}")
@@ -1045,6 +1043,165 @@ class ATSDatabase:
         except Error as e:
             logger.error(f"Error in search_by_skill_with_score: {e}")
             return []
+     # =============================================
+    # Chat History Operations
+    # =============================================
+    
+    def insert_chat_history(
+        self,
+        chat_msg: str,
+        response: str,
+        candidate_id: Optional[int] = None,
+        role: Optional[str] = None,
+        sub_role: Optional[str] = None,
+        profile_type: Optional[str] = None,
+        sub_profile_type: Optional[str] = None
+    ) -> Optional[int]:
+        """
+        Insert a chat history record into the Chat_history table.
+        
+        This method saves user queries and AI responses from the search API.
+        
+        Args:
+            chat_msg: The user's input/query message
+            response: The AI/system response (usually JSON stringified)
+            candidate_id: Optional candidate ID if the search relates to a specific candidate
+            role: Role type classification (e.g., "Developer", "Tester")
+            sub_role: Sub-role type classification (e.g., "Backend Developer")
+            profile_type: Profile type from search context (e.g., "Java", ".Net")
+            sub_profile_type: Sub-profile type from search context
+        
+        Returns:
+            The inserted record's ID if successful, None otherwise
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot insert chat history.")
+                return None
+            
+            query = """
+                INSERT INTO Chat_history (
+                    Candidate_id, Chat_msg, role, sub_role, 
+                    profile_type, sub_profile_type, response
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s
+                )
+            """
+            
+            # Truncate fields to their schema limits
+            data = (
+                candidate_id,
+                chat_msg[:65535] if chat_msg else '',  # TEXT limit
+                (role or '')[:100] if role else None,
+                (sub_role or '')[:100] if sub_role else None,
+                (profile_type or '')[:100] if profile_type else None,
+                (sub_profile_type or '')[:100] if sub_profile_type else None,
+                response  # LONGTEXT - no limit needed
+            )
+            
+            self.cursor.execute(query, data)
+            self.connection.commit()
+            
+            record_id = self.cursor.lastrowid
+            logger.info(f"Inserted chat history record with id: {record_id}")
+            return record_id
+            
+        except Error as e:
+            logger.error(f"Error inserting chat history: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return None
+    
+    def get_chat_history_by_candidate(
+        self, 
+        candidate_id: int, 
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get chat history for a specific candidate.
+        
+        Args:
+            candidate_id: The candidate's ID
+            limit: Maximum number of records to return
+        
+        Returns:
+            List of chat history records
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get chat history.")
+                return []
+            
+            query = """
+                SELECT 
+                    id, Candidate_id, Chat_msg, role, sub_role,
+                    profile_type, sub_profile_type, response, created_at
+                FROM Chat_history
+                WHERE Candidate_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """
+            self.cursor.execute(query, (candidate_id, limit))
+            return self.cursor.fetchall()
+            
+        except Error as e:
+            logger.error(f"Error fetching chat history: {e}")
+            return []
+    
+    def get_recent_chat_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get the most recent chat history records.
+        
+        Args:
+            limit: Maximum number of records to return
+        
+        Returns:
+            List of recent chat history records
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get chat history.")
+                return []
+            
+            query = """
+                SELECT 
+                    id, Candidate_id, Chat_msg, role, sub_role,
+                    profile_type, sub_profile_type, response, created_at
+                FROM Chat_history
+                ORDER BY created_at DESC
+                LIMIT %s
+            """
+            self.cursor.execute(query, (limit,))
+            return self.cursor.fetchall()
+            
+        except Error as e:
+            logger.error(f"Error fetching recent chat history: {e}")
+            return []
+    
+    def _ensure_chat_history_table_exists(self):
+        """Ensure the Chat_history table exists in the database."""
+        try:
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS Chat_history (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    Candidate_id INT NULL,
+                    Chat_msg TEXT NOT NULL,
+                    role VARCHAR(100),
+                    sub_role VARCHAR(100),
+                    profile_type VARCHAR(100),
+                    sub_profile_type VARCHAR(100),
+                    response LONGTEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_candidate_id (Candidate_id),
+                    INDEX idx_role (role),
+                    INDEX idx_profile_type (profile_type),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            self.connection.commit()
+            logger.debug("Chat_history table verified/created")
+        except Error as e:
+            logger.warning(f"Could not verify/create Chat_history table: {e}")
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics."""

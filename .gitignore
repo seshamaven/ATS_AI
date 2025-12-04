@@ -116,3 +116,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+#sh files for quick start
+Check_chat_history.sh
+2_start_api.sh

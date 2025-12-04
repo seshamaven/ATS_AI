@@ -6,8 +6,8 @@ echo Step 1: ATS Database Setup
 echo ==========================================
 echo.
 
-set /p MYSQL_PASSWORD="Enter MySQL root password (default: Reset@123): "
-if "%MYSQL_PASSWORD%"=="" set MYSQL_PASSWORD=Reset@123
+set /p MYSQL_PASSWORD="Enter MySQL root password (default: root): "
+if "%MYSQL_PASSWORD%"=="" set MYSQL_PASSWORD=root
 
 echo.
 echo Creating ats_db database...

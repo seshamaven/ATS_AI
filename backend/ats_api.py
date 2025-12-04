@@ -300,7 +300,7 @@ class LLMRefinementService:
 # SAFETY: These are stateless - they only hold configuration and thread-safe clients.
 # No request data is stored in these instances, ensuring complete request isolation.
 embedding_service = EmbeddingService()
-resume_parser = ResumeParser()
+resume_parser = ResumeParser()  # Disabled: No OpenAI/Ollama for AI extraction
 llm_refinement_service = LLMRefinementService()
 
 

@@ -29,11 +29,12 @@ class ATSConfig:
     """ATS-specific configuration class."""
     
     # Database Configuration - Support both Railway and local formats
-    MYSQL_HOST = os.getenv('MYSQLHOST')
-    MYSQL_USER = os.getenv('MYSQLUSER')
-    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD')
-    MYSQL_DATABASE = os.getenv('MYSQLDATABASE')
-    MYSQL_PORT = int(os.getenv("MYSQL_PORT", 3306)) 
+    # Support both formats: MYSQLHOST (Railway) and MYSQL_HOST (local), ATS_MYSQL_HOST (custom)
+    MYSQL_HOST = os.getenv('MYSQLHOST') or os.getenv('MYSQL_HOST') or os.getenv('ATS_MYSQL_HOST')
+    MYSQL_USER = os.getenv('MYSQLUSER') or os.getenv('MYSQL_USER') or os.getenv('ATS_MYSQL_USER')
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD') or os.getenv('MYSQL_PASSWORD') or os.getenv('ATS_MYSQL_PASSWORD')
+    MYSQL_DATABASE = os.getenv('MYSQLDATABASE') or os.getenv('MYSQL_DATABASE') or os.getenv('ATS_MYSQL_DATABASE')
+    MYSQL_PORT = int(os.getenv("MYSQL_PORT", os.getenv("ATS_MYSQL_PORT", "3306"))) 
     
     # Ollama Configuration (Local LLM - Disabled by default, use OpenAI instead)
     OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
@@ -69,7 +70,7 @@ class ATSConfig:
     # SQLAlchemy Configuration
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))}:"
-        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Reset@123'))}@"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))}@"
         f"{os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))}:"
         f"{os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))}/"
         f"{os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))}"

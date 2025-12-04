@@ -1,44 +1,10 @@
-# Production Requirements for ATS AI Application
-# Web Framework
 Flask==2.3.3
-Werkzeug==2.3.7
-gunicorn==21.2.0
-
-# Database
 mysql-connector-python==8.2.0
-
-# OpenAI / Azure OpenAI
-openai==1.109.1
-
-# LangChain (Required for Pinecone indexing)
 langchain==0.2.16
 langchain-community==0.2.16
 langchain-openai==0.1.23
-
-# Vector Database
-pinecone-client==3.1.0
-
-# Data Processing
+openai==1.109.1
+pinecone-client>=5.0.0
 numpy>=1.26.0
-pandas>=2.0.0
-
-# NLP and Text Processing
-spacy>=3.7.0
-
-# Resume Parsing
-PyPDF2>=3.0.0
-python-docx>=0.8.11
-# DOC parsing (older binary format)
-NT-TextFileLoader>=2.0.0
-
-# Environment Configuration
 python-dotenv==1.0.0
-
-# HTTP Requests
 requests==2.32.3
-
-# Additional utilities
-python-dateutil>=2.8.2
-
-# Production WSGI server
-gunicorn==21.2.0

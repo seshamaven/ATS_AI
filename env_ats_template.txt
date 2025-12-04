@@ -1,0 +1,89 @@
+# ATS Configuration Template
+# Copy this file content to .env and fill in your values
+
+# ==========================================
+# MySQL Database Configuration
+# ==========================================
+ATS_MYSQL_HOST=localhost
+ATS_MYSQL_USER=root
+ATS_MYSQL_PASSWORD=your_password_here
+ATS_MYSQL_DATABASE=ats_db
+ATS_MYSQL_PORT=3306
+# ==========================================
+# Ollama Configuration (Disabled by default)
+# ==========================================
+USE_OLLAMA=False
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:4b
+
+# ==========================================
+
+# ==========================================
+# Azure OpenAI Configuration (Preferred)
+# ==========================================
+AZURE_OPENAI_API_KEY=your_azure_openai_key_here
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=text-embedding-ada-002
+AZURE_OPENAI_MODEL=text-embedding-ada-002
+
+# ==========================================
+# OR OpenAI Configuration (Alternative)
+# ==========================================
+OPENAI_API_KEY=your_openai_key_here
+OPENAI_EMBEDDING_MODEL=text-embedding-ada-002
+
+# ==========================================
+# Pinecone Configuration (Optional - for >1M resumes)
+# ==========================================
+USE_PINECONE=False
+ATS_PINECONE_API_KEY=your_pinecone_key_here
+ATS_PINECONE_INDEX_NAME=ats-resumes
+ATS_PINECONE_CLOUD=aws
+ATS_PINECONE_REGION=us-east-1
+
+# Legacy Pinecone variables (for backward compatibility)
+PINECONE_API_KEY=your_pinecone_key_here
+PINECONE_INDEX_NAME=ats-resumes
+PINECONE_DIMENSION=1536
+
+# ==========================================
+# Flask API Configuration
+# ==========================================
+FLASK_ENV=development
+FLASK_DEBUG=True
+ATS_API_PORT=5002
+
+# ==========================================
+# File Upload Configuration
+# ==========================================
+MAX_FILE_SIZE_MB=10
+UPLOAD_FOLDER=./uploads
+
+# ==========================================
+# Ranking Algorithm Weights (must sum to 1.0)
+# ==========================================
+RANKING_WEIGHT_SKILLS=0.4
+RANKING_WEIGHT_EXPERIENCE=0.3
+RANKING_WEIGHT_DOMAIN=0.2
+RANKING_WEIGHT_EDUCATION=0.1
+
+# ==========================================
+# Score Matching Thresholds
+# ==========================================
+EXP_MATCH_HIGH=0.9
+EXP_MATCH_MEDIUM=0.7
+DOMAIN_MATCH_HIGH=0.85
+DOMAIN_MATCH_MEDIUM=0.65
+
+# ==========================================
+# NLP Configuration
+# ==========================================
+NLP_MODEL=en_core_web_sm
+
+# ==========================================
+# Embedding Configuration
+# ==========================================
+EMBEDDING_DIMENSION=1536
+BATCH_EMBEDDING_SIZE=100
+

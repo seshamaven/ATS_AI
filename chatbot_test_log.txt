@@ -1,0 +1,166 @@
+Chatbot API Test Session - 29-09-2025 16:31:06.91 
+======================================== 
+ 
+User Query: what are the RBI regulations in recent days 
+Timestamp: 29-09-2025 16:31:24.12 
+ 
+API Response: 
+{
+  "error": "'float' object has no attribute 'lower'"
+}
+HTTP Status: 500
+Total Time: 7.655446s
+ 
+======================================== 
+ 
+User Query: what are the RBI regulations in recent days 
+Timestamp: 29-09-2025 16:41:20.72 
+ 
+API Response: 
+{
+  "context_regulations_used": 4,
+  "context_used": [
+    {
+      "chunk_index": 0,
+      "chunk_text": "Regulation: Reserve Bank of India (Co-Lending Arrangements) Directions, 2025\n\nSummary: The Reserve Bank of India (RBI) has introduced the Reserve Bank of India (Co-Lending Arrangements) Directions, 2025, aimed at providing comprehensive regulatory clarity for co-lending practices among regulated entities (REs). The new guidelines establish a uniform structure for co-lending between banks, NBFCs, and other financial institutions.\n\nAction Items Description: [\"Review and update lending policies and",
+      "department": 1.0,
+      "due_date": "2026-01-01T00:00:00",
+      "industry": "1",
+      "reg_category": "Circular",
+      "reg_subject": "Regulatory framework for co-lending arrangements between financial institutions",
+      "regulation_title": "Reserve Bank of India (Co-Lending Arrangements) Directions, 2025",
+      "regulator": 1.0,
+      "relevance_score": 0.846252561,
+      "rerank_score": 0.6160010243999999,
+      "risk_category": 1.0,
+      "summary": "The Reserve Bank of India (RBI) has introduced the Reserve Bank of India (Co-Lending Arrangements) Directions, 2025, aimed at providing comprehensive regulatory clarity for co-lending practices among regulated entities (REs). The new guidelines establish a uniform structure for co-lending between banks, NBFCs, and other financial institutions.",
+      "total_chunks": 2.0,
+      "vector_id": "reg_1_chunk_0"
+    },
+    {
+      "chunk_index": 1.0,
+      "chunk_text": "Action Items Names: Pending\n\nRegulation Subject: Regulatory framework for co-lending arrangements between financial institutions\n\nPrevious Regulation: The earlier framework for co-lending by banks and NBFCs was governed by the RBI circular FIDD.CO.Plan.BC.No.8/04.09.01/2020-21 dated November 05, 2020.",
+      "department": 1.0,
+      "due_date": "2026-01-01T00:00:00",
+      "industry": "1",
+      "reg_category": "Circular",
+      "reg_subject": "Regulatory framework for co-lending arrangements between financial institutions",
+      "regulation_title": "Reserve Bank of India (Co-Lending Arrangements) Directions, 2025",
+      "regulator": 1.0,
+      "relevance_score": 0.822937,
+      "rerank_score": 0.6066748,
+      "risk_category": 1.0,
+      "summary": "The Reserve Bank of India (RBI) has introduced the Reserve Bank of India (Co-Lending Arrangements) Directions, 2025, aimed at providing comprehensive regulatory clarity for co-lending practices among regulated entities (REs). The new guidelines establish a uniform structure for co-lending between banks, NBFCs, and other financial institutions.",
+      "total_chunks": 2.0,
+      "vector_id": "reg_1_chunk_1"
+    },
+    {
+      "chunk_index": 1.0,
+      "chunk_text": "Regulation Subject: Mandatory implementation of enhanced cybersecurity and resilience framework by stock brokers and depository participants\n\nPrevious Regulation: Earlier SEBI cybersecurity guidelines issued vide SEBI/HO/MIRSD/CIR/PB/2019/95 dated September 27, 2019.",
+      "department": 2.0,
+      "due_date": "2026-03-31T00:00:00",
+      "industry": "2",
+      "reg_category": "Circular",
+      "reg_subject": "Mandatory implementation of enhanced cybersecurity and resilience framework by stock brokers and depository participants",
+      "regulation_title": "SEBI Cybersecurity and Cyber Resilience Framework for Stock Brokers / DPs, 2025",
+      "regulator": 2.0,
+      "relevance_score": 0.800537169,
+      "rerank_score": 0.5677148676000001,
+      "risk_category": 1.0,
+      "summary": "SEBI has mandated stock brokers and depository participants to strengthen their cybersecurity posture by adopting a structured cyber resilience framework. The framework covers governance, identification of critical assets, security monitoring, periodic testing, and incident response.",
+      "total_chunks": 2.0,
+      "vector_id": "reg_2_chunk_1"
+    },
+    {
+      "chunk_index": 0,
+      "chunk_text": "Regulation: SEBI Cybersecurity and Cyber Resilience Framework for Stock Brokers / DPs, 2025\n\nSummary: SEBI has mandated stock brokers and depository participants to strengthen their cybersecurity posture by adopting a structured cyber resilience framework. The framework covers governance, identification of critical assets, security monitoring, periodic testing, and incident response.\n\nAction Items Description: [\"Conduct a gap analysis of current cybersecurity controls against SEBI framework requ",
+      "department": 2.0,
+      "due_date": "2026-03-31T00:00:00",
+      "industry": "2",
+      "reg_category": "Circular",
+      "reg_subject": "Mandatory implementation of enhanced cybersecurity and resilience framework by stock brokers and depository participants",
+      "regulation_title": "SEBI Cybersecurity and Cyber Resilience Framework for Stock Brokers / DPs, 2025",
+      "regulator": 2.0,
+      "relevance_score": 0.79119879,
+      "rerank_score": 0.5639795160000001,
+      "risk_category": 1.0,
+      "summary": "SEBI has mandated stock brokers and depository participants to strengthen their cybersecurity posture by adopting a structured cyber resilience framework. The framework covers governance, identification of critical assets, security monitoring, periodic testing, and incident response.",
+      "total_chunks": 2.0,
+      "vector_id": "reg_2_chunk_0"
+    }
+  ],
+  "llm_response": "I can assist with the recent RBI regulations based on the provided regulatory context. Here are some key regulations that have been in effect:\n\n1. Regulation 1: This regulation, with a relevance score of 0.846, likely pertains to a significant recent guideline or circular issued by the Reserve Bank of India (RBI). To obtain specific details and guidance on this regulation, I recommend referring to the official RBI website or accessing the latest circulars and notifications published by the RBI.\n\n2. Regulation 2: With a relevance score of 0.823, this regulation may also be crucial for compliance purposes. It is advisable to review the latest updates from the RBI to ensure adherence to this regulation.\n\n3. Regulation 3: This regulation, scoring 0.801 in relevance, could have implications for financial institutions or other entities under RBI oversight. To gain a comprehensive understanding of Regulation 3 and its requirements, it is recommended to consult official RBI sources.\n\n4. Regulation 4: While scoring 0.791 in relevance, Regulation 4 likely contains important compliance directives that entities regulated by the RBI need to follow. For detailed information and actionable steps related to Regulation 4, it is advisable to directly access the relevant RBI circulars or notifications.\n\nPlease note that the specifics of these regulations are not provided in the context, so for precise details and guidance, it is essential to refer to the official RBI communications. Additionally, for any regulatory queries beyond the scope of the context provided, I recommend reaching out to the RBI directly or consulting legal experts well-versed in RBI regulations.",
+  "message": "Chat response generated using production-grade regulatory prompts",
+  "processing_time_ms": 11149.575471878052,
+  "query_classification": {
+    "analysis": {
+      "confidence": 0.5499999999999999,
+      "domain_keywords_found": {
+        "banking": [
+          "rbi"
+        ]
+      },
+      "regulatory_terms_found": [
+        "regulation"
+      ],
+      "relevance_score": 0.44999999999999996
+    },
+    "domains": [
+      "banking"
+    ],
+    "relevance": "partially_relevant"
+  },
+  "response_validation": {
+    "is_valid": false,
+    "quality_score": 0.8,
+    "safety_score": 0,
+    "suggestions": [
+      "Consider adding appropriate disclaimers"
+    ],
+    "warnings": []
+  },
+  "timestamp": "2025-09-29T16:41:32.142852",
+  "token_usage": {
+    "models_used": [
+      "text-embedding-ada-002",
+      "gpt-3.5-turbo"
+    ],
+    "query_embedding_tokens": 8,
+    "rag_input_tokens": 339,
+    "rag_output_tokens": 318,
+    "total_tokens": 665
+  },
+  "total_vectors_found": 4,
+  "user_query": "what are the RBI regulations in recent days"
+}
+HTTP Status: 200
+Total Time: 11.390555s
+ 
+======================================== 
+ 
+User Query: who is prime minister of india 
+Timestamp: 29-09-2025 16:42:29.21 
+ 
+API Response: 
+{
+  "context_used": [],
+  "llm_response": "I specialize in regulatory compliance assistance for financial institutions. I can only help with queries related to regulatory circulars, compliance requirements, risk management, and related matters. Please rephrase your question to focus on regulatory compliance.",
+  "message": "Query out of scope - not related to regulatory compliance",
+  "query_classification": {
+    "analysis": {
+      "confidence": 0.1,
+      "domain_keywords_found": {},
+      "regulatory_terms_found": [],
+      "relevance_score": 0.0
+    },
+    "domains": [],
+    "relevance": "irrelevant"
+  },
+  "timestamp": "2025-09-29T16:42:29.475930",
+  "user_query": "who is prime minister of india"
+}
+HTTP Status: 200
+Total Time: 0.220081s
+ 
+======================================== 
+ 

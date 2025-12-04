@@ -42,17 +42,11 @@ class ATSDatabase:
             self._ensure_chat_history_table_exists()
             return True
         except Error as e:
-
             error_msg = str(e)
             error_msg_lower = error_msg.lower()
             
             # Store error for better error messages
             self._connection_error = error_msg
-
-            error_msg = str(e).lower()
-            # Store error for better error messages
-            self._connection_error = str(e)
-
             
             # Check if database doesn't exist (error 1049)
             if "1049" in str(e) or "unknown database" in error_msg_lower:

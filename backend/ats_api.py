@@ -629,8 +629,8 @@ def process_resume():
             
             # Generate embedding from resume text
             logger.info("Generating embedding for resume...")
-            resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
-            
+            #resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
+            resume_embedding = []
             # Store in database (without embedding - stored in Pinecone only)
             try:
                 with create_ats_database() as db:
@@ -1789,19 +1789,23 @@ def search_resumes():
                     vector_top_k = min(limit * 3, 200) if limit else 200
                     
                     # Query Pinecone with candidate ID filter
-                    vector_results = pinecone_manager.query(
-                        vector=query_embedding,
+                    # Note: EnhancedPineconeManager uses query_vectors method
+                    vector_results = pinecone_manager.query_vectors(
+                        query_vector=query_embedding,
                         top_k=vector_top_k,
                         include_metadata=True,
                         filter={'candidate_id': {'$in': candidate_ids}}
                     )
                     
-                    if vector_results and vector_results.matches:
-                        logger.info(f"✅ Pinecone search found {len(vector_results.matches)} results")
+                    # Handle both QueryResponse and dict return types
+                    matches = vector_results.matches if hasattr(vector_results, 'matches') else (vector_results.get('matches', []) if isinstance(vector_results, dict) else [])
+                    
+                    if matches:
+                        logger.info(f"✅ Pinecone search found {len(matches)} results")
                         
                         # Extract candidate IDs and scores from Pinecone
                         pinecone_candidate_ids = []
-                        for match in vector_results.matches:
+                        for match in matches:
                             candidate_id = match.metadata.get('candidate_id')
                             if candidate_id:
                                 pinecone_candidate_ids.append(candidate_id)
@@ -3052,6 +3056,11 @@ def search_resume():
             logger.warning(f"Failed to save chat history: {history_error}")
         
         return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error in /api/searchResume: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/profileRankingByJD', methods=['POST'])

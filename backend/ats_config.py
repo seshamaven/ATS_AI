@@ -29,11 +29,11 @@ class ATSConfig:
     """ATS-specific configuration class."""
     
     # Database Configuration - Support both Railway and local formats
-    MYSQL_HOST = os.getenv('MYSQLHOST')
-    MYSQL_USER = os.getenv('MYSQLUSER')
-    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD')
-    MYSQL_DATABASE = os.getenv('MYSQLDATABASE')
-    MYSQL_PORT = int(os.getenv("MYSQL_PORT", 3306)) 
+    MYSQL_HOST = os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))
+    MYSQL_USER = os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Mst@2026'))
+    MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))
+    MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))) 
     
     # Ollama Configuration (Local LLM - Disabled by default, use OpenAI instead)
     OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
@@ -69,7 +69,7 @@ class ATSConfig:
     # SQLAlchemy Configuration
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))}:"
-        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Reset@123'))}@"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Mst@2026'))}@"
         f"{os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))}:"
         f"{os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))}/"
         f"{os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))}"
@@ -103,16 +103,23 @@ class ATSConfig:
     # Resume Parsing Configuration
     NLP_MODEL = os.getenv('NLP_MODEL', 'en_core_web_sm')  # spaCy model
     
+    # MySQL Unix Socket (for local connections on Linux)
+    MYSQL_UNIX_SOCKET = os.getenv('MYSQL_UNIX_SOCKET', '/var/run/mysqld/mysqld.sock')
+    
     @classmethod
     def get_mysql_config(cls) -> Dict[str, Any]:
         """Get MySQL configuration dictionary."""
-        return {
+        config = {
             'host': cls.MYSQL_HOST,
             'user': cls.MYSQL_USER,
             'password': cls.MYSQL_PASSWORD,
             'database': cls.MYSQL_DATABASE,
             'port': cls.MYSQL_PORT
         }
+        # Add unix_socket for local Linux connections
+        if cls.MYSQL_HOST == 'localhost' and os.path.exists(cls.MYSQL_UNIX_SOCKET):
+            config['unix_socket'] = cls.MYSQL_UNIX_SOCKET
+        return config
     
     @classmethod
     def get_sqlalchemy_uri(cls) -> str:
@@ -185,7 +192,17 @@ class ATSConfig:
         print("=" * 60)
         print("ATS Configuration Summary")
         print("=" * 60)
+        
         config_items = [
+            ('MySQL Host', cls.MYSQL_HOST),
+            ('MySQL User', cls.MYSQL_USER),
+            ('MySQL Password', '***' if hide_sensitive else cls.MYSQL_PASSWORD),
+            ('MySQL Database', cls.MYSQL_DATABASE),
+            ('MySQL Port', cls.MYSQL_PORT),
+            ('Use Ollama', cls.USE_OLLAMA),
+            ('Ollama Base URL', cls.OLLAMA_BASE_URL if cls.USE_OLLAMA else 'Not configured'),
+            ('Ollama Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else 'Not configured'),
+            ('Azure OpenAI Endpoint', cls.AZURE_OPENAI_ENDPOINT or 'Not configured'),
             ('Azure OpenAI API Key', '***' if hide_sensitive and cls.AZURE_OPENAI_API_KEY else 'Not configured'),
             ('OpenAI API Key', '***' if hide_sensitive and cls.OPENAI_API_KEY else 'Not configured'),
             ('Embedding Model', cls.OLLAMA_MODEL if cls.USE_OLLAMA else (cls.AZURE_OPENAI_MODEL or cls.OPENAI_EMBEDDING_MODEL)),

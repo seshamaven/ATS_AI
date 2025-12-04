@@ -300,7 +300,7 @@ class LLMRefinementService:
 # SAFETY: These are stateless - they only hold configuration and thread-safe clients.
 # No request data is stored in these instances, ensuring complete request isolation.
 embedding_service = EmbeddingService()
-resume_parser = ResumeParser()  # Disabled: No OpenAI/Ollama for AI extraction
+resume_parser = ResumeParser(use_ai_extraction=False)  # Disabled: No OpenAI/Ollama for AI extraction
 llm_refinement_service = LLMRefinementService()
 
 
@@ -1753,16 +1753,92 @@ def search_resumes():
                     'resume_summary': r.get('resume_summary', ''),
                 })
         
-        # === STEP 8: Semantic Search using Process_Search_Query (Query Correct Index) ===
+        # === STEP 8: Semantic Search (Hybrid Approach) ===
         semantic_applied = False
-        final_candidates = sql_candidates.copy()  # Start with SQL candidates as fallback
+        final_candidates = sql_candidates
         semantic_scores = {}
         
         # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
         for candidate in final_candidates:
             candidate['match_score'] = 1.0  # Perfect SQL match (default)
         
-        if use_semantic and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+        if use_semantic and sql_candidates and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
+            try:
+                logger.info(f"Applying semantic search to {len(sql_candidates)} SQL-filtered candidates")
+                
+                # Generate query embedding
+                query_embedding = embedding_service.generate_embedding(query)
+                logger.info(f"Generated query embedding with {len(query_embedding)} dimensions")
+                
+                # Initialize Pinecone manager
+                from enhanced_pinecone_manager import EnhancedPineconeManager
+                pinecone_manager = EnhancedPineconeManager(
+                    api_key=ATSConfig.PINECONE_API_KEY,
+                    index_name=ATSConfig.PINECONE_INDEX_NAME,
+                    dimension=ATSConfig.EMBEDDING_DIMENSION
+                )
+                pinecone_manager.get_or_create_index()
+                
+                # Get candidate IDs from SQL results (limit to 1000 for performance)
+                candidate_ids = [c['candidate_id'] for c in sql_candidates[:1000]]
+                
+                if candidate_ids:
+                    # Perform semantic search on SQL-filtered candidates
+                    # Use larger top_k to get better ranking, then limit later
+                    # Handle None limit - use all candidates if limit is None
+                    vector_top_k = min(limit * 3, 200) if limit else 200
+                    
+                    # Query Pinecone with candidate ID filter
+                    vector_results = pinecone_manager.query(
+                        vector=query_embedding,
+                        top_k=vector_top_k,
+                        include_metadata=True,
+                        filter={'candidate_id': {'$in': candidate_ids}}
+                    )
+                    
+                    if vector_results and vector_results.matches:
+                        logger.info(f"✅ Pinecone search found {len(vector_results.matches)} results")
+                        
+                        # Extract candidate IDs and scores from Pinecone
+                        pinecone_candidate_ids = []
+                        for match in vector_results.matches:
+                            candidate_id = match.metadata.get('candidate_id')
+                            if candidate_id:
+                                pinecone_candidate_ids.append(candidate_id)
+                                semantic_scores[candidate_id] = match.score
+                        
+                        # Reorder final_candidates by semantic score
+                        candidate_id_to_score = semantic_scores
+                        final_candidates.sort(
+                            key=lambda x: candidate_id_to_score.get(x['candidate_id'], 0),
+                            reverse=True
+                        )
+                        
+                        # Update match_score with semantic scores
+                        for candidate in final_candidates:
+                            if candidate['candidate_id'] in semantic_scores:
+                                candidate['match_score'] = round(semantic_scores[candidate['candidate_id']], 4)
+                        
+                        semantic_applied = True
+                        logger.info(f"✅ Semantic search completed: {len(final_candidates)} candidates re-ranked")
+                    else:
+                        logger.warning("No Pinecone results found, using SQL-only results")
+                        semantic_applied = False
+                else:
+                    logger.warning("No candidate IDs from SQL results, skipping Pinecone search")
+                    semantic_applied = False
+                    
+            except Exception as e:
+                logger.warning(f"Semantic search failed: {e}, falling back to SQL-only results")
+                logger.error(traceback.format_exc())
+                semantic_applied = False
+                # Set match_score to 1.0 for SQL-only candidates
+                for candidate in final_candidates:
+                    candidate['match_score'] = 1.0
+        
+        # === STEP 8: Semantic Search using Process_Search_Query (Query Correct Index) ===
+        # This is a fallback/alternative approach - only use if first approach didn't work
+        if not semantic_applied and use_semantic and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
             try:
                 logger.info(f"Using Process_Search_Query to search correct Pinecone index for query: {query}")
                 
@@ -2976,66 +3052,35 @@ def search_resume():
             logger.warning(f"Failed to save chat history: {history_error}")
         
         return jsonify(response_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error in /api/searchResume: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/profileRankingByJD', methods=['POST'])
 def profile_ranking_by_jd():
     """
-    Rank candidate profiles against a Job Description.
+    Profile ranking by job description.
     
-    Input: JSON with job_description OR job_id (at least one required)
-    - If job_id provided: Uses metadata from MySQL database
-    - If job_description provided: Extracts and uses metadata from text
-    - If both provided: Uses MySQL metadata if available, otherwise extracts from text
-    
-    Optional inputs for overriding/extending:
-    - job_title, required_skills, preferred_skills, min_experience, max_experience
-    - domain, education_required, location, employment_type, salary_range
-    - min_match_percent: Minimum match percentage threshold (default: 50)
-      Only candidates meeting this threshold OR having at least 1 matching skill are returned
-    
-    Returns: Ranked list of ELIGIBLE candidates only (not all candidates)
-    
-    ELIGIBILITY FILTERING:
-    - Candidates are filtered to include only those who meet the eligibility criteria
-    - Eligibility criteria: match_percent >= min_match_percent OR having at least 1 matching skill
-    - By default, min_match_percent = 50 (candidates with <50% match are excluded)
-    - Only eligible candidates are stored in database and returned in response
-    
-    STATELESS GUARANTEE: This endpoint creates a fresh ranking engine instance
-    and database connection for each request. Rankings are calculated independently
-    using only the current request's job description and candidate data from the database.
-    No ranking data from one request influences another.
+    Accepts job description and ranks candidates against it.
+    Returns ranked list of candidates with match scores.
     """
     try:
-        # Validate request
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
-        data = request.get_json()
+        data = request.get_json() or {}
         
-        # Generate job_id if not provided
-        job_id = data.get('job_id', f"JD_{int(time.time())}")
+        # Get job_id (optional - for tracking)
+        job_id = data.get('job_id', f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         
-        logger.info(f"Processing ranking request for job_id: {job_id}")
-        
-        # Try to get job metadata from MySQL if job_id is provided
+        # Get job metadata from database if job_id is provided
         job_metadata = None
-        if job_id:
-            logger.info(f"Attempting to fetch job metadata for job_id: {job_id}")
-            with create_ats_database() as db:
-                job_metadata = db.get_job_description(job_id)
-                if job_metadata:
-                    logger.info(f"Found existing job metadata for {job_id}")
-                else:
-                    logger.info(f"No existing metadata found for {job_id}, will extract from text")
+        if job_id and job_id.startswith('job_') == False:  # If it's not an auto-generated ID
+            try:
+                with create_ats_database() as db:
+                    job_metadata = db.get_job_description(job_id)
+            except Exception as e:
+                logger.warning(f"Could not fetch job metadata for job_id {job_id}: {e}")
         
-        # Determine job_description - use provided text or from metadata
+        # Get job description - use provided text or from metadata
         job_description = data.get('job_description', '')
         if not job_description and job_metadata:
             job_description = job_metadata.get('job_description', '')

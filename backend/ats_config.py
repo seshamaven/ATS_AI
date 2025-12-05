@@ -30,7 +30,6 @@ class ATSConfig:
     
     # Database Configuration - Support both Railway and local formats
 
-
     MYSQL_HOST = os.getenv('MYSQLHOST','localhost')
     MYSQL_USER = os.getenv('MYSQLUSER','root')
     MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD','root')
@@ -72,7 +71,7 @@ class ATSConfig:
     # SQLAlchemy Configuration
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('ATS_MYSQL_USER', 'root'))}:"
-        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'root'))}@"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('ATS_MYSQL_PASSWORD', 'Reset@123'))}@"
         f"{os.getenv('MYSQLHOST', os.getenv('ATS_MYSQL_HOST', 'localhost'))}:"
         f"{os.getenv('MYSQLPORT', os.getenv('ATS_MYSQL_PORT', '3306'))}/"
         f"{os.getenv('MYSQLDATABASE', os.getenv('ATS_MYSQL_DATABASE', 'ats_db'))}"

@@ -7,7 +7,7 @@ echo ==========================================
 echo.
 
 set /p MYSQL_PASSWORD="Enter MySQL root password (default: root): "
-if "%MYSQL_PASSWORD%"=="" set MYSQL_PASSWORD=root
+if "%MYSQL_PASSWORD%"=="" set MYSQL_PASSWORD=Reset@123
 
 echo.
 echo Creating ats_db database...

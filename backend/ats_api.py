@@ -300,7 +300,7 @@ class LLMRefinementService:
 # SAFETY: These are stateless - they only hold configuration and thread-safe clients.
 # No request data is stored in these instances, ensuring complete request isolation.
 embedding_service = EmbeddingService()
-resume_parser = ResumeParser()  # Disabled: No OpenAI/Ollama for AI extraction
+resume_parser = ResumeParser(use_ai_extraction=False)  # Disabled: No OpenAI/Ollama for AI extraction
 llm_refinement_service = LLMRefinementService()
 
 
@@ -629,8 +629,8 @@ def process_resume():
             
             # Generate embedding from resume text
             logger.info("Generating embedding for resume...")
-            resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
-            
+            #resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
+            resume_embedding = []
             # Store in database (without embedding - stored in Pinecone only)
             try:
                 with create_ats_database() as db:

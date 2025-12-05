@@ -1,0 +1,32 @@
+# Technical Director 
+
+## Professional Overview
+
+Having 23 years of balanced experience in management and technical areas with a highly adaptable leadership style, demonstrated the ability to develop resources as a mentor and coach, and a strong believer of teamwork and ethics. Expertise in setting up the processes and contributing technically at all levels across program, project, and product management. expertise in establishing and leading strong governance practices for custom development and cloud environments (Java, Spring Boot Micro Services, DevOps, CI/CD, SAAS/Cloud Products, Low Code, No Code, Mobile Apps, API Driven, .Net, PHP, Python, React JS, Azure Power Apps/Automate, AWS), and business intelligence
+
+- Responsible for the offshore delivery of multiple projects following agile/SAFe/scrum process.
+- Establishing the process and enabling the team to deliver quality solutions, calculating, assessing.
+- Improving various agile metrics like capacity, velocity, code coverage, security, performance, and usability
+- Has the ability to design full-stack cloud solutions using a variety of technologies and platforms, including Open Source, Microsoft, Hosted, Cloud, and Mobile. delivers products from the drawing board to launch.
+
+---
+
+# Career Development 
+
+## Mavensoft Systems Pvt Ltd
+
+Feb 2016 - Till Date
+
+## Director - Technology
+
+- Managing the offshore delivery center and with overall P&L Responsibility
+- Strategizing the sales activities in India and delivery of quality services
+- Front heading the sales and delivery, introduced several revenues generating areas.
+- Optimizing the productivity of the team by couching and mentoring various functional groups.
+- Empowering the testing function to take up Business Analyst, SQL Developer roles and grooming them to successfully lead those functions with client communication responsibility
+- Coaching the team on best practices like design, performance tuning and data sharing models.
+- Initiated the process automations and formalizing the client deliveries with appropriate scope management methodology.
+- Standardizing the development, build and release processes to bring the transparency inthe system helping collaboration between team members.
+- Playing a key role in addressing technical R&D activities, code reviews, tuning and designing the systems
+- Formalizing the best practices across the functional teams like development and testing to ensure right quality deliverables consistently through Scrum/Agile developmentprocess.
+

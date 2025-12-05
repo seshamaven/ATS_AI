@@ -1732,14 +1732,33 @@ Resume Text (look for name in FIRST FEW LINES):
                 role_type = None
                 subrole_type = None
             else:
-                # Step 1: Find ALL roles in resume (designation + experience section)
-                all_role_matches = []
-                
-                # Check current designation
+                # Step 1: Normalize current designation using role_processor table
+                normalized_designation = None
                 if current_designation:
-                    matches = detect_all_roles(current_designation)
-                    all_role_matches.extend(matches)
-                    logger.debug(f"Found {len(matches)} role(s) in designation: {current_designation}")
+                    try:
+                        from role_processor import normalize_role
+                        normalized_designation = normalize_role(
+                            original_role=current_designation,
+                            resume_text=resume_text,
+                            primary_skills=primary_skills,
+                            secondary_skills=secondary_skills_str
+                        )
+                        if normalized_designation and normalized_designation != "Others":
+                            role_type = normalized_designation
+                            logger.info(f"✓ Normalized designation '{current_designation}' -> role_type '{role_type}' (from role_processor table)")
+                        else:
+                            logger.debug(f"Designation '{current_designation}' not found in role_processor table, will try role detection")
+                    except Exception as e:
+                        logger.warning(f"Error normalizing designation: {e}. Will try role detection instead")
+                
+                # Step 2: If normalization didn't work, find ALL roles in resume (designation + experience section)
+                all_role_matches = []  # Initialize before conditional check
+                if not role_type:
+                    # Check current designation (if not already normalized)
+                    if current_designation and not normalized_designation:
+                        matches = detect_all_roles(current_designation)
+                        all_role_matches.extend(matches)
+                        logger.debug(f"Found {len(matches)} role(s) in designation: {current_designation}")
                 
                 # Check full resume text for all roles (experience section, etc.)
                 if resume_text:
@@ -1761,18 +1780,38 @@ Resume Text (look for name in FIRST FEW LINES):
                     
                     # Sort by priority (lower = higher priority) and select best
                     unique_matches.sort(key=lambda x: x[0])
-                    best_priority, role_type, _ = unique_matches[0]
+                    best_priority, detected_role, _ = unique_matches[0]
                     
-                    logger.info(f"âœ“ Selected highest role: '{role_type}' (priority: {best_priority}) from {len(unique_matches)} unique role(s) found")
+                    logger.info(f"✓ Selected highest role: '{detected_role}' (priority: {best_priority}) from {len(unique_matches)} unique role(s) found")
                     
-                    # Step 3: Match subrole based on skills (always returns one of: Backend/Frontend/Full Stack Developer)
+                    # Step 3: Normalize role using role_processor table
+                    try:
+                        from role_processor import normalize_role
+                        normalized_role = normalize_role(
+                            original_role=detected_role,
+                            resume_text=resume_text,
+                            primary_skills=primary_skills,
+                            secondary_skills=secondary_skills_str
+                        )
+                        if normalized_role and normalized_role != "Others":
+                            role_type = normalized_role
+                            logger.info(f"✓ Normalized role: '{detected_role}' -> '{role_type}' (from role_processor table)")
+                        else:
+                            # If normalization returns "Others" or None, use the detected role
+                            role_type = detected_role
+                            logger.info(f"✓ Using detected role '{role_type}' (not found in role_processor table)")
+                    except Exception as e:
+                        logger.warning(f"Error normalizing role: {e}. Using detected role '{detected_role}'")
+                        role_type = detected_role
+                    
+                    # Step 4: Match subrole based on skills (always returns one of: Backend/Frontend/Full Stack Developer)
                     subrole_type = match_subrole_from_skills(role_type, primary_skills, secondary_skills_str)
                     if subrole_type:
-                        logger.info(f"âœ“ Matched subrole: '{subrole_type}' based on skills (primary: {primary_skills[:50]}...)")
+                        logger.info(f"✓ Matched subrole: '{subrole_type}' based on skills (primary: {primary_skills[:50]}...)")
                     else:
                         # Fallback to Backend Developer if match_subrole_from_skills returns None (shouldn't happen)
                         subrole_type = "Backend Developer"
-                        logger.info(f"âœ“ Using default subrole: '{subrole_type}' for role '{role_type}'")
+                        logger.info(f"✓ Using default subrole: '{subrole_type}' for role '{role_type}'")
                 
                 # Fallback: if no role string found anywhere, infer role from skills (for freshers etc.)
                 if not role_type:
@@ -1780,8 +1819,28 @@ Resume Text (look for name in FIRST FEW LINES):
                     # Only infer IT roles for IT-related profiles
                     inferred = infer_role_from_skills(primary_skills, secondary_skills_str, profile_type)
                     if inferred:
-                        role_type, subrole_type = inferred
-                        logger.info(f"âœ“ Inferred role from skills (fallback): role_type='{role_type}', subrole_type='{subrole_type}'")
+                        inferred_role, inferred_subrole = inferred
+                        # Normalize the inferred role using role_processor table
+                        try:
+                            from role_processor import normalize_role
+                            normalized_role = normalize_role(
+                                original_role=inferred_role,
+                                resume_text=resume_text,
+                                primary_skills=primary_skills,
+                                secondary_skills=secondary_skills_str
+                            )
+                            if normalized_role and normalized_role != "Others":
+                                role_type = normalized_role
+                                logger.info(f"✓ Inferred and normalized role from skills: '{inferred_role}' -> '{role_type}'")
+                            else:
+                                role_type = inferred_role
+                                logger.info(f"✓ Inferred role from skills (fallback): role_type='{role_type}'")
+                        except Exception as e:
+                            logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
+                            role_type = inferred_role
+                        
+                        subrole_type = inferred_subrole
+                        logger.info(f"✓ Inferred subrole: '{subrole_type}'")
                     else:
                         logger.debug("No role/subrole detected from resume text or skills")
 
@@ -1797,12 +1856,12 @@ Resume Text (look for name in FIRST FEW LINES):
                     profile_type, primary_skills, secondary_skills_str
                 )
                 logger.info(
-                    f"âœ“ Determined subrole_type='{subrole_type}' based on profile_type='{profile_type}' and skills"
+                    f"✓ Determined subrole_type='{subrole_type}' based on profile_type='{profile_type}' and skills"
                 )
             
             # Final log
             if role_type:
-                logger.info(f"âœ“ Final result: role_type='{role_type}', subrole_type='{subrole_type}'")
+                logger.info(f"✓ Final result: role_type='{role_type}', subrole_type='{subrole_type}'")
             
             
             # Calculate sub_profile_type from second highest score

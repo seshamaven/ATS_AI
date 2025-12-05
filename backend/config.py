@@ -31,7 +31,7 @@ class Config:
     # Database Configuration - Support both Railway and local formats
     MYSQL_HOST = os.getenv('MYSQLHOST', os.getenv('MYSQL_HOST', 'localhost'))
     MYSQL_USER = os.getenv('MYSQLUSER', os.getenv('MYSQL_USER', 'root'))
-    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'root'))
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'Reset@123'))
     MYSQL_DATABASE = os.getenv('MYSQLDATABASE', os.getenv('MYSQL_DATABASE', 'reglib'))
     MYSQL_PORT = int(os.getenv('MYSQLPORT', os.getenv('MYSQL_PORT', '3306')))
     
@@ -68,7 +68,7 @@ class Config:
     # SQLAlchemy Configuration
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+mysqlclient://{os.getenv('MYSQLUSER', os.getenv('MYSQL_USER', 'root'))}:"
-        f"{os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'root'))}@"
+        f"{os.getenv('MYSQLPASSWORD', os.getenv('MYSQL_PASSWORD', 'Reset@123'))}@"
         f"{os.getenv('MYSQLHOST', os.getenv('MYSQL_HOST', 'localhost'))}:"
         f"{os.getenv('MYSQLPORT', os.getenv('MYSQL_PORT', '3306'))}/"
         f"{os.getenv('MYSQLDATABASE', os.getenv('MYSQL_DATABASE', 'reglib'))}"

@@ -209,3 +209,17 @@ CREATE TABLE IF NOT EXISTS applications (
     UNIQUE KEY unique_application (job_id, candidate_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Role Processor Table (Stores unique normalized roles with all original roles in JSON)
+CREATE TABLE IF NOT EXISTS role_processor (
+    Id INT AUTO_INCREMENT PRIMARY KEY,
+    Normalised_roles VARCHAR(255) NOT NULL UNIQUE COMMENT 'Normalized role name (e.g., Software Engineer)',
+    roles JSON NOT NULL COMMENT 'JSON array of original role names (e.g., [".NET Developer", "Java Developer"])',
+    
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    -- Indexes for fast lookups
+    INDEX idx_normalised_role (Normalised_roles)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

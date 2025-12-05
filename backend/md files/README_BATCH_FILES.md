@@ -198,7 +198,7 @@ Ensure your `.env` file contains:
 # MySQL
 ATS_MYSQL_HOST=localhost
 ATS_MYSQL_USER=root
-ATS_MYSQL_PASSWORD=root
+ATS_MYSQL_PASSWORD=Reset@123
 ATS_MYSQL_DATABASE=ats_db
 ATS_MYSQL_PORT=3306
 

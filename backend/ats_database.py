@@ -964,6 +964,7 @@ class ATSDatabase:
         Returns:
             List of matching candidates
         """
+        
         try:
             search_query = f"%{query}%"
             sql = """

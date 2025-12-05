@@ -267,6 +267,8 @@ class EducationExtractor:
             (r"\b(Bachelor(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 5),
             (r'\b(Bachelors?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
             (r"\b(Bachelor(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 5),
+            # Specific pattern for "Bachelor's in Computer Science"
+            (r"\b(Bachelor'?s?\s+in\s+Computer\s+Science)\b", 5),
             # B.Tech / B. Tech / BTech - with specialization (comma, in, from)
             (r'\b(B\.?\s*[-]?\s*Tech\.?(?:nology)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
             (r'\b(B\.?\s*[-]?\s*E\.?(?:ng)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),

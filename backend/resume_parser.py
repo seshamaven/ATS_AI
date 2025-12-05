@@ -1697,9 +1697,10 @@ Resume Text (look for name in FIRST FEW LINES):
                 highest_degree = education_info['highest_degree']
                 education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else (highest_degree or '')
                 
-                # Extract current company and designation using regex
+                # Extract current company and designation
                 current_company = self._extract_current_company(resume_text)
-                current_designation = self._extract_current_designation(resume_text)
+                # Use improved designation extraction (same as AI path)
+                current_designation = extract_designation(resume_text) or ''
                 certifications_str = ''
                 summary = ''
                 location = self.extract_location(resume_text)

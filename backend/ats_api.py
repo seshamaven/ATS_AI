@@ -1619,7 +1619,8 @@ def search_resumes():
                         'resume_summary': r.get('resume_summary', ''),
                     })
                 
-                return jsonify({
+                # Build the response for name search
+                response_data = {
                     'query': query,
                     'search_type': 'name_search',
                     'analysis': {'detected_as': 'name'},
@@ -1627,7 +1628,30 @@ def search_resumes():
                     'results': candidates,
                     'processing_time_ms': int((time.time() - start_time) * 1000),
                     'timestamp': datetime.now().isoformat()
-                }), 200
+                }
+                
+                # === SAVE CHAT HISTORY FOR NAME SEARCH ===
+                chat_role = data.get('role')
+                chat_sub_role = data.get('sub_role')
+                chat_profile_type = data.get('profile_type')
+                chat_sub_profile_type = data.get('sub_profile_type')
+                chat_candidate_id = data.get('candidate_id')
+                
+                try:
+                    with create_ats_database() as history_db:
+                        history_db.insert_chat_history(
+                            chat_msg=query,
+                            response=json.dumps(response_data, default=str),
+                            candidate_id=chat_candidate_id,
+                            role=chat_role,
+                            sub_role=chat_sub_role,
+                            profile_type=chat_profile_type,
+                            sub_profile_type=chat_sub_profile_type
+                        )
+                except Exception as history_error:
+                    logger.warning(f"Failed to save chat history for name search: {history_error}")
+                
+                return jsonify(response_data), 200
         
         # === STEP 2: Role Detection ===
         role_info = detect_subrole_from_query(query)
@@ -1972,7 +1996,8 @@ def search_resumes():
         else:
             search_type = 'sql_only'
         
-        return jsonify({
+        # Build the response
+        response_data = {
             'query': query,
             'search_type': search_type,
             'analysis': analysis,
@@ -1980,7 +2005,32 @@ def search_resumes():
             'results': final_candidates,
             'processing_time_ms': int((time.time() - start_time) * 1000),
             'timestamp': datetime.now().isoformat()
-        }), 200
+        }
+        
+        # === SAVE CHAT HISTORY ===
+        # Extract role information from request or detected analysis
+        chat_role = data.get('role') or detected_main_role
+        chat_sub_role = data.get('sub_role') or detected_subrole
+        chat_profile_type = data.get('profile_type') or detected_profile_type_from_role
+        chat_sub_profile_type = data.get('sub_profile_type')
+        chat_candidate_id = data.get('candidate_id')  # Optional: if search is for a specific candidate
+        
+        try:
+            with create_ats_database() as history_db:
+                history_db.insert_chat_history(
+                    chat_msg=query,
+                    response=json.dumps(response_data, default=str),
+                    candidate_id=chat_candidate_id,
+                    role=chat_role,
+                    sub_role=chat_sub_role,
+                    profile_type=chat_profile_type,
+                    sub_profile_type=chat_sub_profile_type
+                )
+        except Exception as history_error:
+            # Log error but don't fail the main request
+            logger.warning(f"Failed to save chat history: {history_error}")
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error in /api/searchResumes: {e}")

@@ -29,11 +29,14 @@ class ATSConfig:
     """ATS-specific configuration class."""
     
     # Database Configuration - Support both Railway and local formats
-    MYSQL_HOST = os.getenv('MYSQLHOST') or os.getenv('MYSQL_HOST', 'localhost')
-    MYSQL_USER = os.getenv('MYSQLUSER') or os.getenv('MYSQL_USER', 'root')
-    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD') or os.getenv('MYSQL_PASSWORD', '')
-    MYSQL_DATABASE = os.getenv('MYSQLDATABASE') or os.getenv('MYSQL_DATABASE', 'ats_db')
-    MYSQL_PORT = int(os.getenv('MYSQLPORT') or os.getenv('MYSQL_PORT', '3306')) 
+
+
+    MYSQL_HOST = os.getenv('MYSQLHOST','localhost')
+    MYSQL_USER = os.getenv('MYSQLUSER','root')
+    MYSQL_PASSWORD = os.getenv('MYSQLPASSWORD','root')
+    MYSQL_DATABASE = os.getenv('MYSQLDATABASE','ats_db')
+    MYSQL_PORT = int(os.getenv("MYSQL_PORT", 3306)) 
+
     
     # Ollama Configuration (Local LLM - Disabled by default, use OpenAI instead)
     OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')

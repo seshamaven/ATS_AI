@@ -800,6 +800,7 @@ def process_resume():
                     'role_type': latest_resume_data.get('role_type') or parsed_data.get('role_type'),
                     'subrole_type': latest_resume_data.get('subrole_type') or parsed_data.get('subrole_type'),
                     'sub_profile_type': latest_resume_data.get('sub_profile_type') or parsed_data.get('sub_profile_type'),
+                    'current_designation': latest_resume_data.get('current_designation') or parsed_data.get('current_designation'),
                     'embedding_dimensions': 'stored_in_pinecone_only',
                     'pinecone_indexed': pinecone_indexed,
                     'pinecone_error': pinecone_error if not pinecone_indexed else None,
@@ -1044,6 +1045,7 @@ def process_resume_base64():
                     'subrole_type': latest_resume_data.get('subrole_type') or parsed_data.get('subrole_type'),
                     'sub_profile_type': latest_resume_data.get('sub_profile_type') or parsed_data.get('sub_profile_type'),
                     'embedding_dimensions': 'stored_in_pinecone_only',
+                    'current_designation': parsed_data.get('current_designation') or 'Unknown',
                     'pinecone_indexed': pinecone_indexed,
                     'pinecone_error': pinecone_error if not pinecone_indexed else None,
                     'timestamp': datetime.now().isoformat()
@@ -1065,6 +1067,7 @@ def process_resume_base64():
                     'subrole_type': parsed_data.get('subrole_type'),
                     'sub_profile_type': parsed_data.get('sub_profile_type'),
                     'embedding_dimensions': 'stored_in_pinecone_only',
+                    'current_designation': parsed_data.get('current_designation') or 'Unknown',
                     'pinecone_indexed': pinecone_indexed,
                     'pinecone_error': pinecone_error if not pinecone_indexed else None,
                     'timestamp': datetime.now().isoformat()

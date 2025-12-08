@@ -883,9 +883,17 @@ Resume Text (look for name in FIRST FEW LINES):
         logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
         resume_text_lower = resume_text.lower()
         
+        # Import validation function for short skills
+        from skill_extractor import _is_valid_short_skill_match
+        
         # Use case-insensitive whole-word matching for each skill in TECH_SKILLS (imported from skill_extractor.py)
         for skill in sorted(TECH_SKILLS, key=len, reverse=True):  # Check longer skills first
             skill_lower = skill.lower()
+            
+            # Skip if already in existing skills
+            if skill_lower in existing_skills_set:
+                continue
+            
             # Match whole words only (case-insensitive) using word boundaries
             pattern = r'\b' + re.escape(skill_lower) + r'\b'
             
@@ -899,13 +907,27 @@ Resume Text (look for name in FIRST FEW LINES):
             else:
                 pattern_compound = pattern
             
-            if re.search(pattern, resume_text_lower) or re.search(pattern_compound, resume_text_lower):
-                if skill_lower not in existing_skills_set:
-                    existing_skills.append(skill)
-                    existing_skills_set.add(skill_lower)
-                    logger.info(f"Added skill via word-boundary matching: {skill}")
-                    if max_skills is not None and len(existing_skills) >= max_skills:  # Stop after finding max skills (if limit set)
-                        break
+            # Search for matches
+            match = re.search(pattern, resume_text_lower)
+            if not match:
+                match = re.search(pattern_compound, resume_text_lower)
+            
+            if match:
+                start, end = match.span()
+                
+                # CRITICAL: Apply strict validation for short skills (1-2 letters) to prevent false positives
+                # This prevents "r" from "related", "v" from "version", "ti" from "activities", etc.
+                if len(skill_lower) <= 2:
+                    if not _is_valid_short_skill_match(resume_text_lower, start, end, skill_lower):
+                        logger.debug(f"Skipping invalid short skill match: '{skill}' at position {start}-{end}")
+                        continue  # Skip invalid short skill matches
+                
+                # Add skill if validation passed
+                existing_skills.append(skill)
+                existing_skills_set.add(skill_lower)
+                logger.info(f"Added skill via word-boundary matching: {skill}")
+                if max_skills is not None and len(existing_skills) >= max_skills:  # Stop after finding max skills (if limit set)
+                    break
         
         return existing_skills
     
@@ -1511,6 +1533,89 @@ Resume Text (look for name in FIRST FEW LINES):
                     resume_text, technical_skills, technical_skills_lower, max_skills=None  # No limit - extract all skills
                 )
                 
+                # CRITICAL: Post-process to remove invalid short skills (1-2 letters) that may have been added
+                # This is a safety net to catch any short skills that bypassed validation
+                from skill_extractor import _is_valid_short_skill_match
+                resume_text_lower = resume_text.lower()
+                filtered_technical_skills = []
+                filtered_technical_skills_lower = set()
+                
+                # Known false-positive patterns to check for
+                false_positive_patterns = {
+                    'r': ['related', 'resources', 'reports', 'recovery', 'requirements', 'responsibilities', 'research', 'responsible'],
+                    'v': ['version', 'visio', 'virtual', 'various', 'value', 'view', 'views', 'visual'],
+                    'ti': ['activities', 'motivation', 'automation', 'documentation', 'certification', 'authentication']
+                }
+                
+                for skill in technical_skills:
+                    skill_lower = skill.lower().strip()
+                    
+                    # For short skills (1-2 letters), apply strict validation
+                    if len(skill_lower) <= 2:
+                        # Additional check: if this skill appears in false-positive patterns, be extra strict
+                        if skill_lower in false_positive_patterns:
+                            # Check if the skill appears near any false-positive words
+                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            matches = list(re.finditer(pattern, resume_text_lower))
+                            
+                            # Check if ANY occurrence is valid AND not near false-positive words
+                            is_valid = False
+                            found_false_positive = False
+                            
+                            for match in matches:
+                                start, end = match.span()
+                                # INCREASED context window to 50 chars to catch more false positives
+                                context_start = max(0, start - 50)
+                                context_end = min(len(resume_text_lower), end + 50)
+                                context = resume_text_lower[context_start:context_end]
+                                
+                                # Check if context contains false-positive words (more aggressive)
+                                has_false_positive_word = any(
+                                    fp_word in context for fp_word in false_positive_patterns[skill_lower]
+                                )
+                                
+                                # STRICT: For known false-positive patterns, reject if ANY false-positive word is nearby
+                                if has_false_positive_word:
+                                    # Definitely a false positive - mark and check next match
+                                    found_false_positive = True
+                                    logger.debug(f"Post-processing: Found '{skill}' near false-positive word in context: '{context[:60]}'")
+                                    continue  # Check next match
+                                
+                                # Only accept if validation passes AND no false-positive words nearby
+                                if _is_valid_short_skill_match(resume_text_lower, start, end, skill_lower):
+                                    is_valid = True
+                                    found_false_positive = False  # Override if we found a valid match
+                                    break
+                            
+                            # If we found false-positive words in ALL matches OR no valid match, reject the skill
+                            if found_false_positive or not is_valid:
+                                logger.debug(f"Post-processing: Removed invalid short skill '{skill}' (failed validation or near false-positive)")
+                                continue
+                        else:
+                            # For other short skills, just validate normally
+                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            matches = list(re.finditer(pattern, resume_text_lower))
+                            
+                            # Check if ANY occurrence is valid
+                            is_valid = False
+                            for match in matches:
+                                start, end = match.span()
+                                if _is_valid_short_skill_match(resume_text_lower, start, end, skill_lower):
+                                    is_valid = True
+                                    break
+                            
+                            if not is_valid:
+                                logger.debug(f"Post-processing: Removed invalid short skill '{skill}' (failed validation)")
+                                continue
+                    
+                    # Add valid skill
+                    if skill_lower not in filtered_technical_skills_lower:
+                        filtered_technical_skills.append(skill)
+                        filtered_technical_skills_lower.add(skill_lower)
+                
+                technical_skills = filtered_technical_skills
+                technical_skills_lower = filtered_technical_skills_lower
+                
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills) if technical_skills else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills) if secondary_skills else ''  # Non-technical skills
@@ -1666,6 +1771,89 @@ Resume Text (look for name in FIRST FEW LINES):
                     resume_text, technical_skills_list, technical_skills_set, max_skills=None  # No limit - extract all skills
                 )
                 
+                # CRITICAL: Post-process to remove invalid short skills (1-2 letters) that may have been added
+                # This is a safety net to catch any short skills that bypassed validation
+                from skill_extractor import _is_valid_short_skill_match
+                resume_text_lower = resume_text.lower()
+                filtered_technical_skills_list = []
+                filtered_technical_skills_set = set()
+                
+                # Known false-positive patterns to check for
+                false_positive_patterns = {
+                    'r': ['related', 'resources', 'reports', 'recovery', 'requirements', 'responsibilities', 'research', 'responsible'],
+                    'v': ['version', 'visio', 'virtual', 'various', 'value', 'view', 'views', 'visual'],
+                    'ti': ['activities', 'motivation', 'automation', 'documentation', 'certification', 'authentication']
+                }
+                
+                for skill in technical_skills_list:
+                    skill_lower = skill.lower().strip()
+                    
+                    # For short skills (1-2 letters), apply strict validation
+                    if len(skill_lower) <= 2:
+                        # Additional check: if this skill appears in false-positive patterns, be extra strict
+                        if skill_lower in false_positive_patterns:
+                            # Check if the skill appears near any false-positive words
+                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            matches = list(re.finditer(pattern, resume_text_lower))
+                            
+                            # Check if ANY occurrence is valid AND not near false-positive words
+                            is_valid = False
+                            found_false_positive = False
+                            
+                            for match in matches:
+                                start, end = match.span()
+                                # INCREASED context window to 50 chars to catch more false positives
+                                context_start = max(0, start - 50)
+                                context_end = min(len(resume_text_lower), end + 50)
+                                context = resume_text_lower[context_start:context_end]
+                                
+                                # Check if context contains false-positive words (more aggressive)
+                                has_false_positive_word = any(
+                                    fp_word in context for fp_word in false_positive_patterns[skill_lower]
+                                )
+                                
+                                # STRICT: For known false-positive patterns, reject if ANY false-positive word is nearby
+                                if has_false_positive_word:
+                                    # Definitely a false positive - mark and check next match
+                                    found_false_positive = True
+                                    logger.debug(f"Post-processing: Found '{skill}' near false-positive word in context: '{context[:60]}'")
+                                    continue  # Check next match
+                                
+                                # Only accept if validation passes AND no false-positive words nearby
+                                if _is_valid_short_skill_match(resume_text_lower, start, end, skill_lower):
+                                    is_valid = True
+                                    found_false_positive = False  # Override if we found a valid match
+                                    break
+                            
+                            # If we found false-positive words in ALL matches OR no valid match, reject the skill
+                            if found_false_positive or not is_valid:
+                                logger.debug(f"Post-processing: Removed invalid short skill '{skill}' (failed validation or near false-positive)")
+                                continue
+                        else:
+                            # For other short skills, just validate normally
+                            pattern = r'\b' + re.escape(skill_lower) + r'\b'
+                            matches = list(re.finditer(pattern, resume_text_lower))
+                            
+                            # Check if ANY occurrence is valid
+                            is_valid = False
+                            for match in matches:
+                                start, end = match.span()
+                                if _is_valid_short_skill_match(resume_text_lower, start, end, skill_lower):
+                                    is_valid = True
+                                    break
+                            
+                            if not is_valid:
+                                logger.debug(f"Post-processing: Removed invalid short skill '{skill}' (failed validation)")
+                                continue
+                    
+                    # Add valid skill
+                    if skill_lower not in filtered_technical_skills_set:
+                        filtered_technical_skills_list.append(skill)
+                        filtered_technical_skills_set.add(skill_lower)
+                
+                technical_skills_list = filtered_technical_skills_list
+                technical_skills_set = filtered_technical_skills_set
+                
                 # Format primary_skills after potential lenient extraction
                 primary_skills = ', '.join(technical_skills_list) if technical_skills_list else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills_list) if secondary_skills_list else ''
@@ -1747,6 +1935,10 @@ Resume Text (look for name in FIRST FEW LINES):
                         if normalized_designation and normalized_designation != "Others":
                             role_type = normalized_designation
                             logger.info(f"✓ Normalized designation '{current_designation}' -> role_type '{role_type}' (from role_processor table)")
+                            # Ensure current_designation is set (should already be set from extract_designation, but double-check)
+                            if not current_designation or current_designation.strip() == '':
+                                current_designation = role_type
+                                logger.info(f"✓ Set current_designation from normalized designation: '{current_designation}'")
                         else:
                             logger.debug(f"Designation '{current_designation}' not found in role_processor table, will try role detection")
                     except Exception as e:
@@ -1813,37 +2005,282 @@ Resume Text (look for name in FIRST FEW LINES):
                         # Fallback to Backend Developer if match_subrole_from_skills returns None (shouldn't happen)
                         subrole_type = "Backend Developer"
                         logger.info(f"✓ Using default subrole: '{subrole_type}' for role '{role_type}'")
-                
-                # Fallback: if no role string found anywhere, infer role from skills (for freshers etc.)
-                if not role_type:
-                    from role_extract import infer_role_from_skills
-                    # Only infer IT roles for IT-related profiles
-                    inferred = infer_role_from_skills(primary_skills, secondary_skills_str, profile_type)
-                    if inferred:
-                        inferred_role, inferred_subrole = inferred
-                        # Normalize the inferred role using role_processor table
-                        try:
-                            from role_processor import normalize_role
-                            normalized_role = normalize_role(
-                                original_role=inferred_role,
-                                resume_text=resume_text,
-                                primary_skills=primary_skills,
-                                secondary_skills=secondary_skills_str
-                            )
-                            if normalized_role and normalized_role != "Others":
-                                role_type = normalized_role
-                                logger.info(f"✓ Inferred and normalized role from skills: '{inferred_role}' -> '{role_type}'")
+                    
+                    # CRITICAL: Populate current_designation if empty and we have role_type from detection
+                    if (not current_designation or current_designation.strip() == '') and role_type:
+                        # ENHANCEMENT: If profile_type is available and role is generic, use profile_type to create more specific designation
+                        if profile_type and role_type == "Software Engineer":
+                            # Handle comma-separated profile types (take first one)
+                            primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
+                            
+                            # Map profile_type to a more specific designation
+                            profile_type_to_designation = {
+                                "Python": "Python Developer",
+                                "Java": "Java Developer",
+                                ".Net": ".Net Developer",
+                                "JavaScript": "JavaScript Developer",
+                                "Full Stack": "Full Stack Developer",
+                                "DevOps": "DevOps Engineer",
+                                "Data Science": "Data Scientist",
+                                "Data Engineering": "Data Engineer",
+                                "Salesforce": "Salesforce Developer",
+                                "SAP": "SAP Consultant",
+                                "Cloud / Infra": "Cloud Engineer",
+                                "Testing / QA": "QA Engineer",
+                                "Mobile Development": "Mobile Developer",
+                                "RPA": "RPA Developer",
+                                "Cyber Security": "Security Engineer",
+                            }
+                            
+                            # Get profile-specific designation
+                            profile_designation = profile_type_to_designation.get(primary_profile_type)
+                            
+                            if profile_designation:
+                                # Use profile-specific designation
+                                # If subrole_type is "Full Stack Developer", create ".Net Full Stack Developer"
+                                if subrole_type and "Full Stack" in subrole_type and "Developer" in profile_designation:
+                                    # Replace "Developer" with "Full Stack Developer"
+                                    current_designation = profile_designation.replace("Developer", "Full Stack Developer")
+                                elif subrole_type and "Backend" in subrole_type and "Developer" in profile_designation:
+                                    # Replace "Developer" with "Backend Developer"
+                                    current_designation = profile_designation.replace("Developer", "Backend Developer")
+                                elif subrole_type and "Frontend" in subrole_type and "Developer" in profile_designation:
+                                    # Replace "Developer" with "Frontend Developer"
+                                    current_designation = profile_designation.replace("Developer", "Frontend Developer")
+                                else:
+                                    # Use profile designation as-is
+                                    current_designation = profile_designation
+                                logger.info(f"✓ Enhanced current_designation with profile_type: '{current_designation}' (profile_type: '{primary_profile_type}')")
                             else:
-                                role_type = inferred_role
-                                logger.info(f"✓ Inferred role from skills (fallback): role_type='{role_type}'")
-                        except Exception as e:
-                            logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
-                            role_type = inferred_role
+                                # Fallback to standard format if profile_type not in map
+                                if subrole_type and subrole_type != role_type:
+                                    current_designation = f"{role_type} ({subrole_type})"
+                                else:
+                                    current_designation = role_type
+                                logger.info(f"✓ Populated current_designation from detected role: '{current_designation}'")
+                        else:
+                            # Standard format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
+                            if subrole_type and subrole_type != role_type:
+                                current_designation = f"{role_type} ({subrole_type})"
+                            else:
+                                current_designation = role_type
+                            logger.info(f"✓ Populated current_designation from detected role: '{current_designation}'")
+                
+                # Fallback: if no role string found anywhere, use multi-signal inference (for freshers etc.)
+                if not role_type:
+                    from role_extract import infer_role_multi_signal
+                    # Ensure education_info is available (extract if not already done)
+                    if 'education_info' not in locals():
+                        education_info = self.extract_education(resume_text)
+                    # Use enhanced multi-signal inference (skills + education + certifications + projects)
+                    inferred = infer_role_multi_signal(
+                        resume_text=resume_text,
+                        primary_skills=primary_skills,
+                        secondary_skills=secondary_skills_str,
+                        education_info=education_info,
+                        profile_type=profile_type
+                    )
+                    if inferred:
+                        inferred_role, inferred_subrole, confidence = inferred
+                        logger.info(f"✓ Multi-signal inference: role='{inferred_role}', subrole='{inferred_subrole}', confidence={confidence:.2f}")
                         
-                        subrole_type = inferred_subrole
-                        logger.info(f"✓ Inferred subrole: '{subrole_type}'")
+                        # Only use if confidence is above threshold (0.3)
+                        if confidence >= 0.3:
+                            # Normalize the inferred role using role_processor table
+                            try:
+                                from role_processor import normalize_role
+                                normalized_role = normalize_role(
+                                    original_role=inferred_role,
+                                    resume_text=resume_text,
+                                    primary_skills=primary_skills,
+                                    secondary_skills=secondary_skills_str
+                                )
+                                if normalized_role and normalized_role != "Others":
+                                    role_type = normalized_role
+                                    logger.info(f"✓ Inferred and normalized role from multi-signal: '{inferred_role}' -> '{role_type}' (confidence: {confidence:.2f})")
+                                else:
+                                    role_type = inferred_role
+                                    logger.info(f"✓ Inferred role from multi-signal (fallback): role_type='{role_type}' (confidence: {confidence:.2f})")
+                            except Exception as e:
+                                logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
+                                role_type = inferred_role
+                            
+                            subrole_type = inferred_subrole
+                            logger.info(f"✓ Inferred subrole: '{subrole_type}'")
+                            
+                            # CRITICAL: If current_designation is empty and we inferred a role, populate it
+                            if not current_designation or current_designation.strip() == '':
+                                # Use the inferred role as current_designation for fresher resumes
+                                # Format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
+                                if subrole_type and subrole_type != role_type:
+                                    current_designation = f"{role_type} ({subrole_type})"
+                                else:
+                                    current_designation = role_type
+                                logger.info(f"✓ Populated current_designation from inferred role: '{current_designation}'")
+                        else:
+                            logger.debug(f"Multi-signal inference confidence too low ({confidence:.2f} < 0.3), skipping")
+                            # Try profile_type fallback if confidence too low
+                            if (not role_type or not current_designation or current_designation.strip() == '') and profile_type:
+                                # Profile type to designation mapping
+                                profile_type_designation_map = {
+                                    "Python": "Software Engineer",
+                                    "Java": "Software Engineer",
+                                    ".Net": "Software Engineer",
+                                    "JavaScript": "Software Engineer",
+                                    "Full Stack": "Software Engineer",
+                                    "DevOps": "DevOps Engineer",
+                                    "Data Science": "Data Scientist",
+                                    "Data Engineering": "Data Engineer",
+                                    "Salesforce": "Software Engineer",
+                                    "SAP": "SAP Consultant",
+                                    "Cloud / Infra": "Cloud Engineer",
+                                    "Testing / QA": "QA Engineer",
+                                    "Mobile Development": "Mobile Developer",
+                                    "RPA": "RPA Developer",
+                                    "Cyber Security": "Security Engineer",
+                                }
+                                
+                                # Handle comma-separated profile types (take first one)
+                                primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
+                                
+                                # Get base role from profile type
+                                base_role = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
+                                
+                                # Determine subrole from skills if available
+                                inferred_subrole_from_profile = None
+                                if primary_skills:
+                                    from role_extract import determine_subrole_type_from_profile_and_skills
+                                    try:
+                                        inferred_subrole_from_profile = determine_subrole_type_from_profile_and_skills(
+                                            primary_profile_type, primary_skills, secondary_skills_str
+                                        )
+                                    except Exception as e:
+                                        logger.debug(f"Error determining subrole from profile: {e}")
+                                
+                                # Set current_designation
+                                if inferred_subrole_from_profile and inferred_subrole_from_profile != base_role:
+                                    current_designation = f"{base_role} ({inferred_subrole_from_profile})"
+                                else:
+                                    current_designation = base_role
+                                
+                                # Set role_type if not already set
+                                if not role_type:
+                                    try:
+                                        from role_processor import normalize_role
+                                        normalized_role = normalize_role(
+                                            original_role=base_role,
+                                            resume_text=resume_text,
+                                            primary_skills=primary_skills,
+                                            secondary_skills=secondary_skills_str
+                                        )
+                                        role_type = normalized_role if normalized_role and normalized_role != "Others" else base_role
+                                    except Exception as e:
+                                        logger.debug(f"Error normalizing role from profile_type: {e}")
+                                        role_type = base_role
+                                
+                                # Set subrole_type if not already set
+                                if not subrole_type and inferred_subrole_from_profile:
+                                    subrole_type = inferred_subrole_from_profile
+                                
+                                logger.info(f"✓ Populated current_designation from profile_type fallback (low confidence): '{current_designation}' (profile_type: '{primary_profile_type}')")
                     else:
-                        logger.debug("No role/subrole detected from resume text or skills")
+                        # Fallback to simple skill-based inference if multi-signal fails
+                        from role_extract import infer_role_from_skills
+                        inferred = infer_role_from_skills(primary_skills, secondary_skills_str, profile_type)
+                        if inferred:
+                            inferred_role, inferred_subrole = inferred
+                            # Normalize the inferred role using role_processor table
+                            try:
+                                from role_processor import normalize_role
+                                normalized_role = normalize_role(
+                                    original_role=inferred_role,
+                                    resume_text=resume_text,
+                                    primary_skills=primary_skills,
+                                    secondary_skills=secondary_skills_str
+                                )
+                                if normalized_role and normalized_role != "Others":
+                                    role_type = normalized_role
+                                    logger.info(f"✓ Inferred and normalized role from skills (fallback): '{inferred_role}' -> '{role_type}'")
+                                else:
+                                    role_type = inferred_role
+                                    logger.info(f"✓ Inferred role from skills (fallback): role_type='{role_type}'")
+                            except Exception as e:
+                                logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
+                                role_type = inferred_role
+                            
+                            subrole_type = inferred_subrole
+                            logger.info(f"✓ Inferred subrole: '{subrole_type}'")
+                            
+                            # CRITICAL: If current_designation is empty and we inferred a role, populate it
+                            if not current_designation or current_designation.strip() == '':
+                                # Use the inferred role as current_designation for fresher resumes
+                                # Format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
+                                if subrole_type and subrole_type != role_type:
+                                    current_designation = f"{role_type} ({subrole_type})"
+                                else:
+                                    current_designation = role_type
+                                logger.info(f"✓ Populated current_designation from inferred role (fallback): '{current_designation}'")
+                        else:
+                            logger.debug("No role/subrole detected from resume text or skills")
+                            
+                            # FINAL FALLBACK: Use profile_type to infer designation if all else fails
+                            if (not role_type or not current_designation or current_designation.strip() == '') and profile_type:
+                                # Profile type to designation mapping
+                                profile_type_designation_map = {
+                                    "Python": "Software Engineer",
+                                    "Java": "Software Engineer",
+                                    ".Net": "Software Engineer",
+                                    "JavaScript": "Software Engineer",
+                                    "Full Stack": "Software Engineer",
+                                    "DevOps": "DevOps Engineer",
+                                    "Data Science": "Data Scientist",
+                                    "Data Engineering": "Data Engineer",
+                                    "Salesforce": "Software Engineer",
+                                    "SAP": "SAP Consultant",
+                                    "Cloud / Infra": "Cloud Engineer",
+                                    "Testing / QA": "QA Engineer",
+                                    "Mobile Development": "Mobile Developer",
+                                    "RPA": "RPA Developer",
+                                    "Cyber Security": "Security Engineer",
+                                }
+                                
+                                # Handle comma-separated profile types (take first one)
+                                primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
+                                
+                                # Get base role from profile type
+                                base_role = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
+                                
+                                # Determine subrole from skills if available
+                                if primary_skills:
+                                    from role_extract import determine_subrole_type_from_profile_and_skills
+                                    try:
+                                        inferred_subrole = determine_subrole_type_from_profile_and_skills(
+                                            primary_profile_type, primary_skills, secondary_skills_str
+                                        )
+                                        if inferred_subrole and inferred_subrole != base_role:
+                                            current_designation = f"{base_role} ({inferred_subrole})"
+                                        else:
+                                            current_designation = base_role
+                                    except:
+                                        current_designation = base_role
+                                else:
+                                    current_designation = base_role
+                                
+                                # Set role_type if not already set
+                                if not role_type:
+                                    try:
+                                        from role_processor import normalize_role
+                                        normalized_role = normalize_role(
+                                            original_role=base_role,
+                                            resume_text=resume_text,
+                                            primary_skills=primary_skills,
+                                            secondary_skills=secondary_skills_str
+                                        )
+                                        role_type = normalized_role if normalized_role and normalized_role != "Others" else base_role
+                                    except:
+                                        role_type = base_role
+                                
+                                logger.info(f"✓ Populated current_designation from profile_type fallback: '{current_designation}' (profile_type: '{primary_profile_type}')")
 
             # Override subrole_type so it is always based on profile_type + skills
             # But only for IT-related profiles

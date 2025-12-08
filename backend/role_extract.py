@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional, Sequence, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -1072,6 +1072,265 @@ def detect_role_only(title_or_text: str) -> Optional[str]:
     """Convenience helper to get just the role from text."""
     result = detect_role_subrole(title_or_text)
     return result[0] if result else None
+
+
+def infer_role_multi_signal(
+    resume_text: Optional[str] = None,
+    primary_skills: Optional[str] = None,
+    secondary_skills: Optional[str] = "",
+    education_info: Optional[Dict[str, Any]] = None,
+    profile_type: Optional[str] = None
+) -> Optional[Tuple[str, str, float]]:
+    """
+    Enhanced multi-signal role inference for fresher resumes without explicit designation.
+    Combines skills, education, certifications, and projects to infer the most likely role.
+    
+    Args:
+        resume_text: Full resume text (optional, used to extract projects/certifications)
+        primary_skills: Comma-separated primary/technical skills
+        secondary_skills: Comma-separated secondary skills
+        education_info: Dict with 'highest_degree' and optionally 'specialization'
+        profile_type: Optional profile type to check if non-IT
+        
+    Returns:
+        Tuple of (role, subrole, confidence_score) if inferred, None otherwise
+        confidence_score is between 0.0 and 1.0
+    """
+    import re
+    from typing import Dict, Any, Tuple, Optional
+    
+    # If profile_type is non-IT, don't infer IT roles
+    if profile_type and is_non_it_profile(profile_type):
+        return None
+    
+    if not primary_skills and not resume_text:
+        return None
+    
+    # Extract all signals
+    signals = {
+        'skills': _infer_role_from_skills_signal(primary_skills, secondary_skills),
+        'education': _infer_role_from_education_signal(education_info) if education_info else None,
+        'certifications': _infer_role_from_certifications_signal(resume_text) if resume_text else None,
+        'projects': _infer_role_from_projects_signal(resume_text) if resume_text else None,
+    }
+    
+    # Weight each signal
+    weights = {
+        'skills': 0.40,      # Primary signal - most reliable
+        'education': 0.20,   # Secondary signal - indicates entry-level roles
+        'certifications': 0.20,  # Secondary signal - strong role indicator
+        'projects': 0.20,    # Secondary signal - shows practical experience
+    }
+    
+    # Combine signals with weighted scores
+    role_scores = {}
+    total_confidence = 0.0
+    
+    for signal_name, signal_data in signals.items():
+        if signal_data:
+            role, subrole, score = signal_data
+            weight = weights[signal_name]
+            weighted_score = score * weight
+            
+            key = (role, subrole)
+            if key not in role_scores:
+                role_scores[key] = {'score': 0.0, 'confidence': 0.0}
+            
+            role_scores[key]['score'] += weighted_score
+            role_scores[key]['confidence'] += weight
+            total_confidence += weight
+    
+    if not role_scores:
+        return None
+    
+    # Find best match (highest score)
+    best_match = max(role_scores.items(), key=lambda x: x[1]['score'])
+    (best_role, best_subrole), match_data = best_match
+    
+    # Calculate final confidence (normalized)
+    final_confidence = min(1.0, match_data['confidence'] / total_confidence if total_confidence > 0 else 0.0)
+    
+    return best_role, best_subrole, final_confidence
+
+
+def _infer_role_from_skills_signal(primary_skills: Optional[str], secondary_skills: str) -> Optional[Tuple[str, str, float]]:
+    """Extract role signal from skills with confidence score."""
+    if not primary_skills:
+        return None
+    
+    # Use existing infer_role_from_skills function
+    result = infer_role_from_skills(primary_skills, secondary_skills)
+    if result:
+        role, subrole = result
+        # Calculate confidence based on skill match strength
+        all_skills_text = f"{primary_skills}, {secondary_skills}".lower()
+        
+        # Count matching keywords for Software Engineer role
+        se_keywords = ['.net', 'c#', 'java', 'python', 'django', 'flask', 'javascript', 'react', 'angular', 'node.js']
+        matches = sum(1 for kw in se_keywords if kw in all_skills_text)
+        confidence = min(1.0, matches / 3.0)  # Normalize to 0-1
+        
+        return role, subrole, confidence
+    
+    return None
+
+
+def _infer_role_from_education_signal(education_info: Dict[str, Any]) -> Optional[Tuple[str, str, float]]:
+    """Extract role signal from education with confidence score."""
+    if not education_info:
+        return None
+    
+    highest_degree = education_info.get('highest_degree', '').lower()
+    education_details = education_info.get('education_details', [])
+    
+    # Extract specialization from education details
+    specialization = None
+    for detail in education_details:
+        detail_lower = detail.lower()
+        # Look for common specializations
+        if 'computer' in detail_lower or 'cse' in detail_lower or 'it' in detail_lower:
+            specialization = 'cse'
+        elif 'electronics' in detail_lower or 'ece' in detail_lower or 'eee' in detail_lower:
+            specialization = 'ece'
+        elif 'electrical' in detail_lower or 'eee' in detail_lower:
+            specialization = 'eee'
+        elif 'mechanical' in detail_lower or 'me' in detail_lower:
+            specialization = 'me'
+    
+    # Map education to entry-level roles
+    role_mapping = {
+        ('bachelors', 'cse'): ('Software Engineer', 'Full Stack Developer', 0.7),
+        ('bachelors', 'it'): ('Software Engineer', 'Full Stack Developer', 0.7),
+        ('bachelors', 'ece'): ('Software Engineer', 'Backend Developer', 0.5),
+        ('bachelors', 'eee'): ('Software Engineer', 'Backend Developer', 0.4),
+        ('bachelors', None): ('Software Engineer', 'Backend Developer', 0.3),
+        ('masters', 'cse'): ('Software Engineer', 'Full Stack Developer', 0.8),
+        ('masters', 'it'): ('Software Engineer', 'Full Stack Developer', 0.8),
+        ('masters', None): ('Software Engineer', 'Backend Developer', 0.5),
+    }
+    
+    degree_key = highest_degree if highest_degree in ['bachelors', 'masters'] else None
+    if degree_key:
+        key = (degree_key, specialization)
+        if key in role_mapping:
+            return role_mapping[key]
+        # Fallback to degree without specialization
+        key = (degree_key, None)
+        if key in role_mapping:
+            return role_mapping[key]
+    
+    return None
+
+
+def _infer_role_from_certifications_signal(resume_text: str) -> Optional[Tuple[str, str, float]]:
+    """Extract role signal from certifications with confidence score."""
+    if not resume_text:
+        return None
+    
+    text_lower = resume_text.lower()
+    
+    # Look for certifications section
+    cert_patterns = [
+        r'\bcertifications?[:\s]+(.*?)(?=\n\n[A-Z]|education|skills|experience|$)',
+        r'\bcertificate[:\s]+(.*?)(?=\n\n[A-Z]|education|skills|experience|$)',
+    ]
+    
+    certifications = []
+    for pattern in cert_patterns:
+        match = re.search(pattern, resume_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            cert_text = match.group(1)
+            # Extract individual certifications (lines starting with -, •, or numbered)
+            cert_lines = re.findall(r'[-•*]\s*([^\n]+)', cert_text)
+            certifications.extend([c.strip() for c in cert_lines if c.strip()])
+    
+    if not certifications:
+        return None
+    
+    # Map certifications to roles
+    cert_role_mapping = {
+        'salesforce': ('Software Engineer', 'Full Stack Developer', 0.6),
+        'salesforce developer': ('Software Engineer', 'Full Stack Developer', 0.7),
+        'aws': ('Cloud Engineer', 'Backend Developer', 0.6),
+        'azure': ('Cloud Engineer', 'Backend Developer', 0.6),
+        'gcp': ('Cloud Engineer', 'Backend Developer', 0.6),
+        'java': ('Software Engineer', 'Backend Developer', 0.5),
+        'python': ('Software Engineer', 'Backend Developer', 0.5),
+        'developer': ('Software Engineer', 'Full Stack Developer', 0.6),
+        'engineer': ('Software Engineer', 'Backend Developer', 0.5),
+    }
+    
+    # Check each certification
+    best_match = None
+    best_score = 0.0
+    
+    for cert in certifications:
+        cert_lower = cert.lower()
+        for keyword, (role, subrole, score) in cert_role_mapping.items():
+            if keyword in cert_lower:
+                if score > best_score:
+                    best_match = (role, subrole, score)
+                    best_score = score
+    
+    return best_match
+
+
+def _infer_role_from_projects_signal(resume_text: str) -> Optional[Tuple[str, str, float]]:
+    """Extract role signal from projects with confidence score."""
+    if not resume_text:
+        return None
+    
+    text_lower = resume_text.lower()
+    
+    # Look for projects section
+    project_patterns = [
+        r'\bprojects?[:\s]+(.*?)(?=\n\n[A-Z]|education|skills|experience|certifications|$)',
+        r'\bproject\s+name[:\s]+(.*?)(?=\n\n[A-Z]|education|skills|experience|certifications|$)',
+    ]
+    
+    project_text = ""
+    for pattern in project_patterns:
+        match = re.search(pattern, resume_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            project_text = match.group(1)
+            break
+    
+    if not project_text:
+        return None
+    
+    # Extract technologies from project descriptions
+    tech_keywords = {
+        'frontend': ['html', 'css', 'javascript', 'react', 'angular', 'vue', 'frontend', 'ui'],
+        'backend': ['python', 'django', 'flask', 'java', 'spring', 'node.js', 'express', 'backend', 'api'],
+        'database': ['mysql', 'postgresql', 'mongodb', 'database', 'sql'],
+        'fullstack': ['full stack', 'fullstack', 'web application', 'web app'],
+    }
+    
+    tech_scores = {category: 0 for category in tech_keywords}
+    
+    for category, keywords in tech_keywords.items():
+        for keyword in keywords:
+            if keyword in project_text.lower():
+                tech_scores[category] += 1
+    
+    # Determine role based on technologies
+    if tech_scores['fullstack'] > 0 or (tech_scores['frontend'] > 0 and tech_scores['backend'] > 0):
+        subrole = 'Full Stack Developer'
+        confidence = min(1.0, (tech_scores['frontend'] + tech_scores['backend'] + tech_scores['database']) / 5.0)
+    elif tech_scores['frontend'] > tech_scores['backend']:
+        subrole = 'Frontend Developer'
+        confidence = min(1.0, tech_scores['frontend'] / 3.0)
+    elif tech_scores['backend'] > 0:
+        subrole = 'Backend Developer'
+        confidence = min(1.0, (tech_scores['backend'] + tech_scores['database']) / 4.0)
+    else:
+        return None
+    
+    # If we found technologies, infer Software Engineer role
+    if sum(tech_scores.values()) > 0:
+        return ('Software Engineer', subrole, confidence)
+    
+    return None
 
 
 def detect_subrole_only(title_or_text: str) -> Optional[str]:

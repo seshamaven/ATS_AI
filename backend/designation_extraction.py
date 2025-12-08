@@ -573,7 +573,10 @@ NON_TITLE_INDICATORS = [
     'project', 'project title', 'portfolio', 'client', 'application', 'including',
     'responsibilities', 'technologies', 'duration', 'module', 'feature', 'functionality',
     'description', 'achievement', 'location', 'location :', 'certification',
-    'interpersonal', 'skills', 'communication', 'teamwork', 'problem-solving'
+    'interpersonal', 'skills', 'communication', 'teamwork', 'problem-solving',
+    'institute', 'institution', 'university', 'college', 'school', 'board', 'education',
+    'b.tech', 'btech', 'm.tech', 'mtech', 'b.e', 'be', 'm.e', 'me', 
+    'bachelor', 'master', 'degree', 'qualification', 'bsc', 'msc', 'bca', 'mca', 'ba', 'ma'
 ]
 
 # Soft skills that are NOT job titles (should be deprioritized or rejected)
@@ -657,6 +660,19 @@ def crop_to_experience_section(text: str) -> str:
     stop = re.search(r'(portfolio of projects|portfolio|project\s+\d+|project title|projects|project:)', slice_text, re.IGNORECASE)
     if stop:
         slice_text = slice_text[:stop.start()]
+    
+    # CRITICAL: Cut off at certifications section to avoid certification titles being mistaken for job titles
+    # This prevents "Salesforce Developer" from certifications being extracted as current designation
+    cert_stop = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
+    if cert_stop:
+        slice_text = slice_text[:cert_stop.start()]
+    
+    # CRITICAL: Cut off at education section to avoid institution names being mistaken for job titles
+    # This prevents "Gates Institute Of Technology" or "Director Of Technology" from education being extracted
+    # Also prevents matching "Director" from "Director Of Technology" in education section
+    edu_stop = re.search(r'\b(education|educational|academic|qualification|degree|b\.?tech|m\.?tech|b\.?e\.?|m\.?e\.?|bachelor|master|ph\.?d|doctorate)\s*:?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
+    if edu_stop:
+        slice_text = slice_text[:edu_stop.start()]
 
     return slice_text.strip()
 
@@ -781,6 +797,46 @@ def is_invalid_title_line(line: str) -> bool:
     # Reject lines containing "R&D" or "R & D" (research and development - not a title)
     if re.search(r'\br\s*[&]\s*d\b', lw, re.IGNORECASE):
         return True
+    
+    # CRITICAL: Reject lines that are clearly education/institution names
+    # This prevents "Gates Institute Of Technology" or "Director Of Technology" from education being extracted
+    education_keywords = ['institute', 'institution', 'university', 'college', 'school', 'board', 
+                         'b.tech', 'btech', 'm.tech', 'mtech', 'b.e', 'be', 'm.e', 'me', 
+                         'bachelor', 'master', 'degree', 'qualification', 'education', 'academic',
+                         'bsc', 'msc', 'bca', 'mca', 'ba', 'ma', 'phd', 'doctorate']
+    
+    # Check for degree patterns (e.g., "Btech, Civil Engineering", "B.Tech (CSE)", "Bachelor of Engineering")
+    degree_patterns = [
+        r'\b(b\.?tech|btech|m\.?tech|mtech|b\.?e\.?|be|m\.?e\.?|me|bsc|msc|bca|mca|ba|ma|phd|doctorate)\b',
+        r'\bbachelor\s+(?:of|in)',
+        r'\bmaster\s+(?:of|in)',
+        r'\bdegree\s+(?:in|of)',
+    ]
+    
+    has_degree_pattern = any(re.search(pattern, lw, re.IGNORECASE) for pattern in degree_patterns)
+    has_education_keyword = any(keyword in lw for keyword in education_keywords)
+    
+    if has_degree_pattern or has_education_keyword:
+        # STRICT: If it's clearly a degree format (e.g., "Btech, Civil Engineering"), reject it
+        # Even if it contains role keywords like "engineering" - this is a degree, not a job title
+        if has_degree_pattern:
+            # Check if it's a degree followed by specialization (e.g., "Btech, Civil Engineering")
+            if re.search(r'\b(b\.?tech|btech|m\.?tech|mtech|b\.?e\.?|be|m\.?e\.?|me|bsc|msc|bca|mca|ba|ma|phd|doctorate|bachelor|master)\s*[,\(]?\s*[a-z\s]+(?:engineering|science|arts|commerce|technology|computer|information)', lw, re.IGNORECASE):
+                return True  # Definitely a degree format - reject
+        
+        # But allow if it's clearly a job title (e.g., "Education Manager" - has manager/director/etc)
+        # AND doesn't have degree patterns
+        if not has_degree_pattern and any(role in lw for role in ['manager', 'director', 'developer', 'consultant', 'analyst', 'architect', 'lead']):
+            # Allow job titles like "Education Manager", "Engineering Director" (but not "Btech, Civil Engineering")
+            return False
+        
+        # Also reject if it contains "of technology" or "institute of" (institution names)
+        if re.search(r'\b(institute|institution|university|college)\s+of\s+', lw, re.IGNORECASE):
+            return True
+        
+        # If it has education keywords but no clear job title role, reject
+        if not any(role in lw for role in ['manager', 'director', 'developer', 'consultant', 'analyst', 'architect', 'lead']):
+            return True
     
     # explicit invalid markers
     for token in NON_TITLE_INDICATORS:
@@ -909,6 +965,20 @@ def regex_extract_from_line(line: str) -> Optional[str]:
     E.g. picks "Senior Consultant" from "April 2023 to till date\nSenior Consultant"
     or from "Senior Consultant at RAMA corporate and IT solutions"
     """
+    lw = line.lower()
+    
+    # CRITICAL: Reject degree patterns first (e.g., "Btech, Civil Engineering")
+    degree_patterns = [
+        r'\b(b\.?tech|btech|m\.?tech|mtech|b\.?e\.?|be|m\.?e\.?|me|bsc|msc|bca|mca|ba|ma|phd|doctorate)\s*[,\(]?\s*[a-z\s]+(?:engineering|science|arts|commerce|technology|computer|information)',
+        r'\bbachelor\s+(?:of|in)\s+',
+        r'\bmaster\s+(?:of|in)\s+',
+        r'\bdegree\s+(?:in|of)\s+',
+    ]
+    
+    # If line matches a degree pattern, reject it
+    if any(re.search(pattern, lw, re.IGNORECASE) for pattern in degree_patterns):
+        return None
+    
     # look for common patterns: "Senior Consultant", "Consultant", "Technical Lead", etc.
     # Pattern: optional seniority + core role (removed "lead" from roles group to avoid duplication)
     roles_pattern = r'\b(?:(senior|sr|junior|jr|lead|principal|assistant|associate)\b[\s\.\-]*)?(' \
@@ -920,9 +990,11 @@ def regex_extract_from_line(line: str) -> Optional[str]:
         cleaned = ' '.join(groups)
         return title_case(cleaned)
     # fallback: if line is short and contains 1-4 words and at least one core role keyword
-    lw = line.lower()
     words = lw.split()
     if 1 <= len(words) <= 6 and any(k in lw for k in ['engineer', 'developer', 'consultant', 'manager', 'architect', 'lead', 'director', 'analyst']):
+        # Additional check: reject if it looks like a degree (e.g., "Civil Engineering" after "Btech")
+        if any(deg in lw for deg in ['btech', 'b.tech', 'mtech', 'm.tech', 'be', 'b.e', 'me', 'm.e', 'bachelor', 'master']):
+            return None
         return title_case(lw)
     return None
 
@@ -962,14 +1034,53 @@ def extract_designation(resume_text: str) -> Optional[str]:
         line_lower = line.lower()
         # Check if this line has a date with "till date" or "present"
         if current_date_range_pattern.search(line) or current_date_keywords.search(line_lower):
-            # Check nearby lines (before and after) for title
+            # CRITICAL: Prioritize the line immediately BEFORE the date line (idx - 1)
+            # This is where the job title typically appears (e.g., "Web Developer" before "Jun 2017 - Present")
+            # Create prioritized list: [idx - 1] first, then other nearby lines
+            priority_indices = []
+            if idx > 0:
+                priority_indices.append(idx - 1)  # Line immediately before date (highest priority)
+            # Add other nearby lines (before and after)
             for check_idx in range(max(0, idx - 2), min(len(exp_lines), idx + 3)):
+                if check_idx != idx and check_idx != idx - 1:  # Skip date line and already-added idx-1
+                    priority_indices.append(check_idx)
+            
+            # Check lines in prioritized order
+            for check_idx in priority_indices:
                 check_line = exp_lines[check_idx].strip()
                 if not check_line or check_line == line.strip():
                     continue
                 if is_invalid_title_line(check_line):
                     continue
-                # Try to match this as a title
+                
+                # CRITICAL: Reject if this line appears to be in a certifications section
+                check_line_lower = check_line.lower()
+                check_line_pos = text.lower().find(check_line_lower)
+                if check_line_pos > 0:
+                    # Check text before this line for certifications header
+                    text_before = text[:check_line_pos].lower()
+                    # Look for certifications header (within last 500 chars to avoid false positives)
+                    recent_text = text_before[-500:] if len(text_before) > 500 else text_before
+                    cert_header_pattern = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', recent_text, re.IGNORECASE | re.MULTILINE)
+                    if cert_header_pattern:
+                        # This line is likely in certifications section - skip it
+                        continue
+                
+                # CRITICAL: For current positions, prioritize exact matches over fuzzy matches
+                # First try exact match (case-insensitive)
+                check_line_lower = check_line.lower().strip()
+                exact_match = None
+                # Use COMMON_TITLES from module scope (already defined at top of file)
+                for known_title in COMMON_TITLES:
+                    if known_title.lower() == check_line_lower:
+                        exact_match = known_title
+                        break
+                
+                if exact_match:
+                    # Found exact match - return immediately (highest priority for current positions)
+                    return title_case(exact_match)
+                
+                # If no exact match, try best_match_from_known (includes fuzzy matching)
                 match = best_match_from_known(check_line) or regex_extract_from_line(check_line)
                 if match:
                     # This is a current position - return it immediately
@@ -980,6 +1091,20 @@ def extract_designation(resume_text: str) -> Optional[str]:
         # Quick reject
         if is_invalid_title_line(line):
             continue
+        
+        # CRITICAL: Reject if this line appears to be in a certifications section
+        # Check if line appears after "certifications" header in the original text
+        line_lower = line.lower()
+        line_pos = text.lower().find(line_lower)
+        if line_pos > 0:
+            # Check text before this line for certifications header
+            text_before = text[:line_pos].lower()
+            # Look for certifications header (within last 500 chars to avoid false positives)
+            recent_text = text_before[-500:] if len(text_before) > 500 else text_before
+            cert_header_pattern = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', recent_text, re.IGNORECASE | re.MULTILINE)
+            if cert_header_pattern:
+                # This line is likely in certifications section - skip it
+                continue
 
         # Handle "Title -/–/— Company (Date)" format - extract title part first
         # Check for all dash types: hyphen (-), en-dash (–), em-dash (—)
@@ -990,7 +1115,7 @@ def extract_designation(resume_text: str) -> Optional[str]:
                 # First try exact match (prioritize shorter/exact matches)
                 title_lower = title_part.lower()
                 # Check if title_part exactly matches a known title (case-insensitive)
-                from designation_extraction import COMMON_TITLES
+                # COMMON_TITLES is already defined at module level, no need to import
                 for known_title in COMMON_TITLES:
                     if known_title.lower() == title_lower:
                         return title_case(known_title)

@@ -22,7 +22,7 @@ TECH_SKILLS = {
         'python', 'java','core java','advanced java', 'javascript', 'ecmascript', 'typescript', 'c++', 'csharp', 'php', 'ruby', 'go', 'rust', 'c#',
         'swift', 'kotlin', 'scala', 'perl', 'bash', 'shell scripting', 'objective-c', 'dart',
         'lua', 'matlab', 'assembly', 'fortran', 'sas', 'haskell', 'clojure', 'visual basic', 'vb.net', 'abap',
-        'elixir', 'erlang', 'groovy', 'f#', 'nim', 'crystal', 'zig', 'v', 'julia', 'racket', 'scheme',
+        'elixir', 'erlang', 'groovy', 'f#', 'nim', 'crystal', 'zig', 'v', 'r', 'julia', 'racket', 'scheme',
         'prolog', 'cobol', 'ada', 'pascal', 'delphi', 'apex', 'powershell', 'batch scripting', 'vbscript',
         'solidity', 'move', 'cairo', 'vyper', 'typescript-eslint', 'tsx', 'jsx',
         
@@ -1379,6 +1379,13 @@ EXTENDED_SKILLS = ALL_SKILLS.copy()
 for alias in SKILL_ALIASES.keys():
     EXTENDED_SKILLS.add(alias)
 
+# Whitelist of legitimate single-letter skills
+LEGITIMATE_SINGLE_LETTER_SKILLS = {
+    'r',  # R programming language
+    'c',  # C programming language
+    'v',  # V programming language (if applicable)
+}
+
 
 # ============================================================================
 # SKILL SECTION DETECTION
@@ -1430,6 +1437,126 @@ def _identify_skill_sections(text: str) -> List[Tuple[str, int, int]]:
 # SKILL EXTRACTION
 # ============================================================================
 
+def _is_valid_short_skill_match(text: str, match_start: int, match_end: int, skill: str) -> bool:
+    """
+    Validate if a short skill match (1-2 letters) is legitimate (not a false positive).
+    Applies strict validation to prevent extraction from within longer words.
+    
+    Args:
+        text: Original text (preserving case for context)
+        match_start: Start position of match
+        match_end: End position of match
+        skill: The skill being matched (normalized)
+        
+    Returns:
+        True if the short skill match is valid, False otherwise
+    """
+    # Must be in skill dictionary
+    # For single letters, also check whitelist
+    if len(skill) == 1:
+        if skill not in LEGITIMATE_SINGLE_LETTER_SKILLS and skill not in ALL_SKILLS:
+            return False
+    else:
+        # For 2-letter skills, must be in skill dictionary
+        if skill not in ALL_SKILLS:
+            return False
+    
+    # Get surrounding context (30 chars before and after for better analysis)
+    context_start = max(0, match_start - 30)
+    context_end = min(len(text), match_end + 30)
+    context = text[context_start:context_end]
+    relative_start = match_start - context_start
+    
+    # Get character before and after the match
+    skill_len = len(skill)
+    char_before = context[relative_start - 1] if relative_start > 0 else ' '
+    char_after = context[relative_start + skill_len] if relative_start + skill_len < len(context) else ' '
+    
+    # STRICT: Valid preceding characters (NO SPACES - must be punctuation)
+    # Single letters must appear after proper separators, not just spaces
+    valid_before_punctuation = {':', ',', ';', '|', '•', '-', '*', '(', '[', '/'}
+    
+    # STRICT: Valid following characters (NO SPACES - must be punctuation or end)
+    valid_after_punctuation = {',', ';', '|', '•', '-', '*', ')', ']', '/', '.', '\n'}
+    
+    # Check if it's at the start of a line (after newline)
+    is_start_of_line = (
+        relative_start == 0 or 
+        context[relative_start - 1] == '\n' or
+        (relative_start > 1 and context[relative_start - 2:relative_start] == '\n')
+    )
+    
+    # Check if preceded by proper punctuation (not just space)
+    # For 2-letter skills, also check if there's punctuation before a space
+    has_punctuation_before = char_before in valid_before_punctuation
+    if not has_punctuation_before and skill_len == 2 and char_before in {' ', '\t'}:
+        # Look further back for punctuation (handle "Skills: TI" case)
+        lookback_start = max(0, relative_start - 5)
+        lookback_text = context[lookback_start:relative_start]
+        has_punctuation_before = any(punct in lookback_text for punct in valid_before_punctuation)
+    
+    # Check if followed by proper punctuation (not just space)
+    has_punctuation_after = char_after in valid_after_punctuation or char_after == '\n'
+    
+    # Check if it's in a proper list format (bullet, dash, or number with period)
+    # Handle cases like "• R" or "- R" where there might be a space after the bullet
+    char_before_2 = context[relative_start - 2] if relative_start > 1 else ' '
+    is_in_proper_list = (
+        char_before in {'•', '-', '*'} or
+        (char_before in {' ', '\t'} and char_before_2 in {'•', '-', '*'}) or
+        (char_before.isdigit() and relative_start > 1 and 
+         context[relative_start - 2] == '.' and 
+         context[max(0, relative_start - 4):relative_start - 2].strip().isdigit())
+    )
+    
+    # STRICT VALIDATION RULES:
+    # 1. Must have punctuation before AND after (not just spaces), OR
+    # 2. At start of line AND has punctuation after, OR
+    # 3. In proper list format (bullet/dash) AND has punctuation after
+    
+    # Reject if only surrounded by spaces (common false positive)
+    only_spaces_around = (
+        char_before in {' ', '\t'} and 
+        char_after in {' ', '\t'} and
+        not has_punctuation_before and 
+        not has_punctuation_after
+    )
+    if only_spaces_around:
+        return False
+    
+    # Must have at least one punctuation separator nearby
+    has_proper_separator = (
+        has_punctuation_before or 
+        has_punctuation_after or 
+        is_in_proper_list or
+        is_start_of_line
+    )
+    
+    if not has_proper_separator:
+        return False
+    
+    # STRICT Final validation: must meet one of these strict conditions
+    # For single letters, we require STRONG context to avoid false positives
+    # REMOVED: "Start of line" condition - too permissive, causes false positives
+    is_valid = (
+        # Condition 1: Punctuation before AND after (strongest - in comma-separated list like "Python, R, Java")
+        (has_punctuation_before and has_punctuation_after) or
+        # Condition 2: In proper list format (bullet/dash) AND punctuation after (like "• R • Python")
+        (is_in_proper_list and has_punctuation_after) or
+        # Condition 3: Punctuation before AND (punctuation after OR end of context)
+        # (like "Python, R" at end of list)
+        (has_punctuation_before and (has_punctuation_after or relative_start + 1 >= len(context)))
+    )
+    
+    # Additional check: ensure it's not in the middle of a word
+    # (should not have letters immediately before or after)
+    not_in_word = (
+        (not char_before.isalpha()) and (not char_after.isalpha())
+    )
+    
+    return is_valid and not_in_word
+
+
 def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
     """
     Extract skills from text that match predefined skill set.
@@ -1480,6 +1607,14 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
         # Find all matches
         for match in re.finditer(pattern, text_clean, re.IGNORECASE):
             start, end = match.span()
+            
+            # Special validation for short skills (1-2 letters) to prevent false positives
+            # Short skills are prone to matching from within longer words
+            if len(skill_normalized) <= 2:
+                # Validate context for short skill matches
+                # Use text_clean for validation since that's what we matched against
+                if not _is_valid_short_skill_match(text_clean, start, end, skill_normalized):
+                    continue  # Skip invalid short skill matches
             
             # Check if this span overlaps with any previously matched span
             overlaps = any(

@@ -1180,12 +1180,20 @@ def _infer_role_from_education_signal(education_info: Dict[str, Any]) -> Optiona
     if not education_info:
         return None
     
-    highest_degree = education_info.get('highest_degree', '').lower()
-    education_details = education_info.get('education_details', [])
+    # Handle None case for highest_degree
+    highest_degree_raw = education_info.get('highest_degree') or ''
+    highest_degree = highest_degree_raw.lower() if isinstance(highest_degree_raw, str) else ''
+    
+    # Handle None case for education_details
+    education_details = education_info.get('education_details') or []
+    if not isinstance(education_details, list):
+        education_details = []
     
     # Extract specialization from education details
     specialization = None
     for detail in education_details:
+        if not detail or not isinstance(detail, str):
+            continue
         detail_lower = detail.lower()
         # Look for common specializations
         if 'computer' in detail_lower or 'cse' in detail_lower or 'it' in detail_lower:

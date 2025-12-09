@@ -282,6 +282,9 @@ class EducationExtractor:
             # BSC/BSc with specialization in parentheses - e.g., "BSC(MPCS)", "B.Sc(Computer Science)"
             (r'\b(B\.?S\.?[Cc]\.?\s*\([A-Za-z\s,&]+\)(?:\s+from\s+[A-Z][A-Za-z\s]+)?)', 5),
             (r'\b(BSC\s*\([A-Za-z\s,&]+\)(?:\s+from\s+[A-Z][A-Za-z\s]+)?)', 5),
+            # BSC/BSc followed directly by specialization (without "in" or "from") - e.g., "BSC computers", "BSC Computer Science"
+            # This pattern matches "BSC" followed by one or more words (specialization)
+            (r'\b((?:B\.?S\.?C\.?|BSC|BSc)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
             # General Studies
             (r'\b(General\s+Studies(?:\s+Degree)?)', 5),
             

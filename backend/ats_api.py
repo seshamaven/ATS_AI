@@ -1569,7 +1569,9 @@ def search_resumes():
         if looks_like_name(query):
             logger.info(f"Detected name search for: {query}")
             with create_ats_database() as db:
-                sql = """
+                # Conditionally add LIMIT clause to handle None limit
+                limit_clause = "LIMIT %s" if limit is not None else ""
+                sql = f"""
                     SELECT 
                         rm.candidate_id,
                         rm.name,
@@ -1594,9 +1596,12 @@ def search_resumes():
                     WHERE rm.status = 'active'
                       AND LOWER(rm.name) LIKE %s
                     ORDER BY rm.total_experience DESC
-                    LIMIT %s
+                    {limit_clause}
                 """
-                db.cursor.execute(sql, (f"%{query.lower()}%", limit))
+                params = [f"%{query.lower()}%"]
+                if limit is not None:
+                    params.append(limit)
+                db.cursor.execute(sql, params)
                 results = db.cursor.fetchall()
                 
                 candidates = []

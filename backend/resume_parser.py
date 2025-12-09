@@ -57,7 +57,7 @@ except ImportError:
     extract_location_advanced = None
 from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
 from email_extractor import extract_email_and_provider
-from name_AI_extraction import extract_name_with_ai
+from name_extraction import extract_name_with_ai
 from company_AI_extraction import extract_company_with_ai
 from designation_extraction import extract_designation
 from domain_extraction import extract_domains
@@ -144,7 +144,7 @@ The extracted JSON must be database-ready and syntactically valid (no markdown o
 ⚙️ EXTRACTION GUIDELINES
 
 NOTE: The following fields are extracted separately using dedicated modules and should NOT be included in AI response:
-- full_name (extracted by name_AI_extraction.py)
+- full_name (extracted by name_extraction.py)
 - current_company (extracted by company_AI_extraction.py)
 - current_designation (extracted by designation_extraction.py)
 - domain (extracted by domain_extraction.py)
@@ -534,6 +534,22 @@ Resume Text (look for name in FIRST FEW LINES):
                                                            'in order to', 'for the', 'that']):
                     continue
                 
+                # CRITICAL: Reject common section headers first
+                section_headers = ['professional summary', 'summary', 'objective', 'profile', 'resume', 'cv', 
+                                 'education', 'experience', 'skills', 'contact', 'qualifications', 'work history']
+                if line.lower() in section_headers:
+                    continue
+                
+                # CRITICAL: Reject technology/product names that might be mistaken for names
+                technology_names = ['power automate', 'power platform', 'power apps', 'power bi', 'power pages',
+                                  'microsoft', 'azure', 'aws', 'salesforce', 'dynamics', 'sharepoint',
+                                  'java', 'python', 'javascript', 'react', 'angular', 'nodejs', 'spring',
+                                  'docker', 'kubernetes', 'terraform', 'jenkins', 'gitlab', 'github',
+                                  'spring boot', 'dotnet', '.net', 'asp.net', 'mvc', 'rest api']
+                if line.lower() in technology_names:
+                    logger.info(f"Rejected technology name in PDF header: '{line}'")
+                    continue
+                
                 # Accept if it looks like a name (2-4 words, Title Case or ALL CAPS)
                 # CRITICAL: Allow ALL CAPS names in PDF headers (e.g., "VARRE DHANA LAKSHMI DURGA")
                 if line and 2 <= len(line.split()) <= 4 and len(line) < 70:
@@ -589,6 +605,44 @@ Resume Text (look for name in FIRST FEW LINES):
             # Skip lines with degree abbreviations (B.A., M.S., etc.)
             if re.search(r'\b([BM]\.?[AS]\.?|MBA|PhD|MD|JD|B\.?Tech|M\.?Tech)\b', line, re.IGNORECASE):
                 continue
+            
+            # CRITICAL: Reject technology/product names that might be mistaken for names
+            technology_names = ['power automate', 'power platform', 'power apps', 'power bi', 'power pages',
+                              'microsoft', 'azure', 'aws', 'salesforce', 'dynamics', 'sharepoint',
+                              'java', 'python', 'javascript', 'react', 'angular', 'nodejs', 'spring',
+                              'docker', 'kubernetes', 'terraform', 'jenkins', 'gitlab', 'github',
+                              'spring boot', 'dotnet', '.net', 'asp.net', 'mvc', 'rest api']
+            # Check if the line (or first part before comma) is a technology name
+            line_before_comma = line.split(',')[0].strip().lower()
+            if line_before_comma in technology_names or line_lower in technology_names:
+                logger.info(f"Rejected technology name in PDF header (second pass, with comma): '{line}'")
+                continue
+            
+            # CRITICAL: Handle certifications after comma (e.g., "Suresh Kavili, PMP, CSM")
+            # Split on comma and take only the first part (name), rejecting certifications
+            if ',' in line:
+                parts = line.split(',')
+                name_part = parts[0].strip()
+                # Check if remaining parts are certifications
+                remaining_parts = [p.strip() for p in parts[1:]]
+                # Import certification check function
+                from name_extraction import is_certification_or_acronym
+                has_only_certs = True
+                for part in remaining_parts:
+                    part_words = part.split()
+                    if part_words:
+                        # Check if all words in this part are certifications
+                        if not all(is_certification_or_acronym(word) for word in part_words if word):
+                            has_only_certs = False
+                            break
+                
+                # If remaining parts are all certifications, use first part as name
+                if has_only_certs and name_part:
+                    if 2 <= len(name_part.split()) <= 4:
+                        words = name_part.split()
+                        if all(word.replace('.', '').replace("'", '').replace('-', '').isalpha() for word in words):
+                            logger.info(f"Found candidate name (stripped certifications): {name_part}")
+                            return name_part
             
             # Extract name part before '@' if line contains email
             # Example: "MUPPANA APARNA DEVI        aparnadevi2939@gmail.com" -> "MUPPANA APARNA DEVI"
@@ -658,6 +712,17 @@ Resume Text (look for name in FIRST FEW LINES):
                 if any(phrase in line_lower for phrase in ['while maintaining', 'while working', 'while attending', 
                                                            'while completing', 'full course', 'as part of', 
                                                            'in order to', 'for the', 'that']):
+                    continue
+                
+                # CRITICAL: Reject technology/product names
+                technology_names = ['power automate', 'power platform', 'power apps', 'power bi', 'power pages',
+                                  'microsoft', 'azure', 'aws', 'salesforce', 'dynamics', 'sharepoint',
+                                  'java', 'python', 'javascript', 'react', 'angular', 'nodejs', 'spring',
+                                  'docker', 'kubernetes', 'terraform', 'jenkins', 'gitlab', 'github',
+                                  'spring boot', 'dotnet', '.net', 'asp.net', 'mvc', 'rest api']
+                line_before_comma = line.split(',')[0].strip().lower()
+                if line_before_comma in technology_names or line_lower in technology_names:
+                    logger.info(f"Rejected technology name in PDF header (second pass, first 3 lines): '{line}'")
                     continue
                 
                 # Accept if it looks like a name (2-4 words, Title Case or ALL CAPS)
@@ -782,7 +847,7 @@ Resume Text (look for name in FIRST FEW LINES):
             full_name = ai_result.get('full_name', '')
             
             # Import validation function
-            from name_AI_extraction import validate_extracted_name
+            from name_extraction import validate_extracted_name
             
             # Validate the name from comprehensive extraction
             if full_name and validate_extracted_name(full_name):
@@ -1672,10 +1737,16 @@ Resume Text (look for name in FIRST FEW LINES):
                         education_details = ai_education
                         logger.info(f"Python extraction failed, using AI-extracted education: {highest_degree}")
                     else:
-                        # Last resort: use Python extraction even if it's Unknown
-                        highest_degree = education_info['highest_degree'] or 'Unknown'
-                        education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else highest_degree
-                        logger.warning(f"Both Python and AI extraction failed, using: {highest_degree}")
+                        # Fallback: try to extract from education_details if available
+                        if education_info['education_details']:
+                            highest_degree = education_info['education_details'][0] if education_info['education_details'] else ''
+                            education_details = '\n'.join(education_info['education_details'])
+                            logger.info(f"Using education from details: {highest_degree}")
+                        else:
+                            # Last resort: set to empty string (not None) to avoid null in JSON
+                            highest_degree = ''
+                            education_details = ''
+                            logger.warning("Both Python and AI extraction failed - no education found")
                 
                 # Get certifications using dedicated AI extraction
                 certifications = extract_certifications_with_ai(
@@ -1694,6 +1765,43 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # Get current designation using Python-based extraction (no AI)
                 current_designation = extract_designation(resume_text) or ''
+                
+                # DEBUG: Log designation extraction result
+                if current_designation:
+                    logger.info(f"✓ Designation extracted: '{current_designation}'")
+                else:
+                    logger.warning(f"✗ Designation extraction returned empty/None - will use profile_type fallback")
+                
+                # CRITICAL: Reject "Director Of Technology" for fresher resumes (likely from institution names)
+                # This is a safety net in case extract_designation() still returns it
+                if current_designation and current_designation.lower() == 'director of technology':
+                    # Check if this is a fresher resume (has education but no experience)
+                    has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', resume_text, re.IGNORECASE))
+                    has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', resume_text, re.IGNORECASE))
+                    has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', resume_text, re.IGNORECASE))
+                    
+                    # If it's a fresher resume, reject "Director Of Technology"
+                    if (has_education or has_institution) and not has_experience_section:
+                        logger.warning(f"Rejected 'Director Of Technology' designation - likely from institution name in education section (fresher resume)")
+                        logger.info(f"DEBUG: Cleared current_designation (was: 'Director Of Technology'), will use profile_type fallback")
+                        current_designation = ''  # Clear it so fallback logic will use profile_type
+                
+                # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                # Power Platform resumes should have Power Platform specific roles, not generic "Data Analyst"
+                if current_designation and current_designation.lower() == 'data analyst':
+                    # Check if resume contains Power Platform keywords
+                    power_platform_keywords = [
+                        'power platform', 'power apps', 'power automate', 'power pages', 'power bi',
+                        'dynamics 365', 'dataverse', 'canvas app', 'model-driven app', 'power fx',
+                        'microsoft power platform', 'ms power platform'
+                    ]
+                    resume_lower = resume_text.lower()
+                    has_power_platform = any(keyword in resume_lower for keyword in power_platform_keywords)
+                    
+                    if has_power_platform:
+                        logger.warning(f"Rejected 'Data Analyst' designation - Power Platform resume should have Power Platform specific role")
+                        logger.info(f"DEBUG: Cleared current_designation (was: 'Data Analyst'), will use profile_type fallback")
+                        current_designation = ''  # Clear it so fallback logic will use profile_type
                 
                 # Get summary using dedicated AI extraction
                 summary = extract_summary_with_ai(
@@ -1882,13 +1990,48 @@ Resume Text (look for name in FIRST FEW LINES):
                         logger.info("✓ Auto-added 'Information Technology' domain based on technical skills")
                 # Use enhanced EducationExtractor (Python extraction only)
                 education_info = self.extract_education(resume_text)
-                highest_degree = education_info['highest_degree']
-                education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else (highest_degree or '')
+                
+                # Handle None case and provide fallback
+                if education_info['highest_degree'] and education_info['highest_degree'] != 'Unknown':
+                    highest_degree = education_info['highest_degree']
+                    education_details = '\n'.join(education_info['education_details']) if education_info['education_details'] else highest_degree
+                    logger.info(f"Using Python-extracted education: {highest_degree}")
+                else:
+                    # Fallback: try to extract from education_details if available
+                    if education_info['education_details']:
+                        highest_degree = education_info['education_details'][0] if education_info['education_details'] else 'Unknown'
+                        education_details = '\n'.join(education_info['education_details'])
+                        logger.info(f"Using education from details: {highest_degree}")
+                    else:
+                        # Last resort: set to empty string (not None) to avoid null in JSON
+                        highest_degree = ''
+                        education_details = ''
+                        logger.warning("Education extraction failed - no education found")
                 
                 # Extract current company and designation
                 current_company = self._extract_current_company(resume_text)
                 # Use improved designation extraction (same as AI path)
                 current_designation = extract_designation(resume_text) or ''
+                
+                # DEBUG: Log designation extraction result
+                if current_designation:
+                    logger.info(f"✓ Designation extracted (non-AI path): '{current_designation}'")
+                else:
+                    logger.warning(f"✗ Designation extraction returned empty/None (non-AI path) - will use profile_type fallback")
+                
+                # CRITICAL: Reject "Director Of Technology" for fresher resumes (likely from institution names)
+                # This is a safety net in case extract_designation() still returns it
+                if current_designation and current_designation.lower() == 'director of technology':
+                    # Check if this is a fresher resume (has education but no experience)
+                    has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', resume_text, re.IGNORECASE))
+                    has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', resume_text, re.IGNORECASE))
+                    has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', resume_text, re.IGNORECASE))
+                    
+                    # If it's a fresher resume, reject "Director Of Technology"
+                    if (has_education or has_institution) and not has_experience_section:
+                        logger.warning(f"Rejected 'Director Of Technology' designation - likely from institution name in education section (fresher resume)")
+                        logger.info(f"DEBUG: Cleared current_designation (was: 'Director Of Technology'), will use profile_type fallback")
+                        current_designation = ''  # Clear it so fallback logic will use profile_type
                 certifications_str = ''
                 summary = ''
                 location = self.extract_location(resume_text)
@@ -1905,7 +2048,77 @@ Resume Text (look for name in FIRST FEW LINES):
                 ai_model=self.ai_model if self.use_ai_extraction else None
             )
             profile_type = format_profile_types_for_storage(profile_types)
-                   # Extract role and subrole:
+            
+            # SIMPLIFIED DESIGNATION IDENTIFICATION:
+            # 1. Use extracted designation if available
+            # 2. If designation is empty, derive from profile_type
+            # This is a cleaner approach: designation OR profile_type based
+            
+            def derive_designation_from_profile_type(profile_type: str, primary_skills: str, secondary_skills: str) -> tuple:
+                """
+                Derive designation from profile_type.
+                Returns (designation, role_type, subrole_type)
+                """
+                # Profile type to designation mapping
+                profile_type_designation_map = {
+                    "Python": "Python Developer",
+                    "Java": "Java Developer",
+                    ".Net": ".Net Developer",
+                    "JavaScript": "JavaScript Developer",
+                    "Full Stack": "Full Stack Developer",
+                    "DevOps": "DevOps Engineer",
+                    "Data Science": "Data Scientist",
+                    "Data Engineering": "Data Engineer",
+                    "Salesforce": "Salesforce Developer",
+                    "SAP": "SAP Consultant",
+                    "Cloud / Infra": "Cloud Engineer",
+                    "Testing / QA": "QA Engineer",
+                    "Mobile Development": "Mobile Developer",
+                    "RPA": "RPA Developer",
+                    "Cyber Security": "Security Engineer",
+                    "Microsoft Power Platform": "Power Platform Developer",
+                    "Business Development": "Business Development Executive",
+                }
+                
+                # Handle comma-separated profile types (take first one)
+                primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
+                
+                # Get base designation from profile type
+                base_designation = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
+                
+                # Determine subrole from skills if available
+                subrole = None
+                if primary_skills:
+                    from role_extract import determine_subrole_type_from_profile_and_skills
+                    try:
+                        subrole = determine_subrole_type_from_profile_and_skills(
+                            primary_profile_type, primary_skills, secondary_skills
+                        )
+                    except Exception as e:
+                        logger.debug(f"Error determining subrole from profile: {e}")
+                
+                # Build final designation - use only base_designation (no subrole in parentheses)
+                final_designation = base_designation
+                
+                # Normalize role_type
+                role_type_normalized = None
+                try:
+                    from role_processor import normalize_role
+                    role_type_normalized = normalize_role(
+                        original_role=base_designation,
+                        resume_text=resume_text,
+                        primary_skills=primary_skills,
+                        secondary_skills=secondary_skills
+                    )
+                    if not role_type_normalized or role_type_normalized == "Others":
+                        role_type_normalized = base_designation
+                except Exception as e:
+                    logger.debug(f"Error normalizing role from profile_type: {e}")
+                    role_type_normalized = base_designation
+                
+                return final_designation, role_type_normalized, subrole
+            
+            # Extract role and subrole:
             # 1. Find ALL roles from resume text (designation + experience)
             # 2. Select highest based on ROLE_HIERARCHY
             # 3. Match subrole based on skills
@@ -1916,371 +2129,35 @@ Resume Text (look for name in FIRST FEW LINES):
             from role_extract import is_non_it_profile
             is_non_it = profile_type and is_non_it_profile(profile_type)
             
-            if is_non_it:
-                logger.info(f"Non-IT profile detected: '{profile_type}'. Skipping IT role detection entirely.")
-                role_type = None
-                subrole_type = None
+            # SIMPLIFIED DESIGNATION IDENTIFICATION:
+            # 1. Use extracted designation if available (already extracted at line 1702)
+            # 2. If designation is empty, derive from profile_type
+            # No complex role detection or normalization from designation
+            
+            # Initialize role_type and subrole_type (will be set from profile_type if needed)
+            role_type = None
+            subrole_type = None
+            
+            # FINAL CHECK: If designation is still empty, use profile_type to derive it
+            # This ensures designation is always set (either from extraction OR profile_type)
+            if (not current_designation or current_designation.strip() == '') and profile_type:
+                logger.info(f"DEBUG: Designation is empty after all processing (current_designation='{current_designation}'), deriving from profile_type: '{profile_type}'")
+                logger.info(f"DEBUG: This means extract_designation() did not find a designation in the resume text")
+                derived_designation, derived_role_type, derived_subrole = derive_designation_from_profile_type(
+                    profile_type, primary_skills, secondary_skills_str
+                )
+                logger.info(f"DEBUG: Derived designation from profile_type: '{derived_designation}' (role_type: '{derived_role_type}', subrole: '{derived_subrole}')")
+                current_designation = derived_designation
+                if not role_type:
+                    role_type = derived_role_type
+                if not subrole_type:
+                    subrole_type = derived_subrole
+                logger.info(f"✓ Final fallback: Set current_designation from profile_type: '{current_designation}'")
             else:
-                # Step 1: Normalize current designation using role_processor table
-                normalized_designation = None
                 if current_designation:
-                    try:
-                        from role_processor import normalize_role
-                        normalized_designation = normalize_role(
-                            original_role=current_designation,
-                            resume_text=resume_text,
-                            primary_skills=primary_skills,
-                            secondary_skills=secondary_skills_str
-                        )
-                        if normalized_designation and normalized_designation != "Others":
-                            role_type = normalized_designation
-                            logger.info(f"✓ Normalized designation '{current_designation}' -> role_type '{role_type}' (from role_processor table)")
-                            # Ensure current_designation is set (should already be set from extract_designation, but double-check)
-                            if not current_designation or current_designation.strip() == '':
-                                current_designation = role_type
-                                logger.info(f"✓ Set current_designation from normalized designation: '{current_designation}'")
-                        else:
-                            logger.debug(f"Designation '{current_designation}' not found in role_processor table, will try role detection")
-                    except Exception as e:
-                        logger.warning(f"Error normalizing designation: {e}. Will try role detection instead")
-                
-                # Step 2: If normalization didn't work, find ALL roles in resume (designation + experience section)
-                all_role_matches = []  # Initialize before conditional check
-                if not role_type:
-                    # Check current designation (if not already normalized)
-                    if current_designation and not normalized_designation:
-                        matches = detect_all_roles(current_designation)
-                        all_role_matches.extend(matches)
-                        logger.debug(f"Found {len(matches)} role(s) in designation: {current_designation}")
-                
-                # Check full resume text for all roles (experience section, etc.)
-                if resume_text:
-                    # Search larger portion to catch all roles from experience
-                    resume_snippet = resume_text[:8000] if len(resume_text) > 8000 else resume_text
-                    matches = detect_all_roles(resume_snippet)
-                    all_role_matches.extend(matches)
-                    logger.debug(f"Found {len(matches)} role(s) in resume text")
-                
-                # Step 2: Select highest priority role (if multiple found)
-                if all_role_matches:
-                    # Remove duplicates while preserving priority order (subrole is None, so dedupe by role only)
-                    seen = set()
-                    unique_matches = []
-                    for priority, role, subrole in all_role_matches:
-                        if role not in seen:
-                            seen.add(role)
-                            unique_matches.append((priority, role, subrole))
-                    
-                    # Sort by priority (lower = higher priority) and select best
-                    unique_matches.sort(key=lambda x: x[0])
-                    best_priority, detected_role, _ = unique_matches[0]
-                    
-                    logger.info(f"✓ Selected highest role: '{detected_role}' (priority: {best_priority}) from {len(unique_matches)} unique role(s) found")
-                    
-                    # Step 3: Normalize role using role_processor table
-                    try:
-                        from role_processor import normalize_role
-                        normalized_role = normalize_role(
-                            original_role=detected_role,
-                            resume_text=resume_text,
-                            primary_skills=primary_skills,
-                            secondary_skills=secondary_skills_str
-                        )
-                        if normalized_role and normalized_role != "Others":
-                            role_type = normalized_role
-                            logger.info(f"✓ Normalized role: '{detected_role}' -> '{role_type}' (from role_processor table)")
-                        else:
-                            # If normalization returns "Others" or None, use the detected role
-                            role_type = detected_role
-                            logger.info(f"✓ Using detected role '{role_type}' (not found in role_processor table)")
-                    except Exception as e:
-                        logger.warning(f"Error normalizing role: {e}. Using detected role '{detected_role}'")
-                        role_type = detected_role
-                    
-                    # Step 4: Match subrole based on skills (always returns one of: Backend/Frontend/Full Stack Developer)
-                    subrole_type = match_subrole_from_skills(role_type, primary_skills, secondary_skills_str)
-                    if subrole_type:
-                        logger.info(f"✓ Matched subrole: '{subrole_type}' based on skills (primary: {primary_skills[:50]}...)")
-                    else:
-                        # Fallback to Backend Developer if match_subrole_from_skills returns None (shouldn't happen)
-                        subrole_type = "Backend Developer"
-                        logger.info(f"✓ Using default subrole: '{subrole_type}' for role '{role_type}'")
-                    
-                    # CRITICAL: Populate current_designation if empty and we have role_type from detection
-                    if (not current_designation or current_designation.strip() == '') and role_type:
-                        # ENHANCEMENT: If profile_type is available and role is generic, use profile_type to create more specific designation
-                        if profile_type and role_type == "Software Engineer":
-                            # Handle comma-separated profile types (take first one)
-                            primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
-                            
-                            # Map profile_type to a more specific designation
-                            profile_type_to_designation = {
-                                "Python": "Python Developer",
-                                "Java": "Java Developer",
-                                ".Net": ".Net Developer",
-                                "JavaScript": "JavaScript Developer",
-                                "Full Stack": "Full Stack Developer",
-                                "DevOps": "DevOps Engineer",
-                                "Data Science": "Data Scientist",
-                                "Data Engineering": "Data Engineer",
-                                "Salesforce": "Salesforce Developer",
-                                "SAP": "SAP Consultant",
-                                "Cloud / Infra": "Cloud Engineer",
-                                "Testing / QA": "QA Engineer",
-                                "Mobile Development": "Mobile Developer",
-                                "RPA": "RPA Developer",
-                                "Cyber Security": "Security Engineer",
-                            }
-                            
-                            # Get profile-specific designation
-                            profile_designation = profile_type_to_designation.get(primary_profile_type)
-                            
-                            if profile_designation:
-                                # Use profile-specific designation
-                                # If subrole_type is "Full Stack Developer", create ".Net Full Stack Developer"
-                                if subrole_type and "Full Stack" in subrole_type and "Developer" in profile_designation:
-                                    # Replace "Developer" with "Full Stack Developer"
-                                    current_designation = profile_designation.replace("Developer", "Full Stack Developer")
-                                elif subrole_type and "Backend" in subrole_type and "Developer" in profile_designation:
-                                    # Replace "Developer" with "Backend Developer"
-                                    current_designation = profile_designation.replace("Developer", "Backend Developer")
-                                elif subrole_type and "Frontend" in subrole_type and "Developer" in profile_designation:
-                                    # Replace "Developer" with "Frontend Developer"
-                                    current_designation = profile_designation.replace("Developer", "Frontend Developer")
-                                else:
-                                    # Use profile designation as-is
-                                    current_designation = profile_designation
-                                logger.info(f"✓ Enhanced current_designation with profile_type: '{current_designation}' (profile_type: '{primary_profile_type}')")
-                            else:
-                                # Fallback to standard format if profile_type not in map
-                                if subrole_type and subrole_type != role_type:
-                                    current_designation = f"{role_type} ({subrole_type})"
-                                else:
-                                    current_designation = role_type
-                                logger.info(f"✓ Populated current_designation from detected role: '{current_designation}'")
-                        else:
-                            # Standard format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
-                            if subrole_type and subrole_type != role_type:
-                                current_designation = f"{role_type} ({subrole_type})"
-                            else:
-                                current_designation = role_type
-                            logger.info(f"✓ Populated current_designation from detected role: '{current_designation}'")
-                
-                # Fallback: if no role string found anywhere, use multi-signal inference (for freshers etc.)
-                if not role_type:
-                    from role_extract import infer_role_multi_signal
-                    # Ensure education_info is available (extract if not already done)
-                    if 'education_info' not in locals():
-                        education_info = self.extract_education(resume_text)
-                    # Use enhanced multi-signal inference (skills + education + certifications + projects)
-                    inferred = infer_role_multi_signal(
-                        resume_text=resume_text,
-                        primary_skills=primary_skills,
-                        secondary_skills=secondary_skills_str,
-                        education_info=education_info,
-                        profile_type=profile_type
-                    )
-                    if inferred:
-                        inferred_role, inferred_subrole, confidence = inferred
-                        logger.info(f"✓ Multi-signal inference: role='{inferred_role}', subrole='{inferred_subrole}', confidence={confidence:.2f}")
-                        
-                        # Only use if confidence is above threshold (0.3)
-                        if confidence >= 0.3:
-                            # Normalize the inferred role using role_processor table
-                            try:
-                                from role_processor import normalize_role
-                                normalized_role = normalize_role(
-                                    original_role=inferred_role,
-                                    resume_text=resume_text,
-                                    primary_skills=primary_skills,
-                                    secondary_skills=secondary_skills_str
-                                )
-                                if normalized_role and normalized_role != "Others":
-                                    role_type = normalized_role
-                                    logger.info(f"✓ Inferred and normalized role from multi-signal: '{inferred_role}' -> '{role_type}' (confidence: {confidence:.2f})")
-                                else:
-                                    role_type = inferred_role
-                                    logger.info(f"✓ Inferred role from multi-signal (fallback): role_type='{role_type}' (confidence: {confidence:.2f})")
-                            except Exception as e:
-                                logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
-                                role_type = inferred_role
-                            
-                            subrole_type = inferred_subrole
-                            logger.info(f"✓ Inferred subrole: '{subrole_type}'")
-                            
-                            # CRITICAL: If current_designation is empty and we inferred a role, populate it
-                            if not current_designation or current_designation.strip() == '':
-                                # Use the inferred role as current_designation for fresher resumes
-                                # Format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
-                                if subrole_type and subrole_type != role_type:
-                                    current_designation = f"{role_type} ({subrole_type})"
-                                else:
-                                    current_designation = role_type
-                                logger.info(f"✓ Populated current_designation from inferred role: '{current_designation}'")
-                        else:
-                            logger.debug(f"Multi-signal inference confidence too low ({confidence:.2f} < 0.3), skipping")
-                            # Try profile_type fallback if confidence too low
-                            if (not role_type or not current_designation or current_designation.strip() == '') and profile_type:
-                                # Profile type to designation mapping
-                                profile_type_designation_map = {
-                                    "Python": "Software Engineer",
-                                    "Java": "Software Engineer",
-                                    ".Net": "Software Engineer",
-                                    "JavaScript": "Software Engineer",
-                                    "Full Stack": "Software Engineer",
-                                    "DevOps": "DevOps Engineer",
-                                    "Data Science": "Data Scientist",
-                                    "Data Engineering": "Data Engineer",
-                                    "Salesforce": "Software Engineer",
-                                    "SAP": "SAP Consultant",
-                                    "Cloud / Infra": "Cloud Engineer",
-                                    "Testing / QA": "QA Engineer",
-                                    "Mobile Development": "Mobile Developer",
-                                    "RPA": "RPA Developer",
-                                    "Cyber Security": "Security Engineer",
-                                }
-                                
-                                # Handle comma-separated profile types (take first one)
-                                primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
-                                
-                                # Get base role from profile type
-                                base_role = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
-                                
-                                # Determine subrole from skills if available
-                                inferred_subrole_from_profile = None
-                                if primary_skills:
-                                    from role_extract import determine_subrole_type_from_profile_and_skills
-                                    try:
-                                        inferred_subrole_from_profile = determine_subrole_type_from_profile_and_skills(
-                                            primary_profile_type, primary_skills, secondary_skills_str
-                                        )
-                                    except Exception as e:
-                                        logger.debug(f"Error determining subrole from profile: {e}")
-                                
-                                # Set current_designation
-                                if inferred_subrole_from_profile and inferred_subrole_from_profile != base_role:
-                                    current_designation = f"{base_role} ({inferred_subrole_from_profile})"
-                                else:
-                                    current_designation = base_role
-                                
-                                # Set role_type if not already set
-                                if not role_type:
-                                    try:
-                                        from role_processor import normalize_role
-                                        normalized_role = normalize_role(
-                                            original_role=base_role,
-                                            resume_text=resume_text,
-                                            primary_skills=primary_skills,
-                                            secondary_skills=secondary_skills_str
-                                        )
-                                        role_type = normalized_role if normalized_role and normalized_role != "Others" else base_role
-                                    except Exception as e:
-                                        logger.debug(f"Error normalizing role from profile_type: {e}")
-                                        role_type = base_role
-                                
-                                # Set subrole_type if not already set
-                                if not subrole_type and inferred_subrole_from_profile:
-                                    subrole_type = inferred_subrole_from_profile
-                                
-                                logger.info(f"✓ Populated current_designation from profile_type fallback (low confidence): '{current_designation}' (profile_type: '{primary_profile_type}')")
-                    else:
-                        # Fallback to simple skill-based inference if multi-signal fails
-                        from role_extract import infer_role_from_skills
-                        inferred = infer_role_from_skills(primary_skills, secondary_skills_str, profile_type)
-                        if inferred:
-                            inferred_role, inferred_subrole = inferred
-                            # Normalize the inferred role using role_processor table
-                            try:
-                                from role_processor import normalize_role
-                                normalized_role = normalize_role(
-                                    original_role=inferred_role,
-                                    resume_text=resume_text,
-                                    primary_skills=primary_skills,
-                                    secondary_skills=secondary_skills_str
-                                )
-                                if normalized_role and normalized_role != "Others":
-                                    role_type = normalized_role
-                                    logger.info(f"✓ Inferred and normalized role from skills (fallback): '{inferred_role}' -> '{role_type}'")
-                                else:
-                                    role_type = inferred_role
-                                    logger.info(f"✓ Inferred role from skills (fallback): role_type='{role_type}'")
-                            except Exception as e:
-                                logger.warning(f"Error normalizing inferred role: {e}. Using inferred role '{inferred_role}'")
-                                role_type = inferred_role
-                            
-                            subrole_type = inferred_subrole
-                            logger.info(f"✓ Inferred subrole: '{subrole_type}'")
-                            
-                            # CRITICAL: If current_designation is empty and we inferred a role, populate it
-                            if not current_designation or current_designation.strip() == '':
-                                # Use the inferred role as current_designation for fresher resumes
-                                # Format: "Software Engineer" or "Software Engineer (Full Stack Developer)"
-                                if subrole_type and subrole_type != role_type:
-                                    current_designation = f"{role_type} ({subrole_type})"
-                                else:
-                                    current_designation = role_type
-                                logger.info(f"✓ Populated current_designation from inferred role (fallback): '{current_designation}'")
-                        else:
-                            logger.debug("No role/subrole detected from resume text or skills")
-                            
-                            # FINAL FALLBACK: Use profile_type to infer designation if all else fails
-                            if (not role_type or not current_designation or current_designation.strip() == '') and profile_type:
-                                # Profile type to designation mapping
-                                profile_type_designation_map = {
-                                    "Python": "Software Engineer",
-                                    "Java": "Software Engineer",
-                                    ".Net": "Software Engineer",
-                                    "JavaScript": "Software Engineer",
-                                    "Full Stack": "Software Engineer",
-                                    "DevOps": "DevOps Engineer",
-                                    "Data Science": "Data Scientist",
-                                    "Data Engineering": "Data Engineer",
-                                    "Salesforce": "Software Engineer",
-                                    "SAP": "SAP Consultant",
-                                    "Cloud / Infra": "Cloud Engineer",
-                                    "Testing / QA": "QA Engineer",
-                                    "Mobile Development": "Mobile Developer",
-                                    "RPA": "RPA Developer",
-                                    "Cyber Security": "Security Engineer",
-                                }
-                                
-                                # Handle comma-separated profile types (take first one)
-                                primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
-                                
-                                # Get base role from profile type
-                                base_role = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
-                                
-                                # Determine subrole from skills if available
-                                if primary_skills:
-                                    from role_extract import determine_subrole_type_from_profile_and_skills
-                                    try:
-                                        inferred_subrole = determine_subrole_type_from_profile_and_skills(
-                                            primary_profile_type, primary_skills, secondary_skills_str
-                                        )
-                                        if inferred_subrole and inferred_subrole != base_role:
-                                            current_designation = f"{base_role} ({inferred_subrole})"
-                                        else:
-                                            current_designation = base_role
-                                    except:
-                                        current_designation = base_role
-                                else:
-                                    current_designation = base_role
-                                
-                                # Set role_type if not already set
-                                if not role_type:
-                                    try:
-                                        from role_processor import normalize_role
-                                        normalized_role = normalize_role(
-                                            original_role=base_role,
-                                            resume_text=resume_text,
-                                            primary_skills=primary_skills,
-                                            secondary_skills=secondary_skills_str
-                                        )
-                                        role_type = normalized_role if normalized_role and normalized_role != "Others" else base_role
-                                    except:
-                                        role_type = base_role
-                                
-                                logger.info(f"✓ Populated current_designation from profile_type fallback: '{current_designation}' (profile_type: '{primary_profile_type}')")
+                    logger.info(f"✓ Using extracted designation (not using profile_type fallback): '{current_designation}'")
+                else:
+                    logger.warning(f"✗ Designation is empty and profile_type is also empty - designation will remain empty")
 
             # Override subrole_type so it is always based on profile_type + skills
             # But only for IT-related profiles
@@ -2339,8 +2216,8 @@ Resume Text (look for name in FIRST FEW LINES):
                 'secondary_skills': secondary_skills_str,
                 'all_skills': all_skills_str,
                 'domain': domain,
-                'education': highest_degree,
-                'education_details': education_details,
+                'education': highest_degree if highest_degree is not None else '',
+                'education_details': education_details if education_details is not None else '',
                 'current_location': location,
                 'current_company': current_company,
                 'current_designation': current_designation,

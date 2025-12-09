@@ -48,6 +48,10 @@ COMMON_TITLES = {
         
         # Manager roles
         "business development executive", "executive consultant", "program manager/director",
+        # Business Development & Sales roles
+        "lead generation specialist", "sales development executive", "marketing executive", 
+        "management trainee", "sales executive", "business development manager",
+        "sales manager", "marketing manager", "account executive", "sales representative",
         "Program Manager", "ai program manager", "ev program manager", "it program manager",
         "logistics program manager", "material program manager", "materials program manager",
         "program manager", "program manager,", "project/program manager", "sap program manager",
@@ -647,15 +651,73 @@ def crop_to_experience_section(text: str) -> str:
     If no explicit header, return the first 2500 chars but stop at portfolio/project section.
     """
     lower = text.lower()
-    # find experience-like headers
-    m = re.search(r'(experience|work history|employment history|professional experience|career development)', lower)
+    # CRITICAL: Only match section headers (on their own line or followed by colon/newline)
+    # This prevents matching "experience" in sentences like "Experienced in..."
+    # Pattern matches: "Work history", "Work history:", "EXPERIENCE", "Experience:", etc.
+    # But NOT "Experienced in seamless integration..."
+    # Priority: "Work history" first (most specific), then other patterns
+    
+    # DEBUG: Log what we're searching for
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Try to find "Work history" first (most common and specific)
+    work_history_pattern = re.compile(
+        r'^(?:[#\s\-•]*)?work\s+history\s*[:#]?\s*$',
+        re.IGNORECASE | re.MULTILINE
+    )
+    m = work_history_pattern.search(lower)
     if m:
         start = m.start()
         slice_text = text[start:]
+        logger.info(f"DEBUG: ✓ Found 'Work history' header at position {start}")
     else:
-        # fallback: start from top (many resumes don't have headers)
-        slice_text = text[:4000]
+        # Try other experience headers
+        experience_header_pattern = re.compile(
+            r'^(?:[#\s\-•]*)?(employment\s+history|professional\s+experience|career\s+development)\s*[:#]?\s*$',
+            re.IGNORECASE | re.MULTILINE
+        )
+        m = experience_header_pattern.search(lower)
+        if m:
+            start = m.start()
+            slice_text = text[start:]
+            logger.info(f"DEBUG: ✓ Found experience header '{text[m.start():m.end()]}' at position {start}")
+        else:
+            # Fallback: try just "experience" as a header (but must be on its own line)
+            experience_header_pattern2 = re.compile(
+                r'^(?:[#\s\-•]*)?experience\s*[:#]?\s*$',
+                re.IGNORECASE | re.MULTILINE
+            )
+            m = experience_header_pattern2.search(lower)
+            if m:
+                start = m.start()
+                slice_text = text[start:]
+                logger.info(f"DEBUG: ✓ Found 'Experience' header at position {start}")
+            else:
+                # fallback: start from top (many resumes don't have headers)
+                slice_text = text[:4000]
+                logger.warning(f"DEBUG: ✗ No experience header found, using first 4000 chars")
 
+    # CRITICAL: FIRST - Cut off at "Gates Institute Of Technology" or similar institution names
+    # This must be done BEFORE other section cropping to prevent "Director Of Technology" extraction
+    # This is a safety net to catch institution names even if education header isn't detected
+    gates_pattern = re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', slice_text, re.IGNORECASE)
+    if gates_pattern:
+        # Cut off before the institution name
+        slice_text = slice_text[:gates_pattern.start()]
+    
+    # CRITICAL: Cut off at education section to avoid institution names being mistaken for job titles
+    # This prevents "Gates Institute Of Technology" or "Director Of Technology" from education being extracted
+    # Also prevents matching "Director" from "Director Of Technology" in education section
+    # Pattern: Match "EDUCATION" header (with or without colon, on its own line or followed by content)
+    edu_stop = re.search(r'\b(education|educational|academic|qualification|degree|b\.?tech|m\.?tech|b\.?e\.?|m\.?e\.?|bachelor|master|ph\.?d|doctorate)\s*:?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
+    if not edu_stop:
+        # Also try matching "EDUCATION" as a standalone header (might be on its own line, with or without markdown)
+        # Match patterns like: "## EDUCATION", "EDUCATION", "EDUCATION:" etc.
+        edu_stop = re.search(r'^[#\s]*(education|educational|academic|qualification)\s*[:#]?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
+    if edu_stop:
+        slice_text = slice_text[:edu_stop.start()]
+    
     # Cut off at portfolio/project section to avoid project-title becoming job title
     stop = re.search(r'(portfolio of projects|portfolio|project\s+\d+|project title|projects|project:)', slice_text, re.IGNORECASE)
     if stop:
@@ -666,13 +728,6 @@ def crop_to_experience_section(text: str) -> str:
     cert_stop = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
     if cert_stop:
         slice_text = slice_text[:cert_stop.start()]
-    
-    # CRITICAL: Cut off at education section to avoid institution names being mistaken for job titles
-    # This prevents "Gates Institute Of Technology" or "Director Of Technology" from education being extracted
-    # Also prevents matching "Director" from "Director Of Technology" in education section
-    edu_stop = re.search(r'\b(education|educational|academic|qualification|degree|b\.?tech|m\.?tech|b\.?e\.?|m\.?e\.?|bachelor|master|ph\.?d|doctorate)\s*:?\s*$', slice_text, re.IGNORECASE | re.MULTILINE)
-    if edu_stop:
-        slice_text = slice_text[:edu_stop.start()]
 
     return slice_text.strip()
 
@@ -834,6 +889,20 @@ def is_invalid_title_line(line: str) -> bool:
         if re.search(r'\b(institute|institution|university|college)\s+of\s+', lw, re.IGNORECASE):
             return True
         
+        # CRITICAL: Reject "Director Of Technology" when it appears in education context
+        # This prevents "Director Of Technology" from "Gates Institute Of Technology" being extracted
+        # Pattern: "director of technology" that's likely part of an institution name
+        if re.search(r'\bdirector\s+of\s+technology\b', lw, re.IGNORECASE):
+            # Check if this appears near education keywords (likely institution name)
+            # If the line contains "institute", "institution", "university", "college", or "school", reject it
+            if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school']):
+                return True
+            # Also reject if it's a standalone "Director Of Technology" in education section
+            # (fresher resumes don't have "Director Of Technology" as a job title)
+            # This is a conservative check - if it's just "Director Of Technology" without company/date context, reject it
+            if lw.strip() == 'director of technology' or lw.strip() == 'director of technology,':
+                return True
+        
         # If it has education keywords but no clear job title role, reject
         if not any(role in lw for role in ['manager', 'director', 'developer', 'consultant', 'analyst', 'architect', 'lead']):
             return True
@@ -874,17 +943,26 @@ def is_invalid_title_line(line: str) -> bool:
     return False
 
 
-def best_match_from_known(line: str) -> Optional[str]:
+def best_match_from_known(line: str, is_power_platform_resume: bool = False) -> Optional[str]:
     """
     Try exact-ish and fuzzy matches against COMMON_TITLES
     Optimized to prioritize longer/more specific matches first
     Preserves dashes from original text when present
+    
+    Args:
+        line: The line to match against known titles
+        is_power_platform_resume: If True, prioritize Power Platform roles and reject "Data Analyst"
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Preserve original line for dash checking
     original_line = line
     lw = re.sub(r'[^a-z0-9 ]', ' ', line.lower())
     lw = re.sub(r'\s+', ' ', lw).strip()
+    logger.info(f"DEBUG: best_match_from_known called with line='{line}', normalized='{lw}'")
     if not lw:
+        logger.info(f"DEBUG: best_match_from_known returning None - empty line after normalization")
         return None
     
     # Limit processing for very long lines (unlikely to be titles)
@@ -894,15 +972,49 @@ def best_match_from_known(line: str) -> Optional[str]:
     # Check if original line contains dashes (for preservation)
     has_dash = '-' in original_line or '–' in original_line or '—' in original_line
 
+    # CRITICAL: If this is a Power Platform resume, reject "Data Analyst" matches
+    # Power Platform resumes should match Power Platform roles, not generic "Data Analyst"
+    if is_power_platform_resume:
+        # Reject "Data Analyst" and similar generic analyst roles
+        if re.search(r'\bdata\s+analyst\b', lw, re.IGNORECASE):
+            # Only reject if it's not part of a Power Platform specific role
+            if not any(pp_term in lw for pp_term in ['power', 'platform', 'dynamics', 'dataverse']):
+                return None  # Reject generic "Data Analyst" for Power Platform resumes
+
     # Sort titles by length (longest first) to prioritize more specific matches
     # This ensures "Senior Consultant" matches before "Consultant"
+    # NOTE: We don't prioritize Power Platform titles - we want to match whatever is actually in the resume
+    # Power Platform detection is only used to reject "Data Analyst", not to prioritize titles
     sorted_titles = sorted(COMMON_TITLES, key=len, reverse=True)
+    
+    # CRITICAL: Reject "Director Of Technology" when it's part of an institution name
+    # This prevents "Director Of Technology" from "Gates Institute Of Technology" being matched
+    if re.search(r'\bdirector\s+of\s+technology\b', lw, re.IGNORECASE):
+        # If the line contains institution keywords, reject this match
+        if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school', 'gates']):
+            return None  # This is an institution name, not a job title
+    
+    # CRITICAL: Also reject if line contains "Institute Of Technology" or "Gates" 
+    # and we're trying to match "Director Of Technology" - this prevents fuzzy matching
+    # from "Gates Institute Of Technology" to "Director Of Technology"
+    if any(inst_word in lw for inst_word in ['institute of technology', 'gates institute', 'gates']):
+        # If we're about to match "Director Of Technology", reject it
+        # Check if any known title contains "director of technology"
+        for known in COMMON_TITLES:
+            if 'director of technology' in known.lower():
+                # This line contains institution keywords, so reject matching "Director Of Technology"
+                return None
     
     # First pass: exact substring matches (prioritize longer matches)
     best_exact = None
     best_exact_len = 0
     best_exact_has_dash = False
     for known in sorted_titles:
+        # CRITICAL: Skip "Director Of Technology" if line contains institution keywords
+        if known.lower() == 'director of technology':
+            if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school', 'gates']):
+                continue  # Skip this known title if it's part of an institution name
+        
         # Check if known title is contained in line (whole word match preferred)
         # Use word boundaries to avoid partial word matches
         pattern = r'\b' + re.escape(known) + r'\b'
@@ -919,6 +1031,7 @@ def best_match_from_known(line: str) -> Optional[str]:
             best_exact_has_dash = '-' in known or '–' in known or '—' in known
     
     if best_exact:
+        logger.info(f"DEBUG: best_match_from_known found exact match: '{best_exact}' for line '{line}'")
         # If original line has dash and we matched a non-dash version, try to find dash version
         if has_dash and not best_exact_has_dash:
             # Look for dash version of the matched title
@@ -929,12 +1042,23 @@ def best_match_from_known(line: str) -> Optional[str]:
             ]
             for variant in dash_variants:
                 if variant.lower() in COMMON_TITLES:
+                    logger.info(f"DEBUG: best_match_from_known returning dash variant: '{variant}'")
                     return title_case(variant)
+        logger.info(f"DEBUG: best_match_from_known returning: '{best_exact}'")
         return title_case(best_exact)
     
     # Second pass: fuzzy match (only if no exact match found)
     best_fuzzy = (None, 0.0, False)
     for known in sorted_titles:
+        # CRITICAL: Skip "Director Of Technology" if line contains institution keywords
+        if known.lower() == 'director of technology':
+            # Reject if line contains ANY institution-related keywords
+            if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school', 'gates', 'education', 'academic']):
+                continue  # Skip this known title if it's part of an institution name
+            # Also reject if the line is "Gates Institute Of Technology" or similar
+            if 'gates institute' in lw or 'institute of technology' in lw:
+                continue  # Definitely an institution name
+        
         score = fuzzy_ratio(lw, known)
         if score > best_fuzzy[1]:
             has_dash_in_known = '-' in known or '–' in known or '—' in known
@@ -944,6 +1068,7 @@ def best_match_from_known(line: str) -> Optional[str]:
                 break
 
     if best_fuzzy[0] and best_fuzzy[1] >= FUZZY_THRESHOLD:
+        logger.info(f"DEBUG: best_match_from_known found fuzzy match: '{best_fuzzy[0]}' (score: {best_fuzzy[1]:.2f}) for line '{line}'")
         # If original line has dash and we matched a non-dash version, try to find dash version
         if has_dash and not best_fuzzy[2]:
             # Look for dash version of the matched title
@@ -954,8 +1079,12 @@ def best_match_from_known(line: str) -> Optional[str]:
             ]
             for variant in dash_variants:
                 if variant.lower() in COMMON_TITLES:
+                    logger.info(f"DEBUG: best_match_from_known returning dash variant: '{variant}'")
                     return title_case(variant)
+        logger.info(f"DEBUG: best_match_from_known returning: '{best_fuzzy[0]}'")
         return title_case(best_fuzzy[0])
+    score_value = best_fuzzy[1] if best_fuzzy[0] else 0.0
+    logger.info(f"DEBUG: best_match_from_known returning None - no match found (best_fuzzy: {best_fuzzy[0]}, score: {score_value:.2f})")
     return None
 
 
@@ -978,6 +1107,16 @@ def regex_extract_from_line(line: str) -> Optional[str]:
     # If line matches a degree pattern, reject it
     if any(re.search(pattern, lw, re.IGNORECASE) for pattern in degree_patterns):
         return None
+    
+    # CRITICAL: Reject "Director Of Technology" when it's part of an institution name
+    # This prevents "Director Of Technology" from "Gates Institute Of Technology" being extracted
+    if re.search(r'\bdirector\s+of\s+technology\b', lw, re.IGNORECASE):
+        # If the line contains institution keywords, reject it
+        if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school', 'gates']):
+            return None
+        # Also reject if it's just "Director Of Technology" without company/date context (likely institution name)
+        if lw.strip() in ['director of technology', 'director of technology,']:
+            return None
     
     # look for common patterns: "Senior Consultant", "Consultant", "Technical Lead", etc.
     # Pattern: optional seniority + core role (removed "lead" from roles group to avoid duplication)
@@ -1002,6 +1141,66 @@ def regex_extract_from_line(line: str) -> Optional[str]:
 # -------------------------------------------------------------------------
 # Public API
 # -------------------------------------------------------------------------
+def _validate_designation_result(result: Optional[str], resume_text: str) -> Optional[str]:
+    """
+    Final validation to reject "Director Of Technology" for fresher resumes and
+    "Data Analyst" for Power Platform resumes.
+    This is a last line of defense in case it somehow passed all previous checks.
+    """
+    if not result:
+        return None
+    
+    # Normalize result for comparison (strip whitespace, lowercase)
+    result_normalized = result.lower().strip()
+    
+    # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+    if result_normalized == 'data analyst':
+        # Check if resume contains Power Platform keywords
+        power_platform_keywords = [
+            'power platform', 'power apps', 'power automate', 'power pages', 'power bi',
+            'dynamics 365', 'dataverse', 'canvas app', 'model-driven app', 'power fx',
+            'microsoft power platform', 'ms power platform'
+        ]
+        resume_lower = resume_text.lower()
+        has_power_platform = any(keyword in resume_lower for keyword in power_platform_keywords)
+        
+        if has_power_platform:
+            # Reject "Data Analyst" for Power Platform resumes
+            return None
+    
+    # Reject "Director Of Technology" for fresher resumes (case-insensitive, handles variations)
+    if result_normalized == 'director of technology' or result_normalized == 'director of technology,':
+        # Check if this is a fresher resume
+        has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', resume_text, re.IGNORECASE))
+        has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', resume_text, re.IGNORECASE))
+        has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', resume_text, re.IGNORECASE))
+        
+        # If it's a fresher resume, reject "Director Of Technology"
+        if (has_education or has_institution) and not has_experience_section:
+            # Log for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"VALIDATION: Rejected 'Director Of Technology' - fresher resume detected (has_education={has_education}, has_institution={has_institution}, has_experience={has_experience_section})")
+            return None  # Reject it
+    
+    return result
+
+
+def _has_power_platform_keywords(text: str) -> bool:
+    """
+    Check if resume text contains Power Platform related keywords.
+    This helps prioritize Power Platform roles and reject generic roles like "Data Analyst".
+    """
+    text_lower = text.lower()
+    power_platform_keywords = [
+        'power platform', 'power apps', 'power automate', 'power pages', 'power bi',
+        'dynamics 365', 'dataverse', 'canvas app', 'model-driven app', 'power fx',
+        'microsoft power platform', 'ms power platform', 'power platform developer',
+        'power platform consultant', 'power apps developer', 'power automate developer'
+    ]
+    return any(keyword in text_lower for keyword in power_platform_keywords)
+
+
 def extract_designation(resume_text: str) -> Optional[str]:
     """
     Main function. Given resume text, returns most-likely current designation or None.
@@ -1010,12 +1209,68 @@ def extract_designation(resume_text: str) -> Optional[str]:
         return None
 
     text = normalize_text(resume_text)
+    
+    # Detect if this is a Power Platform resume
+    is_power_platform_resume = _has_power_platform_keywords(text)
+    
+    # Detect if this is a Python/developer-focused resume
+    # This helps prioritize developer/engineer titles over analyst titles
+    python_keywords = ['python', 'django', 'flask', 'fastapi', 'pandas', 'numpy', 'machine learning', 
+                       'data science', 'full stack', 'fullstack', 'backend developer', 'frontend developer',
+                       'software engineer', 'software developer', 'web developer']
+    is_python_resume = any(keyword in text.lower() for keyword in python_keywords)
+    
+    # CRITICAL: Early rejection for fresher resumes with education section
+    # Check if this is clearly a fresher resume (has education but no experience section)
+    has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', text, re.IGNORECASE))
+    has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', text, re.IGNORECASE))
+    has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', text, re.IGNORECASE))
+    
+    # CRITICAL: If institution name is detected, skip designation extraction entirely
+    # Institution names like "Gates Institute Of Technology" can fuzzy match to "Director Of Technology"
+    # This is the safest approach - skip extraction for resumes with institution names
+    if has_institution:
+        # Return None immediately - don't even try to extract designation
+        # The fallback logic in resume_parser.py will use profile_type to infer designation
+        return None
+    
+    # If it has education but no experience section, it's likely a fresher
+    # CRITICAL: For fresher resumes, skip designation extraction entirely
+    # Fresher resumes don't have job designations - they should use profile_type fallback instead
+    # This prevents any false positives from education section
+    if has_education and not has_experience_section:
+        # Return None immediately - don't even try to extract designation
+        # The fallback logic in resume_parser.py will use profile_type to infer designation
+        return None
 
     # Crop to experience-like section but be permissive
     exp_segment = crop_to_experience_section(text)
+    
+    # DEBUG: Log experience segment
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"DEBUG: Experience segment length: {len(exp_segment)}")
+    logger.info(f"DEBUG: Experience segment (first 500 chars): {exp_segment[:500]}")
+    
+    # DEBUG: Check if "Work history" was found
+    if 'work history' in exp_segment.lower()[:200]:
+        logger.info(f"DEBUG: ✓ Found 'Work history' section in experience segment")
+    else:
+        logger.warning(f"DEBUG: ✗ 'Work history' section NOT found in experience segment - may need to check entire text")
 
-    # If cropped segment is very small, fallback to entire text
+    # CRITICAL: If cropped segment is very small, check if it's because education section was cropped
+    # For fresher resumes, don't fallback to entire text - return None instead
     if len(exp_segment) < 100:
+        # Check if this is a fresher resume (has education but no experience)
+        has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', text, re.IGNORECASE))
+        has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', text, re.IGNORECASE))
+        has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', text, re.IGNORECASE))
+        
+        # If it's a fresher resume, don't search entire text - return None
+        if (has_education or has_institution) and not has_experience_section:
+            return None  # Fresher resume - no designation to extract
+        
+        # Only fallback to entire text if it's NOT a fresher resume
         exp_segment = text
 
     # Collect prioritized candidate lines
@@ -1023,68 +1278,461 @@ def extract_designation(resume_text: str) -> Optional[str]:
     
     # PRIORITIZE: First check for designations near "till date" or "present" dates
     # This ensures we get the CURRENT position, not just any position
-    current_date_range_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to|till|-)\s+(?:till\s+date|date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
-    current_date_keywords = re.compile(r'\b(till\s+date|to\s+date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
+    # Pattern matches: "April 2023 to till date", "Jan 2020 to present", "2020 - till date", etc.
+    # Handle both "to till date" and "till date" formats
+    # FIXED: Pattern now correctly matches "April 2023 to till date" (month + year + "to" + "till date")
+    current_date_range_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+to\s+till\s+date\b', re.IGNORECASE)
+    # Also match other patterns
+    current_date_range_pattern2 = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to\s+date|till\s+date|to\s+present|till\s+present|to\s+current|till\s+current|to\s+till\s+now|till\s+now|to\s+ongoing|till\s+ongoing|to|-)\s*(?:date|present|current|till\s+now|ongoing)?\b', re.IGNORECASE)
+    current_date_keywords = re.compile(r'\b(till\s+date|to\s+date|to\s+till\s+date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
     
     exp_lines = exp_segment.split('\n')
     current_position_candidates = []
     
     # First pass: Find titles near "till date" or "present"
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"DEBUG: Starting designation extraction - experience segment has {len(exp_lines)} lines")
+    
     for idx, line in enumerate(exp_lines):
         line_lower = line.lower()
         # Check if this line has a date with "till date" or "present"
-        if current_date_range_pattern.search(line) or current_date_keywords.search(line_lower):
-            # CRITICAL: Prioritize the line immediately BEFORE the date line (idx - 1)
-            # This is where the job title typically appears (e.g., "Web Developer" before "Jun 2017 - Present")
-            # Create prioritized list: [idx - 1] first, then other nearby lines
+        # Also check for simple patterns like "to till date", "till date", "to present"
+        has_till_date = 'till date' in line_lower or 'to till date' in line_lower or 'to date' in line_lower
+        has_present = 'present' in line_lower or 'current' in line_lower or 'ongoing' in line_lower
+        has_date_with_current = bool(current_date_range_pattern.search(line) or current_date_range_pattern2.search(line) or current_date_keywords.search(line_lower))
+        
+        # DEBUG: Log date detection
+        if has_till_date or has_present or has_date_with_current:
+            logger.info(f"DEBUG: Line {idx}: '{line}' - has_till_date={has_till_date}, has_present={has_present}, has_date_with_current={has_date_with_current}")
+        
+        if has_date_with_current or (has_till_date and re.search(r'\d{4}', line)) or has_present:
+            # CRITICAL: Prioritize lines near the date line
+            # Job title can appear BEFORE the date (e.g., "Web Developer" before "Jun 2017 - Present")
+            # OR AFTER the date (e.g., "Senior Consultant" after "April 2023 to till date")
+            # Create prioritized list: [idx - 1, idx + 1] first (before and after date), then other nearby lines
             priority_indices = []
             if idx > 0:
-                priority_indices.append(idx - 1)  # Line immediately before date (highest priority)
+                priority_indices.append(idx - 1)  # Line immediately before date (high priority)
+            if idx < len(exp_lines) - 1:
+                priority_indices.append(idx + 1)  # Line immediately after date (high priority - common pattern)
             # Add other nearby lines (before and after)
-            for check_idx in range(max(0, idx - 2), min(len(exp_lines), idx + 3)):
-                if check_idx != idx and check_idx != idx - 1:  # Skip date line and already-added idx-1
+            for check_idx in range(max(0, idx - 2), min(len(exp_lines), idx + 4)):
+                if check_idx != idx and check_idx not in priority_indices:  # Skip date line and already-added lines
                     priority_indices.append(check_idx)
             
             # Check lines in prioritized order
+            logger.info(f"DEBUG: Found date line at idx={idx}: '{line}' - checking priority_indices={priority_indices}")
             for check_idx in priority_indices:
                 check_line = exp_lines[check_idx].strip()
                 if not check_line or check_line == line.strip():
+                    logger.info(f"DEBUG: Skipping check_idx={check_idx} (empty or same as date line)")
                     continue
+                
+                logger.info(f"DEBUG: Checking line {check_idx}: '{check_line}'")
+                
+                # CRITICAL: Reject company name patterns (e.g., "Company Name, Location")
+                # Company names often appear before dates and can be mistaken for titles
+                check_line_lower = check_line.lower()
+                # Pattern: "Company Name, City" or "Company Name - Location"
+                if ',' in check_line or ' - ' in check_line or ' – ' in check_line:
+                    # Check if it looks like a company name (has location indicators or is too long)
+                    location_indicators = ['hyderabad', 'bangalore', 'mumbai', 'chennai', 'delhi', 'pune', 'kolkata', 
+                                         'india', 'usa', 'uk', 'corporate', 'technologies', 'solutions', 'pvt', 'ltd', 'inc']
+                    if any(indicator in check_line_lower for indicator in location_indicators):
+                        # Likely a company name, not a job title - skip it
+                        logger.info(f"DEBUG: Rejected '{check_line}' - looks like company name")
+                        continue
+                
                 if is_invalid_title_line(check_line):
+                    logger.info(f"DEBUG: Rejected '{check_line}' - is_invalid_title_line returned True")
                     continue
                 
                 # CRITICAL: Reject if this line appears to be in a certifications section
+                # NOTE: Check within exp_segment only, not full text, since we've already cropped to experience section
                 check_line_lower = check_line.lower()
-                check_line_pos = text.lower().find(check_line_lower)
+                check_line_pos = exp_segment.lower().find(check_line_lower)
                 if check_line_pos > 0:
-                    # Check text before this line for certifications header
-                    text_before = text[:check_line_pos].lower()
+                    # Check text before this line for certifications header (within experience segment only)
+                    text_before = exp_segment[:check_line_pos].lower()
                     # Look for certifications header (within last 500 chars to avoid false positives)
                     recent_text = text_before[-500:] if len(text_before) > 500 else text_before
                     cert_header_pattern = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', recent_text, re.IGNORECASE | re.MULTILINE)
                     if cert_header_pattern:
                         # This line is likely in certifications section - skip it
+                        logger.info(f"DEBUG: Rejected '{check_line}' - appears to be in certifications section")
                         continue
                 
                 # CRITICAL: For current positions, prioritize exact matches over fuzzy matches
                 # First try exact match (case-insensitive)
                 check_line_lower = check_line.lower().strip()
+                logger.info(f"DEBUG: Attempting exact match for '{check_line}' (normalized: '{check_line_lower}')")
                 exact_match = None
                 # Use COMMON_TITLES from module scope (already defined at top of file)
                 for known_title in COMMON_TITLES:
                     if known_title.lower() == check_line_lower:
+                        # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                        if is_power_platform_resume and known_title.lower() == 'data analyst':
+                            logger.info(f"DEBUG: Skipping 'Data Analyst' exact match for Power Platform resume")
+                            continue  # Skip "Data Analyst" for Power Platform resumes
+                        # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                        # UX titles like "User Experience Analyst" are often from projects, not actual job titles
+                        if is_python_resume and any(ux_term in known_title.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Skipping '{known_title}' exact match for Python/developer resume (likely project role, not job title)")
+                            continue  # Skip UX titles for Python resumes
                         exact_match = known_title
+                        logger.info(f"DEBUG: ✓ Exact match found: '{known_title}' matches '{check_line}'")
                         break
                 
                 if exact_match:
                     # Found exact match - return immediately (highest priority for current positions)
-                    return title_case(exact_match)
+                    logger.info(f"DEBUG: Found exact match: '{exact_match}' from line '{check_line}'")
+                    result = title_case(exact_match)
+                    logger.info(f"DEBUG: Returning designation: '{result}'")
+                    return _validate_designation_result(result, resume_text)
                 
                 # If no exact match, try best_match_from_known (includes fuzzy matching)
-                match = best_match_from_known(check_line) or regex_extract_from_line(check_line)
+                logger.info(f"DEBUG: No exact match for '{check_line}', trying best_match_from_known/regex...")
+                match = best_match_from_known(check_line, is_power_platform_resume) or regex_extract_from_line(check_line)
                 if match:
+                    logger.info(f"DEBUG: Found match via best_match_from_known/regex: '{match}' from line '{check_line}'")
+                    # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                    if is_power_platform_resume and match.lower() == 'data analyst':
+                        logger.info(f"DEBUG: Rejected 'Data Analyst' for Power Platform resume")
+                        continue  # Skip this match, try next candidate
+                    # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                    if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                        logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role, not job title)")
+                        continue  # Skip UX titles for Python resumes
                     # This is a current position - return it immediately
-                    return match
+                    logger.info(f"DEBUG: Returning designation from match: '{match}'")
+                    return _validate_designation_result(match, resume_text)
+                else:
+                    logger.info(f"DEBUG: No match found for line '{check_line}' (exact match failed, best_match_from_known returned None, regex_extract returned None)")
+
+    # SECOND PASS: If no "till date" or "present" found, prioritize the FIRST position in experience section
+    # This handles cases like "Feb 2025 – Jun 2025" where the most recent position is first but has no "till date"
+    logger.info(f"DEBUG: No 'till date' or 'present' found. Checking first position in experience section...")
+    
+    # Pattern to detect date ranges (e.g., "Feb 2025 – Jun 2025", "Jan 2024 - Oct 2024")
+    # Handle both en-dash (–) and hyphen (-), with or without spaces
+    date_range_pattern = re.compile(r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}\s*[–\-\s]+\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}', re.IGNORECASE)
+    
+    # Find the first date range in the experience section (most recent position)
+    first_date_idx = None
+    first_date_line = None
+    for idx, line in enumerate(exp_lines):
+        if date_range_pattern.search(line):
+            first_date_idx = idx
+            first_date_line = line
+            logger.info(f"DEBUG: Found first date range at idx={idx}: '{line}'")
+            break
+    
+    # If we found a date range, prioritize lines near it (similar to "till date" logic)
+    if first_date_idx is not None:
+        # FIRST: Check the date line itself - it might contain "Company – Title Date" format
+        if first_date_line:
+            logger.info(f"DEBUG: Checking date line itself for title: '{first_date_line}'")
+            # Extract text before the date range
+            date_match = date_range_pattern.search(first_date_line)
+            if date_match:
+                before_date = first_date_line[:date_match.start()].strip()
+                logger.info(f"DEBUG: Text before date range: '{before_date}'")
+                
+                # Handle "Company – Title" format before the date
+                if has_dash_separator(before_date):
+                    title_part, company_part = split_title_company(before_date)
+                    logger.info(f"DEBUG: Split on dash - title_part: '{title_part}', company_part: '{company_part}'")
+                    
+                    if title_part and company_part:
+                        title_lower = title_part.lower()
+                        company_lower = company_part.lower()
+                        company_indicators = ['pvt', 'ltd', 'inc', 'corp', 'solutions', 'technologies', 'systems', 'services', 'global', 'corporate']
+                        title_indicators = ['specialist', 'executive', 'manager', 'engineer', 'developer', 'consultant', 'analyst', 'director', 'lead', 'trainee', 'representative']
+                        
+                        has_company_in_title_part = any(ind in title_lower for ind in company_indicators)
+                        has_title_in_company_part = any(ind in company_lower for ind in title_indicators)
+                        
+                        logger.info(f"DEBUG: has_company_in_title_part={has_company_in_title_part}, has_title_in_company_part={has_title_in_company_part}")
+                        
+                        if has_company_in_title_part and has_title_in_company_part:
+                            # Swap: it's "Company – Title" format
+                            title_part, company_part = company_part, title_part
+                            logger.info(f"DEBUG: Swapped - title_part now: '{title_part}'")
+                        elif has_company_in_title_part and not has_title_in_company_part:
+                            # title_part is company, company_part might be title (but check if it has date)
+                            # Remove date from company_part if present
+                            company_part_clean = re.sub(r'\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}.*$', '', company_part, flags=re.IGNORECASE).strip()
+                            if any(ind in company_part_clean.lower() for ind in title_indicators):
+                                title_part = company_part_clean
+                                logger.info(f"DEBUG: Using company_part as title: '{title_part}'")
+                        elif not has_company_in_title_part and has_title_in_company_part:
+                            # title_part might be the actual title, company_part is company
+                            # This is correct, no swap needed
+                            pass
+                        
+                        # Remove any remaining date from title_part
+                        date_pattern = r'\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}.*$'
+                        title_part = re.sub(date_pattern, '', title_part, flags=re.IGNORECASE).strip()
+                        logger.info(f"DEBUG: Final title_part after date removal: '{title_part}'")
+                        
+                        if title_part and not is_invalid_title_line(title_part):
+                            # Try exact match
+                            title_lower = title_part.lower()
+                            for known_title in COMMON_TITLES:
+                                if known_title.lower() == title_lower:
+                                    if is_power_platform_resume and known_title.lower() == 'data analyst':
+                                        continue
+                                    result = title_case(known_title)
+                                    logger.info(f"DEBUG: Found exact match from date line itself: '{result}'")
+                                    return _validate_designation_result(result, resume_text)
+                            
+                            # Try fuzzy/regex match
+                            match = best_match_from_known(title_part, is_power_platform_resume) or regex_extract_from_line(title_part)
+                            if match:
+                                if is_power_platform_resume and match.lower() == 'data analyst':
+                                    pass  # Continue to check nearby lines
+                                else:
+                                    logger.info(f"DEBUG: Found match from date line itself: '{match}'")
+                                    return _validate_designation_result(match, resume_text)
+                else:
+                    # No dash separator - the entire before_date might be the title
+                    potential_title = before_date
+                    logger.info(f"DEBUG: No dash separator, using entire before_date as title: '{potential_title}'")
+                    if potential_title and not is_invalid_title_line(potential_title):
+                        # Try exact match
+                        for known_title in COMMON_TITLES:
+                            if known_title.lower() == potential_title.lower():
+                                if is_power_platform_resume and known_title.lower() == 'data analyst':
+                                    continue
+                                result = title_case(known_title)
+                                logger.info(f"DEBUG: Found exact match from date line (no dash): '{result}'")
+                                return _validate_designation_result(result, resume_text)
+                        
+                        # Try fuzzy/regex match
+                        match = best_match_from_known(potential_title, is_power_platform_resume) or regex_extract_from_line(potential_title)
+                        if match:
+                            if is_power_platform_resume and match.lower() == 'data analyst':
+                                pass
+                            else:
+                                logger.info(f"DEBUG: Found match from date line (no dash): '{match}'")
+                                return _validate_designation_result(match, resume_text)
+        
+        priority_indices = []
+        if first_date_idx > 0:
+            priority_indices.append(first_date_idx - 1)  # Line before date (company or title)
+        if first_date_idx < len(exp_lines) - 1:
+            priority_indices.append(first_date_idx + 1)  # Line after date (title)
+        # Add other nearby lines
+        for check_idx in range(max(0, first_date_idx - 2), min(len(exp_lines), first_date_idx + 4)):
+            if check_idx != first_date_idx and check_idx not in priority_indices:
+                priority_indices.append(check_idx)
+        
+        logger.info(f"DEBUG: Prioritizing first position (idx={first_date_idx}) - checking priority_indices={priority_indices}")
+        for check_idx in priority_indices:
+            check_line = exp_lines[check_idx].strip()
+            if not check_line:
+                continue
+            
+            logger.info(f"DEBUG: Checking first position line {check_idx}: '{check_line}'")
+            
+            # Handle "Company – Title Date" format (e.g., "Efficiently Global Solutions Pvt Ltd – Lead Generation Specialist Feb 2025 – Jun 2025")
+            # PRIORITY: Check if line contains date range first, then extract text before it
+            title_part = None
+            company_part = None
+            
+            if date_range_pattern.search(check_line):
+                # Line contains a date range - extract text before the date
+                date_match = date_range_pattern.search(check_line)
+                before_date = check_line[:date_match.start()].strip()
+                logger.info(f"DEBUG: Line contains date range, before_date: '{before_date}'")
+                
+                # If there's a dash separator before the date, split it
+                if has_dash_separator(before_date):
+                    title_part, company_part = split_title_company(before_date)
+                    logger.info(f"DEBUG: Split before_date - title_part: '{title_part}', company_part: '{company_part}'")
+                else:
+                    # No dash, might be just title or company
+                    title_part = before_date
+                    company_part = None
+            elif has_dash_separator(check_line) and re.search(r'\d{4}', check_line):
+                # Line has dash and date, but might not match date_range_pattern (e.g., single date)
+                title_part, company_part = split_title_company(check_line)
+            
+            # Check if it's "Company – Title Date" format (for both date_range_pattern and dash+date cases)
+            if title_part and company_part:
+                title_lower = title_part.lower()
+                company_lower = company_part.lower()
+                company_indicators = ['pvt', 'ltd', 'inc', 'corp', 'solutions', 'technologies', 'systems', 'services', 'global', 'corporate']
+                title_indicators = ['specialist', 'executive', 'manager', 'engineer', 'developer', 'consultant', 'analyst', 'director', 'lead', 'trainee', 'representative']
+                
+                has_company_in_title_part = any(ind in title_lower for ind in company_indicators)
+                has_title_in_company_part = any(ind in company_lower for ind in title_indicators)
+                
+                logger.info(f"DEBUG: title_part='{title_part}', company_part='{company_part}'")
+                logger.info(f"DEBUG: has_company_in_title_part={has_company_in_title_part}, has_title_in_company_part={has_title_in_company_part}")
+                
+                if has_company_in_title_part and has_title_in_company_part:
+                    # Swap: it's "Company – Title" format
+                    title_part, company_part = company_part, title_part
+                    logger.info(f"DEBUG: Swapped - title_part now: '{title_part}'")
+                elif has_company_in_title_part and not has_title_in_company_part:
+                    # title_part is company, company_part might be title
+                    # Check if company_part looks like a title
+                    if any(ind in company_lower for ind in title_indicators):
+                        title_part = company_part
+                        logger.info(f"DEBUG: Using company_part as title: '{title_part}'")
+                # Remove date from title_part if present (shouldn't be, but just in case)
+                date_pattern = r'\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}.*$'
+                title_part = re.sub(date_pattern, '', title_part, flags=re.IGNORECASE).strip()
+                logger.info(f"DEBUG: Final title_part after date removal: '{title_part}'")
+                
+                if title_part and not is_invalid_title_line(title_part):
+                    # Try exact match
+                    title_lower = title_part.lower()
+                    for known_title in COMMON_TITLES:
+                        if known_title.lower() == title_lower:
+                            if is_power_platform_resume and known_title.lower() == 'data analyst':
+                                continue
+                            # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                            if is_python_resume and any(ux_term in known_title.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                                logger.info(f"DEBUG: Skipping '{known_title}' for Python/developer resume (likely project role)")
+                                continue
+                            result = title_case(known_title)
+                            logger.info(f"DEBUG: Found exact match from first position (Company-Title format): '{result}'")
+                            return _validate_designation_result(result, resume_text)
+                    
+                    # Try fuzzy/regex match
+                    match = best_match_from_known(title_part, is_power_platform_resume) or regex_extract_from_line(title_part)
+                    if match:
+                        if is_power_platform_resume and match.lower() == 'data analyst':
+                            continue
+                        # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                        if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                            continue
+                        logger.info(f"DEBUG: Found match from first position (Company-Title format): '{match}'")
+                        return _validate_designation_result(match, resume_text)
+            elif title_part and not company_part:
+                # Only title_part, no company_part - might be just the title
+                # Remove date if present
+                date_pattern = r'\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}.*$'
+                title_part = re.sub(date_pattern, '', title_part, flags=re.IGNORECASE).strip()
+                logger.info(f"DEBUG: Only title_part (no company_part): '{title_part}'")
+                
+                if title_part and not is_invalid_title_line(title_part):
+                    # Try exact match
+                    for known_title in COMMON_TITLES:
+                        if known_title.lower() == title_part.lower():
+                            if is_power_platform_resume and known_title.lower() == 'data analyst':
+                                continue
+                            # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                            if is_python_resume and any(ux_term in known_title.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                                logger.info(f"DEBUG: Skipping '{known_title}' for Python/developer resume (likely project role)")
+                                continue
+                            result = title_case(known_title)
+                            logger.info(f"DEBUG: Found exact match from first position (title only): '{result}'")
+                            return _validate_designation_result(result, resume_text)
+                        
+                        # Try fuzzy/regex match
+                        match = best_match_from_known(title_part, is_power_platform_resume) or regex_extract_from_line(title_part)
+                        if match:
+                            if is_power_platform_resume and match.lower() == 'data analyst':
+                                continue
+                            # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                            if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                                logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                                continue
+                            logger.info(f"DEBUG: Found match from first position (title only): '{match}'")
+                            return _validate_designation_result(match, resume_text)
+            
+            # Also check if the line itself contains a date range and might have the title
+            # Format: "Company – Title DateRange" or "Title DateRange"
+            date_match = date_range_pattern.search(check_line)
+            if date_match:
+                # Extract text before the date range
+                before_date = check_line[:date_match.start()].strip()
+                potential_title = None
+                
+                # If there's a dash separator before the date, split it
+                if has_dash_separator(before_date):
+                    potential_title, potential_company = split_title_company(before_date)
+                    # Check if it's "Company – Title" format
+                    if potential_title and potential_company:
+                        title_lower = potential_title.lower()
+                        company_lower = potential_company.lower()
+                        company_indicators = ['pvt', 'ltd', 'inc', 'corp', 'solutions', 'technologies', 'systems', 'services', 'global', 'corporate']
+                        title_indicators = ['specialist', 'executive', 'manager', 'engineer', 'developer', 'consultant', 'analyst', 'director', 'lead', 'trainee', 'representative']
+                        
+                        has_company_in_title = any(ind in title_lower for ind in company_indicators)
+                        has_title_in_company = any(ind in company_lower for ind in title_indicators)
+                        
+                        if has_company_in_title and has_title_in_company:
+                            # Swap: it's "Company – Title" format
+                            potential_title = potential_company
+                else:
+                    # If no dash, the entire before_date might be the title
+                    potential_title = before_date
+                
+                # Try to match potential_title
+                if potential_title and not is_invalid_title_line(potential_title):
+                    # Remove any trailing company indicators
+                    potential_title_clean = potential_title.strip()
+                    # Try exact match
+                    for known_title in COMMON_TITLES:
+                        if known_title.lower() == potential_title_clean.lower():
+                            if is_power_platform_resume and known_title.lower() == 'data analyst':
+                                continue
+                            result = title_case(known_title)
+                            logger.info(f"DEBUG: Found exact match from date range line: '{result}'")
+                            return _validate_designation_result(result, resume_text)
+                    
+                    # Try fuzzy/regex match
+                    match = best_match_from_known(potential_title_clean, is_power_platform_resume) or regex_extract_from_line(potential_title_clean)
+                    if match:
+                        if is_power_platform_resume and match.lower() == 'data analyst':
+                            continue
+                        logger.info(f"DEBUG: Found match from date range line: '{match}'")
+                        return _validate_designation_result(match, resume_text)
+            
+            # Reject company names
+            check_line_lower = check_line.lower()
+            if ',' in check_line or ' - ' in check_line or ' – ' in check_line:
+                location_indicators = ['hyderabad', 'bangalore', 'mumbai', 'chennai', 'delhi', 'pune', 'kolkata', 
+                                     'india', 'usa', 'uk', 'corporate', 'technologies', 'solutions', 'pvt', 'ltd', 'inc']
+                if any(indicator in check_line_lower for indicator in location_indicators):
+                    logger.info(f"DEBUG: Rejected '{check_line}' - looks like company name")
+                    continue
+            
+            if is_invalid_title_line(check_line):
+                continue
+            
+            # Try exact match
+            check_line_lower = check_line.lower().strip()
+            for known_title in COMMON_TITLES:
+                if known_title.lower() == check_line_lower:
+                    if is_power_platform_resume and known_title.lower() == 'data analyst':
+                        continue
+                    # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                    if is_python_resume and any(ux_term in known_title.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                        logger.info(f"DEBUG: Skipping '{known_title}' for Python/developer resume (likely project role)")
+                        continue
+                    result = title_case(known_title)
+                    logger.info(f"DEBUG: Found exact match from first position: '{result}'")
+                    return _validate_designation_result(result, resume_text)
+            
+            # Try fuzzy/regex match
+            match = best_match_from_known(check_line, is_power_platform_resume) or regex_extract_from_line(check_line)
+            if match:
+                if is_power_platform_resume and match.lower() == 'data analyst':
+                    continue
+                # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                    logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                    continue
+                logger.info(f"DEBUG: Found match from first position: '{match}'")
+                return _validate_designation_result(match, resume_text)
 
     # Try each candidate in prioritized order
     for score, line in candidates:
@@ -1093,12 +1741,12 @@ def extract_designation(resume_text: str) -> Optional[str]:
             continue
         
         # CRITICAL: Reject if this line appears to be in a certifications section
-        # Check if line appears after "certifications" header in the original text
+        # NOTE: Check within exp_segment only, not full text, since we've already cropped to experience section
         line_lower = line.lower()
-        line_pos = text.lower().find(line_lower)
+        line_pos = exp_segment.lower().find(line_lower)
         if line_pos > 0:
-            # Check text before this line for certifications header
-            text_before = text[:line_pos].lower()
+            # Check text before this line for certifications header (within experience segment only)
+            text_before = exp_segment[:line_pos].lower()
             # Look for certifications header (within last 500 chars to avoid false positives)
             recent_text = text_before[-500:] if len(text_before) > 500 else text_before
             cert_header_pattern = re.search(r'\b(certifications?|certificate|certified|cert\.?)\s*:?\s*$', recent_text, re.IGNORECASE | re.MULTILINE)
@@ -1106,11 +1754,32 @@ def extract_designation(resume_text: str) -> Optional[str]:
                 # This line is likely in certifications section - skip it
                 continue
 
-        # Handle "Title -/–/— Company (Date)" format - extract title part first
+        # Handle "Title -/–/— Company (Date)" OR "Company -/–/— Title (Date)" format
         # Check for all dash types: hyphen (-), en-dash (–), em-dash (—)
         if has_dash_separator(line) and ('till date' in line.lower() or 'present' in line.lower() or 'current' in line.lower() or re.search(r'\d{4}', line)):
-            # Extract title part (before dash)
-            title_part, _ = split_title_company(line)
+            # First try "Title – Company" format
+            title_part, company_part = split_title_company(line)
+            
+            # If title_part looks like a company name (has "pvt", "ltd", "solutions", etc.) and company_part looks like a title
+            # Then it's "Company – Title" format, so swap them
+            if title_part and company_part:
+                title_lower = title_part.lower()
+                company_lower = company_part.lower()
+                company_indicators = ['pvt', 'ltd', 'inc', 'corp', 'solutions', 'technologies', 'systems', 'services', 'global', 'corporate']
+                title_indicators = ['specialist', 'executive', 'manager', 'engineer', 'developer', 'consultant', 'analyst', 'director', 'lead', 'trainee', 'representative']
+                
+                # Check if title_part looks like company and company_part looks like title
+                has_company_in_title_part = any(ind in title_lower for ind in company_indicators)
+                has_title_in_company_part = any(ind in company_lower for ind in title_indicators)
+                
+                if has_company_in_title_part and has_title_in_company_part:
+                    # Swap: it's "Company – Title" format
+                    title_part, company_part = company_part, title_part
+                    # Remove date from title_part if present (e.g., "Lead Generation Specialist Feb 2025 – Jun 2025")
+                    # Extract just the title part before any date
+                    date_pattern = r'\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}.*$'
+                    title_part = re.sub(date_pattern, '', title_part, flags=re.IGNORECASE).strip()
+            
             if title_part and not is_invalid_title_line(title_part):
                 # First try exact match (prioritize shorter/exact matches)
                 title_lower = title_part.lower()
@@ -1118,17 +1787,36 @@ def extract_designation(resume_text: str) -> Optional[str]:
                 # COMMON_TITLES is already defined at module level, no need to import
                 for known_title in COMMON_TITLES:
                     if known_title.lower() == title_lower:
-                        return title_case(known_title)
+                        # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                        if is_power_platform_resume and known_title.lower() == 'data analyst':
+                            continue  # Skip "Data Analyst" for Power Platform resumes
+                        # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                        if is_python_resume and any(ux_term in known_title.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Skipping '{known_title}' for Python/developer resume (likely project role)")
+                            continue
+                        result = title_case(known_title)
+                        return _validate_designation_result(result, resume_text)
                 # Then try fuzzy/substring match
-                match = best_match_from_known(title_part) or regex_extract_from_line(title_part)
+                match = best_match_from_known(title_part, is_power_platform_resume) or regex_extract_from_line(title_part)
                 if match:
+                    # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                    if is_power_platform_resume and match.lower() == 'data analyst':
+                        continue  # Skip this match, try next candidate
+                    # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                    if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                        logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                        continue
                     # If match is longer than title_part, prefer title_part if it's a valid title
-                    if len(match.split()) > len(title_part.split()) and any(kw in title_lower for kw in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect']):
+                    if len(match.split()) > len(title_part.split()) and any(kw in title_lower for kw in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect', 'specialist', 'executive', 'trainee']):
                         # Use regex to extract from title_part directly
                         regex_match = regex_extract_from_line(title_part)
                         if regex_match:
-                            return regex_match
-                    return match
+                            # Also check regex_match for UX titles
+                            if is_python_resume and any(ux_term in regex_match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                                logger.info(f"DEBUG: Rejected '{regex_match}' for Python/developer resume (likely project role)")
+                                continue
+                            return _validate_designation_result(regex_match, resume_text)
+                    return _validate_designation_result(match, resume_text)
         
         # If a line contains 'at' or 'with' it's often "<Title> at <Company>"
         # extract left side
@@ -1136,53 +1824,104 @@ def extract_designation(resume_text: str) -> Optional[str]:
             left = re.split(r'\b(?:at|with|@)\b', line, flags=re.IGNORECASE)[0].strip()
             # if left is short, attempt to match left
             if left and not is_invalid_title_line(left):
-                match = best_match_from_known(left) or regex_extract_from_line(left)
+                match = best_match_from_known(left, is_power_platform_resume) or regex_extract_from_line(left)
                 if match:
-                    return match
+                    # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                    if is_power_platform_resume and match.lower() == 'data analyst':
+                        continue  # Skip this match, try next candidate
+                    # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                    if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                        logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                        continue
+                    result = _validate_designation_result(match, resume_text)
+                    if result:
+                        return result
 
         # 1) best match from known titles (fast)
-        match = best_match_from_known(line)
+        match = best_match_from_known(line, is_power_platform_resume)
         if match:
-            return match
+            # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+            if is_power_platform_resume and match.lower() == 'data analyst':
+                continue  # Skip this match, try next candidate
+            # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+            if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                continue
+            result = _validate_designation_result(match, resume_text)
+            if result:
+                return result
 
         # 2) regex heuristics
         match = regex_extract_from_line(line)
         if match:
-            return match
+            # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+            if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                continue
+            result = _validate_designation_result(match, resume_text)
+            if result:
+                return result
 
     # Final fallback: search entire text for patterns like "\n<Title>\n" near company/date mentions
-    # PRIORITIZE: Look for "till date" or "present" dates first (current positions)
-    current_date_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to|till|-)\s+(?:till\s+date|date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
-    lines = text.split('\n')
+    # CRITICAL: Skip this fallback if text contains education section (fresher resumes)
+    # This prevents "Director Of Technology" from being extracted from education section
+    has_education_section = re.search(r'\b(education|educational|academic|qualification)\b', text, re.IGNORECASE)
+    has_institution_name = re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', text, re.IGNORECASE)
     
-    # First pass: Look for current positions (till date/present)
-    for idx, ln in enumerate(lines):
-        if current_date_pattern.search(ln):
-            # This is a current position - check nearby lines for title
-            neighbors = lines[idx+1:idx+4] + lines[max(0, idx-3):idx]
-            for neighbor in neighbors:
-                if not neighbor or neighbor.strip() == ln.strip():
-                    continue  # Skip empty lines and current line
-                if is_invalid_title_line(neighbor):
-                    continue
-                m = best_match_from_known(neighbor) or regex_extract_from_line(neighbor)
-                if m:
-                    return m  # Return immediately for current position
-    
-    # Second pass: Look for any date patterns (fallback for resumes without "till date")
-    date_like = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\b', re.IGNORECASE)
-    for idx, ln in enumerate(lines):
-        if date_like.search(ln):
-            # check nearby lines (exclude current line explicitly)
-            neighbors = lines[idx+1:idx+4] + lines[max(0, idx-3):idx]
-            for neighbor in neighbors:
-                if not neighbor or neighbor.strip() == ln.strip():
-                    continue  # Skip empty lines and current line
-                if is_invalid_title_line(neighbor):
-                    continue
-                m = best_match_from_known(neighbor) or regex_extract_from_line(neighbor)
-                if m:
-                    return m
+    # Only do final fallback if there's no education section or institution names (likely has work experience)
+    if not has_education_section and not has_institution_name:
+        # PRIORITIZE: Look for "till date" or "present" dates first (current positions)
+        current_date_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to|till|-)\s+(?:till\s+date|date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
+        lines = text.split('\n')
+        
+        # First pass: Look for current positions (till date/present)
+        for idx, ln in enumerate(lines):
+            if current_date_pattern.search(ln):
+                # This is a current position - check nearby lines for title
+                neighbors = lines[idx+1:idx+4] + lines[max(0, idx-3):idx]
+                for neighbor in neighbors:
+                    if not neighbor or neighbor.strip() == ln.strip():
+                        continue  # Skip empty lines and current line
+                    if is_invalid_title_line(neighbor):
+                        continue
+                    m = best_match_from_known(neighbor, is_power_platform_resume) or regex_extract_from_line(neighbor)
+                    if m:
+                        # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                        if is_power_platform_resume and m.lower() == 'data analyst':
+                            continue  # Skip this match, try next neighbor
+                        # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                        if is_python_resume and any(ux_term in m.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Rejected '{m}' for Python/developer resume (likely project role)")
+                            continue
+                        result = _validate_designation_result(m, resume_text)
+                        if result:
+                            logger.info(f"DEBUG: Found designation in second pass: '{result}'")
+                            return result  # Return immediately for current position
+        
+        # Second pass: Look for any date patterns (fallback for resumes without "till date")
+        logger.info(f"DEBUG: Starting second pass - looking for any date patterns")
+        date_like = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\b', re.IGNORECASE)
+        for idx, ln in enumerate(lines):
+            if date_like.search(ln):
+                # check nearby lines (exclude current line explicitly)
+                neighbors = lines[idx+1:idx+4] + lines[max(0, idx-3):idx]
+                for neighbor in neighbors:
+                    if not neighbor or neighbor.strip() == ln.strip():
+                        continue  # Skip empty lines and current line
+                    if is_invalid_title_line(neighbor):
+                        continue
+                    m = best_match_from_known(neighbor, is_power_platform_resume) or regex_extract_from_line(neighbor)
+                    if m:
+                        # CRITICAL: Reject "Data Analyst" for Power Platform resumes
+                        if is_power_platform_resume and m.lower() == 'data analyst':
+                            continue  # Skip this match, try next neighbor
+                        # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
+                        if is_python_resume and any(ux_term in m.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Rejected '{m}' for Python/developer resume (likely project role)")
+                            continue
+                        result = _validate_designation_result(m, resume_text)
+                        if result:
+                            return result
 
     return None
 

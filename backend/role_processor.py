@@ -471,9 +471,19 @@ class RoleProcessor:
                         logger.info(f"Fuzzy match found: '{original_role}' -> '{fuzzy_match}' (threshold: {fuzzy_threshold})")
                         return fuzzy_match
                     
-                    logger.info(f"No match found for '{original_role}', trying skill-based inference...")
+                    # Try partial word matching for director/manager roles (e.g., "director technology" -> "director")
+                    partial_match = self._find_partial_word_match(normalized_input, original_role)
+                    if partial_match:
+                        logger.info(f"Partial word match found: '{original_role}' -> '{partial_match}'")
+                        return partial_match
+                    
+                    logger.info(f"No match found for '{original_role}', returning 'Others' (not using skill-based inference when designation exists)")
+                    # CRITICAL: Don't fall back to skill inference when designation exists but doesn't match
+                    # Return "Others" instead to avoid incorrect skill-based mapping
+                    return "Others"
                 except Error as e:
                     logger.error(f"Error normalizing role '{original_role}': {e}")
+                    return "Others"
         
         # Step 2: If original_role is missing/empty, infer from skills (for fresher resumes)
         logger.info("Original role not found or empty, attempting skill-based role inference...")
@@ -697,6 +707,103 @@ class RoleProcessor:
             return best_match
         except Error as e:
             logger.error(f"Error in fuzzy match search: {e}")
+            return None
+    
+    def _find_partial_word_match(self, normalized_input: str, original_input: str) -> Optional[str]:
+        """
+        Find match by checking if key words from input appear in roles.
+        Useful for cases like "director technology" -> "director" or "technical director".
+        
+        Args:
+            normalized_input: Normalized input text (e.g., "director technology")
+            original_input: Original input text (for logging)
+            
+        Returns:
+            Normalized role name if match found, None otherwise
+        """
+        try:
+            # Key role words that should match even if other words are present
+            key_role_words = ['director', 'manager', 'architect', 'consultant', 'analyst', 
+                             'engineer', 'developer', 'lead', 'executive', 'president', 'officer']
+            
+            input_words = set(normalized_input.split())
+            
+            # Find key words in input
+            input_key_words = [word for word in input_words if word in key_role_words]
+            
+            if not input_key_words:
+                return None
+            
+            # Search for roles that contain these key words
+            query = "SELECT Normalised_roles, roles FROM role_processor"
+            self.cursor.execute(query)
+            results = self.cursor.fetchall()
+            
+            best_match = None
+            best_score = 0.0
+            
+            # FIRST PASS: Check if normalized role name itself matches key words (highest priority)
+            # This handles cases like "Director - Technology" → "Director" directly
+            for row in results:
+                normalized_role = row['Normalised_roles']
+                normalized_role_lower = normalized_role.lower()
+                
+                # Check if normalized role name IS exactly a key word (e.g., "Director" = "director")
+                for key_word in input_key_words:
+                    if normalized_role_lower == key_word:
+                        # Perfect match - return immediately
+                        logger.info(f"Perfect match: normalized role '{normalized_role}' exactly matches key word '{key_word}'")
+                        return normalized_role
+                    # Check if normalized role name starts with key word (e.g., "Director Technology" starts with "director")
+                    elif normalized_role_lower.startswith(key_word + ' ') or normalized_role_lower.startswith(key_word + '-'):
+                        if 0.9 > best_score:
+                            best_score = 0.9
+                            best_match = normalized_role
+            
+            # SECOND PASS: Check roles array for matches (if first pass didn't find perfect match)
+            if not best_match or best_score < 1.0:
+                for row in results:
+                    roles_list = json.loads(row['roles'])
+                    normalized_role = row['Normalised_roles']
+                    normalized_role_lower = normalized_role.lower()
+                    
+                    for role in roles_list:
+                        normalized_role_text = self._normalize_role_text(role)
+                        role_words = set(normalized_role_text.split())
+                        
+                        # Check if key words from input appear in role
+                        matching_key_words = [word for word in input_key_words if word in role_words]
+                        
+                        if matching_key_words:
+                            # Calculate score based on key word matches
+                            score = len(matching_key_words) / len(input_key_words) if input_key_words else 0
+                            
+                            # CRITICAL: Prioritize if normalized role name IS the key word or starts with it
+                            # e.g., "Director" should match "director" more strongly than "Project Manager" matching "manager"
+                            for key_word in input_key_words:
+                                # If normalized role name is exactly the key word (e.g., "Director" = "director")
+                                if normalized_role_lower == key_word:
+                                    score = 1.0  # Perfect match - highest priority
+                                    break
+                                # If normalized role name starts with the key word (e.g., "Director Technology" starts with "director")
+                                elif normalized_role_lower.startswith(key_word + ' ') or normalized_role_lower.startswith(key_word + '-'):
+                                    score = max(score, 0.9)  # Very high priority
+                                # If normalized role name contains the key word (e.g., "Project Manager" contains "manager")
+                                elif key_word in normalized_role_lower:
+                                    score = max(score, score + 0.3)  # Good match
+                            
+                            if score > best_score:
+                                best_score = score
+                                best_match = normalized_role
+            
+            # Only return if we have a good match (at least one key word matched)
+            if best_match and best_score >= 0.5:
+                logger.info(f"Partial word match: '{original_input}' -> '{best_match}' (score: {best_score:.2f})")
+                return best_match
+            
+            return None
+        except Error as e:
+            logger.error(f"Error in partial word match search: {e}")
             return None
 
 

@@ -373,9 +373,26 @@ def extract_name_with_ai(
         if fallback_extractor:
             try:
                 fallback_name = fallback_extractor(text)
-                if fallback_name and fallback_name != 'Unknown' and validate_extracted_name(fallback_name):
-                    logger.info(f"Fallback extraction found valid name: {fallback_name}")
-                    return fallback_name
+                if fallback_name and fallback_name != 'Unknown':
+                    # Clean the fallback name (remove extra whitespace, newlines, etc.)
+                    fallback_name = ' '.join(fallback_name.split()).strip()
+                    
+                    # Validate the fallback name
+                    if validate_extracted_name(fallback_name):
+                        logger.info(f"Fallback extraction found valid name: {fallback_name}")
+                        return fallback_name
+                    else:
+                        logger.debug(f"Fallback extraction found name but validation failed: '{fallback_name}'")
+                        # If validation fails but name looks reasonable (2-4 words, no URLs/emails), still use it
+                        # This handles edge cases where validation is too strict
+                        words = fallback_name.split()
+                        if (2 <= len(words) <= 4 and 
+                            len(fallback_name) < 70 and
+                            not re.search(r'https?://|www\.|\.com|@', fallback_name, re.IGNORECASE) and
+                            not re.search(r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', fallback_name) and
+                            all(word.replace('.', '').replace(',', '').replace("'", '').replace('-', '').isalpha() for word in words)):
+                            logger.info(f"Fallback extraction found reasonable name (validation bypassed): {fallback_name}")
+                            return fallback_name
             except Exception as e:
                 logger.warning(f"Fallback extraction failed: {e}")
         
@@ -386,9 +403,42 @@ def extract_name_with_ai(
                 doc = nlp(text[:500])
                 for ent in doc.ents:
                     if ent.label_ == "PERSON" and len(ent.text.split()) <= 4:
-                        if validate_extracted_name(ent.text):
-                            logger.info(f"Found name via NLP: {ent.text}")
-                            return ent.text
+                        # CRITICAL: Reject URLs, email addresses, phone numbers, and metadata
+                        ent_text = ent.text.strip()
+                        
+                        # Reject if contains URL patterns
+                        if re.search(r'https?://|www\.|\.com|\.org|\.net|\.io|linkedin\.com|github\.com', ent_text, re.IGNORECASE):
+                            logger.debug(f"Rejected NLP entity (contains URL): {ent_text}")
+                            continue
+                        
+                        # Reject if contains email pattern
+                        if '@' in ent_text:
+                            logger.debug(f"Rejected NLP entity (contains email): {ent_text}")
+                            continue
+                        
+                        # Reject if contains phone number patterns
+                        if re.search(r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', ent_text):
+                            logger.debug(f"Rejected NLP entity (contains phone): {ent_text}")
+                            continue
+                        
+                        # Reject if contains location indicators (city names, etc.)
+                        location_indicators = ['hyderabad', 'bangalore', 'mumbai', 'chennai', 'delhi', 'pune', 
+                                              'kolkata', 'india', 'usa', 'uk', 'united states']
+                        if any(indicator in ent_text.lower() for indicator in location_indicators):
+                            logger.debug(f"Rejected NLP entity (contains location): {ent_text}")
+                            continue
+                        
+                        # Reject if contains special characters that indicate it's not a name
+                        if re.search(r'[•\|\/\\]', ent_text):
+                            logger.debug(f"Rejected NLP entity (contains special chars): {ent_text}")
+                            continue
+                        
+                        # Validate the extracted name
+                        if validate_extracted_name(ent_text):
+                            logger.info(f"Found name via NLP: {ent_text}")
+                            return ent_text
+                        else:
+                            logger.debug(f"Rejected NLP entity (failed validation): {ent_text}")
             except Exception as e:
                 logger.warning(f"NLP fallback failed: {e}")
         

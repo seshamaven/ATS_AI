@@ -2156,6 +2156,23 @@ Resume Text (look for name in FIRST FEW LINES):
             else:
                 if current_designation:
                     logger.info(f"✓ Using extracted designation (not using profile_type fallback): '{current_designation}'")
+                    # Extract role_type from designation using role_processor table
+                    try:
+                        from role_processor import normalize_role
+                        role_type = normalize_role(
+                            original_role=current_designation,
+                            resume_text=resume_text,
+                            primary_skills=primary_skills,
+                            secondary_skills=secondary_skills_str
+                        )
+                        if role_type:
+                            logger.info(f"✓ Extracted role_type='{role_type}' from designation '{current_designation}' using role_processor table")
+                        else:
+                            logger.warning(f"✗ normalize_role() returned None for designation '{current_designation}'")
+                    except Exception as e:
+                        logger.error(f"Error extracting role_type from designation '{current_designation}': {e}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
                 else:
                     logger.warning(f"✗ Designation is empty and profile_type is also empty - designation will remain empty")
 

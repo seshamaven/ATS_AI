@@ -891,33 +891,91 @@ class ATSDatabase:
             if not self.is_connected():
                 logger.error("Database not connected. Cannot insert/update profile scores.")
                 return False
-            # Mapping from profile type names to database column names
-            profile_type_to_column = {
-                "Java": "java_score",
-                ".Net": "dotnet_score",
-                "Python": "python_score",
-                "JavaScript": "javascript_score",
-                "Full Stack": "fullstack_score",
-                "DevOps": "devops_score",
-                "Data Engineering": "data_engineering_score",
-                "Data Science": "data_science_score",
-                "Testing / QA": "testing_qa_score",
-                "SAP": "sap_score",
-                "ERP": "erp_score",
-                "Cloud / Infra": "cloud_infra_score",
-                "Business Intelligence (BI)": "business_intelligence_score",
-                "Microsoft Power Platform": "microsoft_power_platform_score",
-                "RPA": "rpa_score",
-                "Cyber Security": "cyber_security_score",
-                "Mobile Development": "mobile_development_score",
-                "Salesforce": "salesforce_score",
-                "Low Code / No Code": "low_code_no_code_score",
-                "Database": "database_score",
-                "Integration / APIs": "integration_apis_score",
-                "UI/UX": "ui_ux_score",
-                "Support": "support_score",
-                "Business Development": "business_development_score",
-            }
+            
+            # Helper function to convert profile type name to column name
+            def profile_type_to_column_name(profile_type: str) -> str:
+                """
+                Convert profile type name to database column name.
+                Rules:
+                1. Handle special cases first
+                2. Convert to lowercase
+                3. Replace spaces with underscores
+                4. Remove special characters (/, -, (), etc.)
+                5. Append "_score" suffix
+                
+                Examples:
+                - "Java" → "java_score"
+                - ".Net" → "dotnet_score"
+                - "Full Stack" → "fullstack_score"
+                - "Cloud / Infra" → "cloud_infra_score"
+                - "C/C++" → "c_cpp_score"
+                - "UI/UX" → "ui_ux_score"
+                - "Go / Golang" → "go_golang_score"
+                """
+                import re
+                # Handle special cases first (before any processing)
+                special_cases = {
+                    ".Net": "dotnet",
+                    ".NET": "dotnet",
+                    "C/C++": "c_cpp",
+                    "F#": "fsharp",
+                    "VB.NET": "vb_net",
+                    "Objective-C": "objective_c",
+                }
+                if profile_type in special_cases:
+                    return f"{special_cases[profile_type]}_score"
+                
+                # Convert to lowercase
+                col_name = profile_type.lower()
+                # Replace spaces with underscores
+                col_name = col_name.replace(' ', '_')
+                # Remove special characters: /, -, (), etc., but keep underscores
+                col_name = re.sub(r'[^\w]', '_', col_name)
+                # Replace multiple underscores with single underscore
+                col_name = re.sub(r'_+', '_', col_name)
+                # Remove leading/trailing underscores
+                col_name = col_name.strip('_')
+                # Append "_score" suffix
+                return f"{col_name}_score"
+            
+            # Generate mapping from PROFILE_TYPE_RULES dynamically
+            # Import here to avoid circular imports
+            try:
+                from profile_type_utils import PROFILE_TYPE_RULES
+                profile_type_to_column = {}
+                for profile_type, _ in PROFILE_TYPE_RULES:
+                    column_name = profile_type_to_column_name(profile_type)
+                    profile_type_to_column[profile_type] = column_name
+                logger.info(f"Generated profile_type_to_column mapping with {len(profile_type_to_column)} entries")
+            except ImportError:
+                logger.warning("Could not import PROFILE_TYPE_RULES, using fallback mapping")
+                # Fallback to original mapping if import fails
+                profile_type_to_column = {
+                    "Java": "java_score",
+                    ".Net": "dotnet_score",
+                    "Python": "python_score",
+                    "JavaScript": "javascript_score",
+                    "Full Stack": "fullstack_score",
+                    "DevOps": "devops_score",
+                    "Data Engineering": "data_engineering_score",
+                    "Data Science": "data_science_score",
+                    "Testing / QA": "testing_qa_score",
+                    "SAP": "sap_score",
+                    "ERP": "erp_score",
+                    "Cloud / Infra": "cloud_infra_score",
+                    "Business Intelligence (BI)": "business_intelligence_score",
+                    "Microsoft Power Platform": "microsoft_power_platform_score",
+                    "RPA": "rpa_score",
+                    "Cyber Security": "cyber_security_score",
+                    "Mobile Development": "mobile_development_score",
+                    "Salesforce": "salesforce_score",
+                    "Low Code / No Code": "low_code_no_code_score",
+                    "Database": "database_score",
+                    "Integration / APIs": "integration_apis_score",
+                    "UI/UX": "ui_ux_score",
+                    "Support": "support_score",
+                    "Business Development": "business_development_score",
+                }
             
             # Build the INSERT ... ON DUPLICATE KEY UPDATE query
             columns = ["candidate_id"] + list(profile_type_to_column.values())

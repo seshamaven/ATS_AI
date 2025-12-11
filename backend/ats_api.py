@@ -24,6 +24,7 @@ import json
 import time
 import re
 from typing import Dict, List, Any, Optional
+from collections import Counter
 from datetime import datetime
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
@@ -43,7 +44,9 @@ from profile_type_utils import (
     detect_profile_types_from_text,
     infer_profile_type_from_requirements,
     canonicalize_profile_type_list,
+    canonicalize_profile_type,
 )
+from skill_extractor import TECH_SKILLS
 from role_extract import detect_role_subrole, detect_role_only, detect_subrole_only
 
 # Configure logging
@@ -1518,6 +1521,105 @@ def matches_boolean_query(candidate_text: str, parsed_query: Dict) -> bool:
     return True
 
 
+def calculate_sql_score(
+    candidate: Dict[str, Any],
+    detected_main_role: Optional[str],
+    detected_subrole: Optional[str],
+    detected_profile_type: Optional[str],
+    detected_skills: List[Dict[str, Any]],
+    skill_score_columns: List[str],
+    max_skill_score: float = 200.0
+) -> float:
+    """
+    Calculate SQL-based relevance score (0-1) based on role, profile type, and skill matches.
+    
+    Args:
+        candidate: Candidate data dictionary with role_type, profile_type, and skill scores
+        detected_main_role: Detected role from query (e.g., "Software Engineer")
+        detected_subrole: Detected subrole from query (e.g., "Frontend Developer")
+        detected_profile_type: Detected profile type from query (e.g., "Java")
+        detected_skills: List of detected skills with score_column info
+        skill_score_columns: List of score column names to check
+        max_skill_score: Maximum possible skill score for normalization (default 200)
+    
+    Returns:
+        SQL relevance score between 0.0 and 1.0
+    """
+    # 1. Role match score (0-1)
+    role_score = 0.5  # Default neutral if no role detected
+    if detected_main_role:
+        candidate_role = candidate.get('role_type', '')
+        if candidate_role == detected_main_role:
+            role_score = 1.0
+        elif detected_subrole:
+            # Check subrole match as bonus
+            candidate_subrole = candidate.get('subrole_type', '')
+            if candidate_subrole == detected_subrole:
+                role_score = 1.0  # Perfect match with subrole
+            else:
+                role_score = 0.0  # Role detected but doesn't match
+        else:
+            role_score = 0.0  # Role detected but doesn't match
+    
+    # 2. Profile type match score (0-1) with fuzzy matching
+    profile_score = 0.5  # Default neutral if no profile type detected
+    if detected_profile_type:
+        candidate_profile = candidate.get('profile_type', '').lower()
+        detected_profile_lower = detected_profile_type.lower()
+        
+        if not candidate_profile:
+            profile_score = 0.0
+        elif candidate_profile == detected_profile_lower:
+            # Exact match
+            profile_score = 1.0
+        elif detected_profile_lower in candidate_profile:
+            # Partial match (e.g., "Java" in "Java, Python")
+            profile_score = 0.8
+        elif candidate_profile in detected_profile_lower:
+            # Reverse partial match
+            profile_score = 0.7
+        else:
+            # Check if profile type contains any part of detected profile
+            profile_parts = candidate_profile.split(',')
+            if any(detected_profile_lower in part.strip() for part in profile_parts):
+                profile_score = 0.6
+            else:
+                profile_score = 0.0
+    
+    # 3. Skill score (0-1) - normalize from candidate_profile_scores
+    skill_scores = []
+    for skill_info in detected_skills:
+        score_col = skill_info.get('score_column')
+        if score_col:
+            # Get raw score from candidate data (will be fetched from DB)
+            raw_score = candidate.get(score_col, 0.0)
+            # Convert to float (MySQL returns Decimal type, need to convert for division)
+            raw_score = float(raw_score) if raw_score else 0.0
+            
+            if raw_score > 0:
+                # Normalize: clamp to max_skill_score and convert to 0-1
+                normalized = min(1.0, raw_score / max_skill_score)
+                skill_scores.append(normalized)
+    
+    # Calculate average skill score, or use neutral if no skills found
+    if skill_scores:
+        # If multiple skills, weight first skill more (primary skill)
+        if len(skill_scores) == 1:
+            skill_score = skill_scores[0]
+        else:
+            # Weight primary skill 60%, others 40% average
+            skill_score = (skill_scores[0] * 0.6) + (sum(skill_scores[1:]) / len(skill_scores[1:]) * 0.4)
+    else:
+        # No skill scores available - use neutral
+        skill_score = 0.5
+    
+    # Combine with weights: role (20%), profile (30%), skill (50%)
+    sql_score = (role_score * 0.2) + (profile_score * 0.3) + (skill_score * 0.5)
+    
+    # Clamp to 0-1 range
+    return max(0.0, min(1.0, sql_score))
+
+
 @app.route('/api/searchResumes', methods=['POST'])
 def search_resumes():
     """
@@ -1565,12 +1667,15 @@ def search_resumes():
         logger.info(f"Processing /api/searchResumes query: {query}, use_semantic: {use_semantic}, use_boolean: {use_boolean}")
         start_time = time.time()
         
-        # === STEP 1: Name Detection ===
+        # === STEP 1: Name Detection (with fallback to skill search) ===
+        name_search_performed = False
         if looks_like_name(query):
             logger.info(f"Detected name search for: {query}")
+            name_search_performed = True
             with create_ats_database() as db:
                 # Conditionally add LIMIT clause to handle None limit
                 limit_clause = "LIMIT %s" if limit is not None else ""
+                query_lower = query.lower()
                 sql = f"""
                     SELECT 
                         rm.candidate_id,
@@ -1591,14 +1696,73 @@ def search_resumes():
                         rm.domain,
                         rm.education,
                         rm.resume_summary,
-                        rm.created_at
+                        rm.created_at,
+                        CASE 
+                            -- Exact match (highest priority)
+                            WHEN LOWER(rm.name) = %s THEN 10
+                            -- Partial match (substring)
+                            WHEN LOWER(rm.name) LIKE CONCAT('%%', %s, '%%') THEN 8
+                            -- Full name SOUNDEX match
+                            WHEN SOUNDEX(rm.name) = SOUNDEX(%s) THEN 7
+                            -- Word-by-word SOUNDEX matching (NEW)
+                            -- First word
+                            WHEN SOUNDEX(SUBSTRING_INDEX(rm.name, ' ', 1)) = SOUNDEX(%s) THEN 6
+                            -- Second word (if name has 2+ words)
+                            WHEN (LENGTH(rm.name) - LENGTH(REPLACE(rm.name, ' ', '')) >= 1 
+                                  AND SOUNDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(rm.name, ' ', 2), ' ', -1)) = SOUNDEX(%s)) THEN 6
+                            -- Third word (if name has 3+ words)
+                            WHEN (LENGTH(rm.name) - LENGTH(REPLACE(rm.name, ' ', '')) >= 2
+                                  AND SOUNDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(rm.name, ' ', 3), ' ', -1)) = SOUNDEX(%s)) THEN 6
+                            -- Last word
+                            WHEN SOUNDEX(SUBSTRING_INDEX(rm.name, ' ', -1)) = SOUNDEX(%s) THEN 6
+                            ELSE 0
+                        END AS name_match_score
                     FROM resume_metadata rm
                     WHERE rm.status = 'active'
-                      AND LOWER(rm.name) LIKE %s
-                    ORDER BY rm.total_experience DESC
+                      AND (
+                          -- Exact match
+                          LOWER(rm.name) = %s
+                          -- Partial match (substring)
+                          OR LOWER(rm.name) LIKE CONCAT('%%', %s, '%%')
+                          -- Full name SOUNDEX
+                          OR SOUNDEX(rm.name) = SOUNDEX(%s)
+                          -- Word-by-word SOUNDEX (NEW)
+                          -- First word
+                          OR SOUNDEX(SUBSTRING_INDEX(rm.name, ' ', 1)) = SOUNDEX(%s)
+                          -- Second word (if name has 2+ words)
+                          OR (LENGTH(rm.name) - LENGTH(REPLACE(rm.name, ' ', '')) >= 1 
+                              AND SOUNDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(rm.name, ' ', 2), ' ', -1)) = SOUNDEX(%s))
+                          -- Third word (if name has 3+ words)
+                          OR (LENGTH(rm.name) - LENGTH(REPLACE(rm.name, ' ', '')) >= 2
+                              AND SOUNDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(rm.name, ' ', 3), ' ', -1)) = SOUNDEX(%s))
+                          -- Last word
+                          OR SOUNDEX(SUBSTRING_INDEX(rm.name, ' ', -1)) = SOUNDEX(%s)
+                      )
+                    ORDER BY name_match_score DESC, rm.total_experience DESC
                     {limit_clause}
                 """
-                params = [f"%{query.lower()}%"]
+                # Parameters: 
+                # - query_lower used for exact/partial matches (case-insensitive)
+                # - query (original) used for SOUNDEX (case-insensitive function)
+                # Total: 14 parameters (7 for CASE, 7 for WHERE)
+                params = [
+                    # CASE statement parameters (7)
+                    query_lower,  # 1. Exact match
+                    query_lower,  # 2. Partial match
+                    query,        # 3. Full name SOUNDEX
+                    query,        # 4. First word SOUNDEX
+                    query,        # 5. Second word SOUNDEX
+                    query,        # 6. Third word SOUNDEX
+                    query,        # 7. Last word SOUNDEX
+                    # WHERE clause parameters (7)
+                    query_lower,  # 8. Exact match
+                    query_lower,  # 9. Partial match
+                    query,        # 10. Full name SOUNDEX
+                    query,        # 11. First word SOUNDEX
+                    query,        # 12. Second word SOUNDEX
+                    query,        # 13. Third word SOUNDEX
+                    query         # 14. Last word SOUNDEX
+                ]
                 if limit is not None:
                     params.append(limit)
                 db.cursor.execute(sql, params)
@@ -1625,67 +1789,266 @@ def search_resumes():
                         'domain': r.get('domain', ''),
                         'education': r.get('education', ''),
                         'resume_summary': r.get('resume_summary', ''),
+                        'name_match_score': int(float(r.get('name_match_score', 0))),  # Name matching score (0-10)
+                        'match_score': float(r.get('name_match_score', 0)) / 10.0,  # Normalized to 0-1 for consistency
                     })
                 
-                # Build the response for name search
-                response_data = {
-                    'query': query,
-                    'search_type': 'name_search',
-                    'analysis': {'detected_as': 'name'},
-                    'count': len(candidates),
-                    'results': candidates,
-                    'processing_time_ms': int((time.time() - start_time) * 1000),
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                # === SAVE CHAT HISTORY FOR NAME SEARCH ===
-                chat_role = data.get('role')
-                chat_sub_role = data.get('sub_role')
-                chat_profile_type = data.get('profile_type')
-                chat_sub_profile_type = data.get('sub_profile_type')
-                chat_candidate_id = data.get('candidate_id')
-                
-                try:
-                    with create_ats_database() as history_db:
-                        history_db.insert_chat_history(
-                            chat_msg=query,
-                            response=json.dumps(response_data, default=str),
-                            candidate_id=chat_candidate_id,
-                            role=chat_role,
-                            sub_role=chat_sub_role,
-                            profile_type=chat_profile_type,
-                            sub_profile_type=chat_sub_profile_type
-                        )
-                except Exception as history_error:
-                    logger.warning(f"Failed to save chat history for name search: {history_error}")
-                
-                return jsonify(response_data), 200
+                # FALLBACK LOGIC: If name search returns 0 results, continue to skill/role search
+                if len(candidates) == 0:
+                    logger.info(f"Name search returned 0 results for '{query}', falling back to skill/role search")
+                    # Don't return - continue to skill/role search below
+                    name_search_performed = False  # Reset flag so skill search proceeds
+                else:
+                    # Name search found results - return them
+                    # Build the response for name search
+                    response_data = {
+                        'query': query,
+                        'search_type': 'name_search',
+                        'analysis': {'detected_as': 'name'},
+                        'count': len(candidates),
+                        'results': candidates,
+                        'processing_time_ms': int((time.time() - start_time) * 1000),
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # === SAVE CHAT HISTORY FOR NAME SEARCH ===
+                    chat_role = data.get('role')
+                    chat_sub_role = data.get('sub_role')
+                    chat_profile_type = data.get('profile_type')
+                    chat_sub_profile_type = data.get('sub_profile_type')
+                    chat_candidate_id = data.get('candidate_id')
+                    
+                    try:
+                        with create_ats_database() as history_db:
+                            history_db.insert_chat_history(
+                                chat_msg=query,
+                                response=json.dumps(response_data, default=str),
+                                candidate_id=chat_candidate_id,
+                                role=chat_role,
+                                sub_role=chat_sub_role,
+                                profile_type=chat_profile_type,
+                                sub_profile_type=chat_sub_profile_type
+                            )
+                    except Exception as history_error:
+                        logger.warning(f"Failed to save chat history for name search: {history_error}")
+                    
+                    return jsonify(response_data), 200
         
-        # === STEP 2: Role Detection ===
-        role_info = detect_subrole_from_query(query)
-        detected_subrole = role_info['sub_role'] if role_info else None
-        detected_main_role = role_info['main_role'] if role_info else None
-        detected_profile_type_from_role = role_info['profile_type'] if role_info else None
+        # === STEP 1.5: Irrelevant Detection (EARLY) ===
+        cleaned_query = clean_partial_query(query)
+        if is_irrelevant_query(cleaned_query):
+            logger.info(f"Detected irrelevant query: {cleaned_query}")
+            return jsonify({
+                'error': 'Please provide a valid search query with technical terms (e.g., role, skill, technology).',
+                'query': query,
+                'query_type': 'irrelevant'
+            }), 400
         
-        # === STEP 3: Skill Extraction ===
-        detected_skills = extract_master_skills(query)
-        skill_score_columns = [s['score_column'] for s in detected_skills]
+        # === STEP 2: Role & Sub Role Detection (4-level priority) ===
+        detected_subrole = None
+        detected_main_role = None
+        detected_profile_type_from_role = None
+        role_detected_explicitly = False  # Track if role was explicitly mentioned vs inferred
+        
+        # 2a. Check explicit subroles first (Frontend/Backend/Full Stack Developer)
+        explicit_subrole = detect_explicit_subrole(cleaned_query)
+        if explicit_subrole:
+            logger.info(f"Detected explicit subrole: {explicit_subrole}")
+            detected_subrole = explicit_subrole
+            detected_main_role = "Software Engineer"  # Default for these subroles
+            role_detected_explicitly = True  # Explicit subrole = role explicitly mentioned
+        
+        # 2b. Check technology + role pattern (java Developer, python Engineer)
+        tech_role_info = None
+        if not detected_main_role:
+            tech_role_info = detect_tech_role_pattern(cleaned_query)
+            if tech_role_info:
+                logger.info(f"Detected tech-role pattern: {tech_role_info}")
+                detected_main_role = tech_role_info['main_role']
+                detected_profile_type_from_role = tech_role_info['profile_type']
+                role_detected_explicitly = True  # Tech-role pattern = role explicitly mentioned
+                # NOTE: subrole_type is NOT set for tech-role patterns
+        
+        # Helper function to check if query contains role keywords
+        def has_role_keyword_in_query(query: str) -> bool:
+            """Check if query contains explicit role keywords."""
+            query_lower = normalize_text(query)
+            role_keywords = ['developer', 'engineer', 'programmer', 'architect', 'manager', 
+                           'analyst', 'administrator', 'specialist', 'consultant', 'lead',
+                           'director', 'coordinator', 'supervisor', 'tester', 'qa']
+            return any(keyword in query_lower for keyword in role_keywords)
+        
+        # 2c. Check role from role_extract.py hierarchy
+        if not detected_main_role:
+            role_from_hierarchy = detect_role_from_hierarchy(cleaned_query)
+            if role_from_hierarchy:
+                logger.info(f"Detected role from hierarchy: {role_from_hierarchy}")
+                detected_main_role = role_from_hierarchy
+                # Check if query contains role keywords to determine if explicit
+                if has_role_keyword_in_query(cleaned_query):
+                    role_detected_explicitly = True  # Role keyword found = explicit
+        
+        # 2d. Check role_processor table
+        if not detected_main_role:
+            role_from_processor = detect_role_from_processor_table(cleaned_query)
+            if role_from_processor:
+                logger.info(f"Detected role from processor table: {role_from_processor}")
+                detected_main_role = role_from_processor
+                # Check if query contains role keywords
+                if has_role_keyword_in_query(cleaned_query):
+                    role_detected_explicitly = True  # Role keyword found = explicit
+        
+        # 2e. Fallback: Use existing detect_subrole_from_query if still no role
+        if not detected_main_role and not detected_subrole:
+            role_info = detect_subrole_from_query(cleaned_query)
+            if role_info:
+                detected_subrole = role_info['sub_role']
+                detected_main_role = role_info['main_role']
+                detected_profile_type_from_role = role_info['profile_type']
+                # Check if query contains role keywords
+                if has_role_keyword_in_query(cleaned_query):
+                    role_detected_explicitly = True  # Role keyword found = explicit
+        
+        # === STEP 3: Skill Detection (with boolean and comma-separated support) ===
+        # Check if query is comma-separated (e.g., "django, mysql")
+        is_comma_separated = ',' in cleaned_query and ' AND ' not in cleaned_query.upper() and ' OR ' not in cleaned_query.upper()
+        
+        # Parse query structure
+        boolean_structure = None
+        comma_separated_structure = None
+        
+        if is_comma_separated:
+            # Parse comma-separated query (treats comma as AND)
+            try:
+                comma_separated_structure = parse_comma_separated_query(cleaned_query)
+                logger.info(f"Detected comma-separated query: {comma_separated_structure}")
+                # Convert comma-separated structure to boolean structure format for skill extraction
+                boolean_structure = comma_separated_structure
+            except Exception as e:
+                logger.warning(f"Error parsing comma-separated query: {e}")
+        else:
+            # Parse boolean query (AND/OR)
+            try:
+                boolean_structure = parse_boolean_query(cleaned_query)
+            except Exception as e:
+                logger.warning(f"Error parsing boolean query: {e}")
+        
+        # Extract skills with boolean/comma-separated support
+        detected_skills = extract_skills_from_query_enhanced(cleaned_query, boolean_structure)
+        
+        # OPTION 1: Use PRIMARY profile type score only for each skill
+        # This prevents "mysql" from requiring both database_score AND fullstack_score
+        # For both comma-separated ("django, mysql") and single skill ("mysql") queries
+        primary_skill_scores = []
+        
+        if is_comma_separated and comma_separated_structure and comma_separated_structure.get('and_terms'):
+            # Comma-separated query: Extract primary profile type for each term
+            for term_group in comma_separated_structure['and_terms']:
+                for term in term_group:
+                    # Extract skills for this specific term
+                    term_skills = extract_skills_from_query_enhanced(term, None)
+                    if term_skills:
+                        # Use FIRST skill's profile type (primary) only
+                        primary_skill = term_skills[0]
+                        primary_score_col = primary_skill.get('score_column')
+                        if primary_score_col and primary_score_col not in primary_skill_scores:
+                            primary_skill_scores.append(primary_score_col)
+                            logger.info(f"Comma-separated query: Using primary score column '{primary_score_col}' for term '{term}'")
+        else:
+            # Single skill query: Use FIRST detected skill's primary profile type only
+            # This handles cases like "mysql" where multiple profile types are detected
+            # Priority: Exact match skills first, then substring matches
+            if detected_skills:
+                # Sort skills: exact matches first (skill name matches query), then others
+                query_lower = normalize_text(cleaned_query)
+                sorted_skills = sorted(detected_skills, key=lambda s: (
+                    0 if normalize_text(s.get('skill', '')) == query_lower else 1,  # Exact match first
+                    s.get('skill', '')  # Then alphabetically
+                ))
+                
+                primary_skill = sorted_skills[0]
+                primary_score_col = primary_skill.get('score_column')
+                if primary_score_col:
+                    primary_skill_scores.append(primary_score_col)
+                    logger.info(f"Single skill query: Using primary score column '{primary_score_col}' for skill '{primary_skill.get('skill')}' (profile_type: {primary_skill.get('profile_type')})")
+        
+        # Override skill_score_columns with primary profile type scores only
+        if primary_skill_scores:
+            skill_score_columns = primary_skill_scores
+            logger.info(f"Using primary score columns only (Option 1 - AND logic): {skill_score_columns}")
+        else:
+            # Fallback to original logic if no primary scores found
+            skill_score_columns = [s['score_column'] for s in detected_skills if s.get('score_column')]
+            logger.info(f"Fallback: Using all detected score columns: {skill_score_columns}")
+        
         skill_profile_types = [s['profile_type'] for s in detected_skills]
         first_skill_profile_type = skill_profile_types[0] if skill_profile_types else None
         
-        # === STEP 4: Profile Type Detection (for skill-only queries) ===
+        # === STEP 4: Profile Type Detection (Priority-based) ===
+        if not detected_profile_type_from_role:
+            profile_type = detect_profile_type_priority(
+                detected_main_role,
+                detected_skills,
+                explicit_subrole
+            )
+            if profile_type:
+                detected_profile_type_from_role = profile_type
+                logger.info(f"Detected profile type: {profile_type}")
+        
+        # Fallback: Use profile_type from first skill if still not detected
         if not detected_profile_type_from_role and first_skill_profile_type:
-            # Use profile_type from first skill
             detected_profile_type_from_role = first_skill_profile_type
-            # Infer sub-role from profile_type
-            if not detected_subrole:
-                inferred_role_info = infer_subrole_from_profile_type(first_skill_profile_type)
-                if inferred_role_info:
-                    detected_subrole = inferred_role_info['sub_role']
+            logger.info(f"Using profile type from first skill: {first_skill_profile_type}")
+        
+        # Canonicalize profile types to ensure consistent matching with database
+        if detected_profile_type_from_role:
+            detected_profile_type_from_role = canonicalize_profile_type(detected_profile_type_from_role)
+            logger.info(f"Canonicalized profile type: {detected_profile_type_from_role}")
+        
+        # Also canonicalize skill profile types
+        canonicalized_skill_profile_types = []
+        for pt in skill_profile_types:
+            canonical_pt = canonicalize_profile_type(pt)
+            if canonical_pt and canonical_pt not in canonicalized_skill_profile_types:
+                canonicalized_skill_profile_types.append(canonical_pt)
+        skill_profile_types = canonicalized_skill_profile_types
+        
+        # Infer sub-role from profile_type (only for skill-only queries, not for tech-role patterns)
+        if not detected_subrole and detected_profile_type_from_role and not tech_role_info:
+            inferred_role_info = infer_subrole_from_profile_type(detected_profile_type_from_role)
+            if inferred_role_info:
+                detected_subrole = inferred_role_info['sub_role']
+                if not detected_main_role:
                     detected_main_role = inferred_role_info['main_role']
         
-        # === STEP 5: Input Validation ===
-        if not detected_subrole and not detected_skills:
+        # === STEP 5: Location Extraction ===
+        detected_locations = extract_locations(cleaned_query)
+        if detected_locations:
+            logger.info(f"Detected locations: {detected_locations}")
+        
+        # === STEP 6: Input Validation ===
+        # FIRST: Check if query contains any skill from TECH_SKILLS (6000+ skills)
+        # This ensures skills in TECH_SKILLS are accepted even if extract_skills_from_query_enhanced() didn't detect them
+        query_has_valid_skill = False
+        try:
+            query_lower = normalize_text(cleaned_query)
+            # Check if any skill from TECH_SKILLS is in the query
+            for skill in TECH_SKILLS:
+                skill_lower = skill.lower()
+                # Use word boundary matching to avoid false positives (e.g., "saas" in "saas platform")
+                if skill_lower in query_lower:
+                    query_has_valid_skill = True
+                    logger.info(f"Query contains valid skill from TECH_SKILLS: {skill}")
+                    break
+        except Exception as e:
+            logger.warning(f"Error checking TECH_SKILLS for validation: {e}")
+        
+        # Only show error if:
+        # 1. No role detected AND
+        # 2. No subrole detected AND
+        # 3. No skills detected from extract_skills_from_query_enhanced() AND
+        # 4. Query does NOT contain any skill from TECH_SKILLS
+        if not detected_main_role and not detected_subrole and not detected_skills and not query_has_valid_skill:
             return jsonify({
                 'error': 'Please refine the search and include at least one role or one skill.'
             }), 400
@@ -1694,35 +2057,137 @@ def search_resumes():
         where_clauses = ["rm.status = 'active'"]
         params = []
         
-        # Role filter (only role_type)
-        if detected_main_role:
+        # Role filter: Only apply if role was EXPLICITLY mentioned in query (not inferred from skills)
+        # Skill-only queries (e.g., "mysql", "mysql, django", "python or css") should NOT filter by role
+        # Role queries (e.g., "java developer") should filter by role
+        # Note: role_detected_explicitly flag is set during role detection above
+        
+        if detected_main_role and role_detected_explicitly:
+            # Role was explicitly mentioned in query - apply role filter
             where_clauses.append("rm.role_type = %s")
             params.append(detected_main_role)
+            logger.info(f"Role filter applied: role='{detected_main_role}' (explicitly mentioned in query)")
+        elif detected_main_role and not role_detected_explicitly:
+            # Role was inferred from skills only - skip role filter for skill-only queries
+            logger.info(f"Role filter skipped: role='{detected_main_role}' was inferred from skills, query is skill-only")
         
-        # Profile Type filter
+        # Subrole filter (ONLY if explicit subrole detected)
+        if detected_subrole and explicit_subrole:
+            where_clauses.append("rm.subrole_type = %s")
+            params.append(detected_subrole)
+        
+        # Profile Type filter (using canonicalized values)
+        # For skill-only queries, make profile_type filter optional (use OR with skill matching)
         profile_type_filters = []
         if detected_profile_type_from_role:
+            # Use canonicalized profile type for LIKE matching
+            canonical_profile_type = canonicalize_profile_type(detected_profile_type_from_role)
             profile_type_filters.append("rm.profile_type LIKE %s")
-            params.append(f"%{detected_profile_type_from_role}%")
-        # Also add profile types from skills
+            params.append(f"%{canonical_profile_type}%")
+            logger.info(f"Adding profile_type filter: {canonical_profile_type}")
+        
+        # Also add profile types from skills (canonicalized)
         for pt in skill_profile_types:
-            if pt not in [detected_profile_type_from_role] if detected_profile_type_from_role else []:
+            canonical_pt = canonicalize_profile_type(pt)
+            # Avoid duplicates
+            if canonical_pt and canonical_pt not in [detected_profile_type_from_role] if detected_profile_type_from_role else []:
                 profile_type_filters.append("rm.profile_type LIKE %s")
-                params.append(f"%{pt}%")
+                params.append(f"%{canonical_pt}%")
+                logger.info(f"Adding skill profile_type filter: {canonical_pt}")
         
-        if profile_type_filters:
+        # Score-based filtering and fetching (Hybrid Approach: Option 5)
+        # Use score columns for ALL detected skills (more reliable than profile_type matching alone)
+        # Only filter by score columns that actually exist in the database
+        join_clause = ""
+        valid_score_columns = [col for col in skill_score_columns if col]  # Filter out None values
+        use_score_filtering = True  # Flag to control whether to filter by scores
+        
+        # Skill matching filters (for skill-only queries, check skills directly)
+        skill_match_filters = []
+        if detected_skills:
+            # For skill-only queries, also check if skills appear in primary_skills/all_skills
+            # This helps find candidates even if they don't have profile scores calculated
+            for skill_info in detected_skills:
+                skill_name = skill_info.get('skill', '').lower()
+                if skill_name:
+                    # Check in primary_skills, secondary_skills, and all_skills
+                    skill_match_filters.append(
+                        "(LOWER(rm.primary_skills) LIKE %s OR LOWER(rm.secondary_skills) LIKE %s OR LOWER(rm.all_skills) LIKE %s)"
+                    )
+                    skill_pattern = f"%{skill_name}%"
+                    params.extend([skill_pattern, skill_pattern, skill_pattern])
+                    logger.info(f"Adding skill match filter: {skill_name}")
+        
+        if valid_score_columns:
+            # Use LEFT JOIN instead of INNER JOIN for skill-only queries
+            # This includes candidates even if they don't have entries in candidate_profile_scores
+            # For skill-only queries (no explicit role), use LEFT JOIN
+            # For role queries, we can still use LEFT JOIN but filter by score if available
+            if role_detected_explicitly:
+                # Role query: Use INNER JOIN (strict matching)
+                join_clause = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+            else:
+                # Skill-only query: Use LEFT JOIN (include candidates without scores)
+                join_clause = "LEFT JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+                logger.info("Using LEFT JOIN for skill-only query (includes candidates without profile scores)")
+            
+            # Filter by score > 0 for each detected skill with valid score column
+            # For skill-only queries, combine with skill matching (OR logic)
+            if use_score_filtering:
+                score_filters = []
+                for col in valid_score_columns:
+                    score_filters.append(f"cps.{col} > 0")
+                    logger.info(f"Adding score filter: {col} > 0")
+                
+                # For skill-only queries: (score > 0) OR (skill in primary_skills/all_skills) OR (profile_type match)
+                # For role queries: (score > 0) AND (profile_type match)
+                if not role_detected_explicitly:
+                    # Skill-only: Use OR logic - either has score OR has skill in text OR has matching profile_type
+                    or_conditions = []
+                    or_conditions.extend(score_filters)
+                    if skill_match_filters:
+                        or_conditions.extend(skill_match_filters)
+                    if profile_type_filters:
+                        or_conditions.extend(profile_type_filters)
+                    
+                    if or_conditions:
+                        combined_filter = "(" + " OR ".join(or_conditions) + ")"
+                        where_clauses.append(combined_filter)
+                        logger.info(f"Using OR logic for skill-only query: (score > 0) OR (skill in skills text) OR (profile_type match)")
+                else:
+                    # Role query: Use AND logic with score filters
+                    where_clauses.extend(score_filters)
+                    # Also add profile_type as AND filter for role queries
+                    if profile_type_filters:
+                        where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
+                        logger.info("Adding profile_type filter for role query")
+        elif skill_match_filters:
+            # No score columns but have skill matches - use skill matching with optional profile_type
+            or_conditions = []
+            or_conditions.extend(skill_match_filters)
+            if profile_type_filters and not role_detected_explicitly:
+                # For skill-only: Include profile_type in OR logic
+                or_conditions.extend(profile_type_filters)
+                where_clauses.append("(" + " OR ".join(or_conditions) + ")")
+                logger.info("Using skill matching with profile_type (OR logic, no score columns available)")
+            else:
+                # For role queries or no profile_type: Use skill matching only
+                where_clauses.append("(" + " OR ".join(skill_match_filters) + ")")
+                logger.info("Using skill matching only (no score columns available)")
+        elif profile_type_filters and role_detected_explicitly:
+            # Role query with profile_type but no score columns or skill matches
             where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
-        
-        # Multi-skill AND filter (all scores > 0) - Only apply when multiple skills detected
-        if skill_score_columns and len(detected_skills) > 1:
-            # Need to join with candidate_profile_scores
-            for col in skill_score_columns:
-                where_clauses.append(f"cps.{col} > 0")
+            logger.info("Using profile_type filter only for role query")
         
         # Build final SQL
-        join_clause = ""
-        if skill_score_columns and len(detected_skills) > 1:
-            join_clause = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+        # Always include skill scores in SELECT for SQL score calculation
+        skill_score_select = ""
+        if valid_score_columns:
+            # Add skill score columns to SELECT
+            skill_score_select = ", " + ", ".join([f"cps.{col}" for col in valid_score_columns])
+        elif join_clause:
+            # If join exists but no valid score columns, still join to get empty scores
+            skill_score_select = ""
         
         # Conditionally add LIMIT clause
         limit_clause = "LIMIT %s" if limit is not None else ""
@@ -1748,6 +2213,7 @@ def search_resumes():
                 rm.education,
                 rm.resume_summary,
                 rm.created_at
+                {skill_score_select}
             FROM resume_metadata rm
             {join_clause}
             WHERE {' AND '.join(where_clauses)}
@@ -1764,7 +2230,7 @@ def search_resumes():
             
             sql_candidates = []
             for r in results:
-                sql_candidates.append({
+                candidate_data = {
                     'candidate_id': r['candidate_id'],
                     'name': r['name'],
                     'email': r.get('email', ''),
@@ -1783,16 +2249,39 @@ def search_resumes():
                     'domain': r.get('domain', ''),
                     'education': r.get('education', ''),
                     'resume_summary': r.get('resume_summary', ''),
-                })
+                }
+                
+                # Add skill scores from candidate_profile_scores if available
+                if valid_score_columns:
+                    for col in valid_score_columns:
+                        candidate_data[col] = r.get(col, 0.0)
+                
+                sql_candidates.append(candidate_data)
+        
+        # === STEP 7.5: Calculate SQL Scores for All Candidates ===
+        sql_scores = {}
+        for candidate in sql_candidates:
+            sql_score = calculate_sql_score(
+                candidate=candidate,
+                detected_main_role=detected_main_role,
+                detected_subrole=detected_subrole,
+                detected_profile_type=detected_profile_type_from_role,
+                detected_skills=detected_skills,
+                skill_score_columns=skill_score_columns,
+                max_skill_score=200.0
+            )
+            sql_scores[candidate['candidate_id']] = sql_score
+            candidate['sql_score'] = round(sql_score, 4)  # Store for debugging/transparency
         
         # === STEP 8: Semantic Search (Hybrid Approach) ===
         semantic_applied = False
         final_candidates = sql_candidates
         semantic_scores = {}
         
-        # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
+        # Initialize match_score with SQL scores (will be updated if semantic search succeeds)
         for candidate in final_candidates:
-            candidate['match_score'] = 1.0  # Perfect SQL match (default)
+            candidate_id = candidate['candidate_id']
+            candidate['match_score'] = round(sql_scores.get(candidate_id, 0.5), 4)  # Use SQL score as default
         
         if use_semantic and sql_candidates and ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
             try:
@@ -1843,17 +2332,26 @@ def search_resumes():
                                 pinecone_candidate_ids.append(candidate_id)
                                 semantic_scores[candidate_id] = match.score
                         
-                        # Reorder final_candidates by semantic score
-                        candidate_id_to_score = semantic_scores
+                        # Calculate hybrid match_score: SQL (30%) + Pinecone (70%)
+                        for candidate in final_candidates:
+                            candidate_id = candidate['candidate_id']
+                            sql_score = sql_scores.get(candidate_id, 0.5)
+                            pinecone_score = semantic_scores.get(candidate_id, 0.0)
+                            
+                            # Combine scores: SQL 30% + Pinecone 70%
+                            if pinecone_score > 0:
+                                hybrid_score = (sql_score * 0.3) + (pinecone_score * 0.7)
+                                candidate['match_score'] = round(hybrid_score, 4)
+                                candidate['semantic_score'] = round(pinecone_score, 4)  # Store for transparency
+                            else:
+                                # Only SQL score available
+                                candidate['match_score'] = round(sql_score, 4)
+                        
+                        # Reorder final_candidates by hybrid match_score
                         final_candidates.sort(
-                            key=lambda x: candidate_id_to_score.get(x['candidate_id'], 0),
+                            key=lambda x: x.get('match_score', 0),
                             reverse=True
                         )
-                        
-                        # Update match_score with semantic scores
-                        for candidate in final_candidates:
-                            if candidate['candidate_id'] in semantic_scores:
-                                candidate['match_score'] = round(semantic_scores[candidate['candidate_id']], 4)
                         
                         semantic_applied = True
                         logger.info(f"✅ Semantic search completed: {len(final_candidates)} candidates re-ranked")
@@ -1868,9 +2366,10 @@ def search_resumes():
                 logger.warning(f"Semantic search failed: {e}, falling back to SQL-only results")
                 logger.error(traceback.format_exc())
                 semantic_applied = False
-                # Set match_score to 1.0 for SQL-only candidates
+                # Use SQL scores for SQL-only candidates
                 for candidate in final_candidates:
-                    candidate['match_score'] = 1.0
+                    candidate_id = candidate['candidate_id']
+                    candidate['match_score'] = round(sql_scores.get(candidate_id, 0.5), 4)
         
         # === STEP 8: Semantic Search using Process_Search_Query (Query Correct Index) ===
         # This is a fallback/alternative approach - only use if first approach didn't work
@@ -1908,8 +2407,14 @@ def search_resumes():
                     # Fetch full candidate details from database using candidate IDs from Pinecone
                     if pinecone_candidate_ids:
                         with create_ats_database() as db:
-                            # Build SQL query to fetch candidates by IDs
+                            # Build SQL query to fetch candidates by IDs with skill scores
                             placeholders = ','.join(['%s'] * len(pinecone_candidate_ids))
+                            skill_score_select = ""
+                            join_clause_pinecone = ""
+                            if valid_score_columns:
+                                skill_score_select = ", " + ", ".join([f"cps.{col}" for col in valid_score_columns])
+                                join_clause_pinecone = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
+                            
                             sql = f"""
                                 SELECT 
                                     rm.candidate_id,
@@ -1931,7 +2436,9 @@ def search_resumes():
                                     rm.education,
                                     rm.resume_summary,
                                     rm.created_at
+                                    {skill_score_select}
                                 FROM resume_metadata rm
+                                {join_clause_pinecone}
                                 WHERE rm.status = 'active'
                                   AND rm.candidate_id IN ({placeholders})
                                 ORDER BY FIELD(rm.candidate_id, {placeholders})
@@ -1941,7 +2448,8 @@ def search_resumes():
                             db.cursor.execute(sql, ordered_ids + ordered_ids)
                             results = db.cursor.fetchall()
                             
-                            # Build candidates list with semantic scores
+                            # Build candidates list and calculate hybrid scores
+                            pinecone_candidates = []
                             for r in results:
                                 candidate_id = r['candidate_id']
                                 candidate = {
@@ -1963,14 +2471,45 @@ def search_resumes():
                                     'domain': r.get('domain', ''),
                                     'education': r.get('education', ''),
                                     'resume_summary': r.get('resume_summary', ''),
-                                    'semantic_score': round(semantic_scores.get(candidate_id, 0), 4),
-                                    'match_score': round(semantic_scores.get(candidate_id, 0), 4)  # Use semantic score as match_score
                                 }
-                                final_candidates.append(candidate)
+                                
+                                # Add skill scores if available
+                                if valid_score_columns:
+                                    for col in valid_score_columns:
+                                        candidate[col] = r.get(col, 0.0)
+                                
+                                # Calculate SQL score for this candidate
+                                sql_score = calculate_sql_score(
+                                    candidate=candidate,
+                                    detected_main_role=detected_main_role,
+                                    detected_subrole=detected_subrole,
+                                    detected_profile_type=detected_profile_type_from_role,
+                                    detected_skills=detected_skills,
+                                    skill_score_columns=skill_score_columns,
+                                    max_skill_score=200.0
+                                )
+                                candidate['sql_score'] = round(sql_score, 4)
+                                
+                                # Get Pinecone score
+                                pinecone_score = semantic_scores.get(candidate_id, 0.0)
+                                candidate['semantic_score'] = round(pinecone_score, 4)
+                                
+                                # Calculate hybrid match_score: SQL (30%) + Pinecone (70%)
+                                if pinecone_score > 0:
+                                    hybrid_score = (sql_score * 0.3) + (pinecone_score * 0.7)
+                                    candidate['match_score'] = round(hybrid_score, 4)
+                                else:
+                                    # Only SQL score available
+                                    candidate['match_score'] = round(sql_score, 4)
+                                
+                                pinecone_candidates.append(candidate)
                             
-                            # Sort by semantic score (already ordered by Pinecone, but ensure consistency)
+                            # Replace final_candidates with Pinecone candidates
+                            final_candidates = pinecone_candidates
+                            
+                            # Sort by hybrid match_score
                             final_candidates.sort(
-                                key=lambda x: x.get('semantic_score', 0),
+                                key=lambda x: x.get('match_score', 0),
                                 reverse=True
                             )
                             
@@ -1985,14 +2524,16 @@ def search_resumes():
                         # Fallback to SQL results
                         final_candidates = sql_candidates
                         for candidate in final_candidates:
-                            candidate['match_score'] = 1.0
+                            candidate_id = candidate['candidate_id']
+                            candidate['match_score'] = round(sql_scores.get(candidate_id, 0.5), 4)
                 else:
                     error_msg = search_result.get('error', 'Unknown error')
                     logger.warning(f"Process_Search_Query failed: {error_msg}, falling back to SQL-only results")
                     # Fallback to SQL results
                     final_candidates = sql_candidates
                     for candidate in final_candidates:
-                        candidate['match_score'] = 1.0
+                        candidate_id = candidate['candidate_id']
+                        candidate['match_score'] = round(sql_scores.get(candidate_id, 0.5), 4)
                     
             except Exception as e:
                 logger.warning(f"Semantic search failed: {e}, falling back to SQL-only results")
@@ -2001,10 +2542,11 @@ def search_resumes():
                 if not final_candidates:
                     final_candidates = sql_candidates
                 semantic_applied = False
-                # Set match_score to 1.0 for SQL-only candidates (perfect SQL match)
+                # Use SQL scores for SQL-only candidates
                 for candidate in final_candidates:
                     if 'match_score' not in candidate:
-                        candidate['match_score'] = 1.0
+                        candidate_id = candidate['candidate_id']
+                        candidate['match_score'] = round(sql_scores.get(candidate_id, 0.5), 4)
         
         # === STEP 9: Boolean Filter ===
         boolean_applied = False
@@ -2060,14 +2602,35 @@ def search_resumes():
         if limit is not None:
             final_candidates = final_candidates[:limit]
         
+        # Determine query type
+        if explicit_subrole:
+            if detected_skills:
+                query_type = 'role_skill_search'
+            else:
+                query_type = 'role_search'
+        elif detected_main_role:
+            if detected_skills:
+                query_type = 'role_skill_search'
+            else:
+                query_type = 'role_search'
+        elif detected_skills:
+            query_type = 'skills_only'
+        else:
+            query_type = 'unknown'
+        
         # Build analysis response
         analysis = {
+            'query_type': query_type,
             'detected_subrole': detected_subrole,
+            'explicit_subrole_detected': explicit_subrole is not None,
             'detected_main_role': detected_main_role,
             'detected_profile_type': detected_profile_type_from_role,
             'detected_skills': [s['skill'] for s in detected_skills],
             'skill_profile_types': skill_profile_types,
             'skill_score_columns': skill_score_columns,
+            'detected_locations': detected_locations,
+            'cleaned_query': cleaned_query if 'cleaned_query' in locals() else query,
+            'boolean_structure': boolean_structure if 'boolean_structure' in locals() else None,
             'semantic_search_applied': semantic_applied,
             'boolean_filter_applied': boolean_applied,
             'sql_candidates_count': len(sql_candidates),
@@ -2128,7 +2691,7 @@ def search_resumes():
 
 
 # ============================================================================
-# Role Mapping Structures for /api/searchResume
+# Role Mapping Structures for /api/searchResumes
 # ============================================================================
 
 # Role hierarchy: (main_role, {set of sub_roles})
@@ -2360,6 +2923,9 @@ MASTER_SKILL_TO_PROFILE_AND_SCORE = {
     "python": {"profile_type": "Python", "score_column": "python_score"},
     "sql": {"profile_type": "Database", "score_column": "database_score"},
     "database": {"profile_type": "Database", "score_column": "database_score"},
+    "mysql": {"profile_type": "Database", "score_column": "database_score"},
+    "postgresql": {"profile_type": "Database", "score_column": "database_score"},
+    "mongodb": {"profile_type": "Database", "score_column": "database_score"},
     "erp": {"profile_type": "ERP", "score_column": "erp_score"},
     "sap": {"profile_type": "SAP", "score_column": "sap_score"},
     "devops": {"profile_type": "DevOps", "score_column": "devops_score"},
@@ -2546,17 +3112,64 @@ def extract_specific_technologies(text: str, required_skills: str = '') -> List[
 
 
 def looks_like_name(text: str) -> bool:
-    """Detect if input looks like a candidate name."""
+    """
+    Detect if input looks like a candidate name.
+    Uses comprehensive technical term detection to avoid false positives.
+    """
+    if not text or not text.strip():
+        return False
+    
+    text_lower = normalize_text(text)
+    
+    # FIRST: Check if it's a known technical term (comprehensive check)
+    # This prevents technical queries from being misidentified as names
+    
+    # 1. Check against MASTER_SKILL_TO_PROFILE_AND_SCORE keys
+    if MASTER_SKILL_TO_PROFILE_AND_SCORE:
+        if any(skill in text_lower for skill in MASTER_SKILL_TO_PROFILE_AND_SCORE.keys()):
+            return False  # It's a skill, not a name
+    
+    # 2. Check against additional skills (power platform, ios, django, etc.)
+    additional_skill_keywords = [
+        "power platform", "powerplatform", "power apps", "power automate",
+        "power bi", "dataverse", "power fx", "canvas app", "model-driven app",
+        "ios", "django", "flask", "spring boot", "springboot"
+    ]
+    if any(kw in text_lower for kw in additional_skill_keywords):
+        return False  # It's a technical term, not a name
+    
+    # 3. Check against PROFILE_TYPE_RULES keywords (from profile_type_utils)
+    try:
+        from profile_type_utils import PROFILE_TYPE_RULES
+        for profile_type, keywords in PROFILE_TYPE_RULES:
+            # Check if any keyword from this profile type matches
+            if any(kw in text_lower for kw in keywords):
+                return False  # It's a technical term, not a name
+    except ImportError:
+        # If import fails, continue with other checks
+        pass
+    
+    # 4. Check against original tech keywords (for backward compatibility)
+    tech_keywords = [
+        "java", "python", "react", "sql", "developer", "engineer", 
+        "manager", "analyst", ".net", "asp", "c#", "javascript",
+        # Common short skills that look like names
+        "css", "html", "xml", "json", "api", "ui", "ux", "jsx", "tsx",
+        "aws", "gcp", "api", "rest", "soap", "graphql", "http", "https",
+        "sdk", "ide", "cli", "gui", "sso", "oauth", "jwt", "rpc",
+        "dns", "tcp", "udp", "ip", "url", "uri", "csv", "pdf", "xls"
+    ]
+    if any(kw in text_lower for kw in tech_keywords):
+        return False  # It's a technical term, not a name
+    
+    # THEN: Check name pattern (only if no technical terms found)
     words = text.strip().split()
-    if 2 <= len(words) <= 4:
+    if 1 <= len(words) <= 4:
         if all(word.isalpha() for word in words):
-            tech_keywords = [
-                "java", "python", "react", "sql", "developer", "engineer", 
-                "manager", "analyst", ".net", "asp", "c#", "javascript"
-            ]
-            text_lower = text.lower()
-            if not any(kw in text_lower for kw in tech_keywords):
-                return True
+            # If we reach here, it passed all technical term checks
+            # and matches name pattern, so it might be a name
+            return True
+    
     return False
 
 
@@ -2638,487 +3251,494 @@ def infer_subrole_from_profile_type(profile_type: str) -> Optional[Dict[str, str
     }
 
 
-@app.route('/api/searchResume', methods=['POST'])
-def search_resume():
+# ============================================================================
+# Query Understanding Engine Helper Functions
+# ============================================================================
+
+# Explicit subroles that should be detected (ONLY these three)
+EXPLICIT_SUBROLES = [
+    "Frontend Developer", "Front-End Developer", "Front End Developer",
+    "Backend Developer", "Back-End Developer", "Back End Developer",
+    "Full Stack Developer", "Full-Stack Developer", "Fullstack Developer"
+]
+
+# Stop words for partial query cleaning
+STOP_WORDS = [
+    "get", "the", "profile", "of", "show", "candidates", "for", "find",
+    "search", "look", "with", "having", "who", "are", "is", "a", "an",
+    "in", "at", "on", "from", "to", "and", "or", "not"
+]
+
+# Irrelevant query patterns (non-technical phrases)
+IRRELEVANT_PATTERNS = [
+    r'\bcommunication\b',
+    r'\bfor the team\b',
+    r'\bin the company\b',
+    r'\bto handle\b',
+    r'\bability to\b',
+    r'\bgood\b.*\bcommunication\b',
+    r'\bteam\s+player\b',
+    r'\bwork\s+ethic\b'
+]
+
+# Technology + Role pattern keywords
+ROLE_TITLE_KEYWORDS = ['developer', 'engineer', 'programmer', 'architect']
+
+
+def clean_partial_query(query: str) -> str:
     """
-    AI Search with Role + Skill + Profile Type logic.
+    Clean partial queries by removing stop words.
+    Example: "get the profile of power platform" → "power platform"
+    """
+    if not query:
+        return query
     
-    Requirements:
-    1. Role + skill query ("java developer"):
-       - Extract profile_type and sub_role_type from query
-       - Derive role_type from sub_role_type
-       - Filter by role_type AND profile_type
+    # Remove stop words
+    words = query.split()
+    cleaned_words = [w for w in words if w.lower() not in STOP_WORDS]
     
-    2. Skill-only query ("ASP.NET"):
-       - Extract profile_type from skill (using profile_type_utils)
-       - Infer sub_role_type from profile_type
-       - Derive role_type from sub_role_type
-       - Filter by role_type AND profile_type (or profile_type only as fallback)
+    # Rejoin
+    cleaned = ' '.join(cleaned_words)
     
-    3. Name search ("sesha"):
-       - Fuzzy match on LOWER(name) LIKE '%search_term%'
+    # Remove extra spaces
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     
-    4. Multi-skill AND logic:
-       - All detected skill scores > 0 (AND condition)
+    return cleaned if cleaned else query
+
+
+def is_irrelevant_query(query: str) -> bool:
+    """
+    Check if query is irrelevant (non-technical).
+    Uses comprehensive technical term detection including TECH_SKILLS, 
+    MASTER_SKILL_TO_PROFILE_AND_SCORE, PROFILE_TYPE_RULES, and domain keywords.
+    """
+    if not query:
+        return True
     
-    5. Input validation:
-       - Require at least one role OR one skill (not both)
+    query_lower = normalize_text(query)
     
-    Input: {"query": "<search_text>", "limit": 50}
-    Output: JSON with matching candidates
+    # FIRST: Check against TECH_SKILLS (comprehensive skill list from skill_extractor.py)
+    # This includes 6000+ skills including "saas", "paas", "iaas", etc.
+    # Direct check - very fast set membership
+    if any(skill.lower() in query_lower for skill in TECH_SKILLS):
+        return False  # Has technical skill, not irrelevant
+    
+    # SECOND: Check MASTER_SKILL_TO_PROFILE_AND_SCORE
+    if MASTER_SKILL_TO_PROFILE_AND_SCORE:
+        if any(skill in query_lower for skill in MASTER_SKILL_TO_PROFILE_AND_SCORE.keys()):
+            return False  # Has master skill, not irrelevant
+    
+    # THIRD: Check additional skills (power platform, ios, django, etc.)
+    additional_skills = [
+        "power platform", "powerplatform", "power apps", "power automate",
+        "power bi", "dataverse", "power fx", "canvas app", "model-driven app",
+        "ios", "django", "flask", "spring boot", "springboot"
+    ]
+    if any(skill in query_lower for skill in additional_skills):
+        return False  # Has additional skill, not irrelevant
+    
+    # FOURTH: Check PROFILE_TYPE_RULES keywords (comprehensive profile type keywords)
+    try:
+        from profile_type_utils import PROFILE_TYPE_RULES
+        for profile_type, keywords in PROFILE_TYPE_RULES:
+            # Check if any keyword from this profile type matches
+            if any(kw in query_lower for kw in keywords):
+                return False  # Has profile type keyword, not irrelevant
+    except ImportError:
+        logger.warning("profile_type_utils.PROFILE_TYPE_RULES not available, skipping PROFILE_TYPE_RULES check")
+    
+    # FIFTH: Check domain keywords (SaaS, PaaS, IaaS, etc. from domain_extraction)
+    try:
+        from domain_extraction import CLOUD_KEYWORDS, IT_KEYWORDS
+        if any(kw in query_lower for kw in CLOUD_KEYWORDS):
+            return False  # Has cloud-related term, not irrelevant
+        if any(kw in query_lower for kw in IT_KEYWORDS):
+            return False  # Has IT-related term, not irrelevant
+    except ImportError:
+        logger.warning("domain_extraction keywords not available, skipping domain keyword check")
+    
+    # SIXTH: Check common technical acronyms and terms
+    common_tech_terms = [
+        'saas', 'paas', 'iaas', 'api', 'sdk', 'sso', 'oauth', 'rest', 'graphql',
+        'crm', 'erp', 'scrum', 'agile', 'kanban', 'ci/cd', 'cicd', 'sdlc',
+        'microservices', 'serverless', 'containerization', 'orchestration',
+        'devops', 'mlops', 'dataops', 'gitops'
+    ]
+    if any(term in query_lower for term in common_tech_terms):
+        return False  # Has common tech term, not irrelevant
+    
+    # SEVENTH: Check original tech keywords (backward compatibility)
+    tech_keywords = [
+        'java', 'python', 'sql', 'javascript', 'react', 'angular', 'vue',
+        'node', 'c#', '.net', 'asp.net', 'php', 'ruby', 'go', 'rust',
+        'developer', 'engineer', 'programmer', 'architect', 'analyst',
+        'database', 'mysql', 'postgresql', 'mongodb', 'redis',
+        'docker', 'kubernetes', 'aws', 'azure', 'gcp',
+        'django', 'flask', 'spring', 'express', 'laravel',
+        'power platform', 'salesforce', 'sap', 'devops'
+    ]
+    if any(kw in query_lower for kw in tech_keywords):
+        return False  # Has tech keyword, not irrelevant
+    
+    # EIGHTH: Check for irrelevant patterns (non-technical phrases)
+    # Only mark as irrelevant if it matches irrelevant patterns AND has no technical terms
+    for pattern in IRRELEVANT_PATTERNS:
+        if re.search(pattern, query_lower, re.IGNORECASE):
+            # Double-check: if it matches irrelevant pattern, it's likely irrelevant
+            return True  # Matches irrelevant pattern
+    
+    # If we reach here, no technical terms found and no irrelevant patterns matched
+    # This means it's a generic query that might still be valid (e.g., "developer")
+    # So we'll be lenient and NOT mark it as irrelevant
+    # Only mark as irrelevant if it's clearly non-technical
+    return False  # Default to NOT irrelevant (let skill/role detection handle it)
+
+
+def detect_explicit_subrole(query: str) -> Optional[str]:
+    """
+    Detect explicit subroles: Frontend Developer, Backend Developer, Full Stack Developer.
+    Returns the exact subrole string if found, None otherwise.
+    """
+    query_normalized = normalize_text(query)
+    
+    for subrole in EXPLICIT_SUBROLES:
+        subrole_normalized = normalize_text(subrole)
+        if subrole_normalized in query_normalized:
+            # Return the canonical form (first in list)
+            if "frontend" in subrole_normalized or "front-end" in subrole_normalized or "front end" in subrole_normalized:
+                return "Frontend Developer"
+            elif "backend" in subrole_normalized or "back-end" in subrole_normalized or "back end" in subrole_normalized:
+                return "Backend Developer"
+            elif "full stack" in subrole_normalized or "fullstack" in subrole_normalized or "full-stack" in subrole_normalized:
+                return "Full Stack Developer"
+    
+    return None
+
+
+def detect_tech_role_pattern(query: str) -> Optional[Dict[str, str]]:
+    """
+    Detect Technology + Role pattern: "java Developer", "python Engineer", etc.
+    
+    Returns:
+        {
+            'main_role': 'Software Engineer',
+            'profile_type': 'Java',
+            'detection_type': 'tech_role_pattern'
+        }
+    
+    NOTE: Does NOT set subrole_type (only explicit subroles do that)
+    """
+    query_normalized = normalize_text(query)
+    
+    # Check each master skill
+    for skill_key, mapping in MASTER_SKILL_TO_PROFILE_AND_SCORE.items():
+        profile_type = mapping['profile_type']
+        
+        # Check for pattern: skill + role_title
+        for role_title in ROLE_TITLE_KEYWORDS:
+            pattern = f"{skill_key} {role_title}"
+            if pattern in query_normalized:
+                # Construct main_role (default to Software Engineer)
+                main_role = "Software Engineer"
+                
+                # Try to get main_role from SUBROLE_TO_MAIN_ROLE if available
+                if SUBROLE_TO_MAIN_ROLE:
+                    # Create a potential subrole name
+                    potential_subrole = f"{profile_type} Developer"
+                    main_role_from_map = SUBROLE_TO_MAIN_ROLE.get(potential_subrole.lower())
+                    if main_role_from_map:
+                        main_role = main_role_from_map
+                
+                return {
+                    'main_role': main_role,
+                    'profile_type': profile_type,
+                    'detection_type': 'tech_role_pattern'
+                }
+    
+    return None
+
+
+def detect_role_from_hierarchy(query: str) -> Optional[str]:
+    """
+    Detect role using role_extract.py detect_all_roles().
+    Returns role_type if found.
     """
     try:
-        if not request.is_json:
-            return jsonify({'error': 'Request must be JSON'}), 400
-        
-        data = request.get_json() or {}
-        query = (data.get('query') or '').strip()
-        
-        if not query:
-            return jsonify({'error': 'Query cannot be empty'}), 400
-        
-        limit = int(data.get('limit', 50))
-        logger.info(f"Processing /api/searchResume query: {query}")
-        start_time = time.time()
-        
-        # === STEP 1: Name Detection ===
-        if looks_like_name(query):
-            logger.info(f"Detected name search for: {query}")
-            with create_ats_database() as db:
-                sql = """
-                    SELECT 
-                        rm.candidate_id,
-                        rm.name,
-                        rm.email,
-                        rm.phone,
-                        rm.total_experience,
-                        rm.primary_skills,
-                        rm.secondary_skills,
-                        rm.all_skills,
-                        rm.profile_type,
-                        rm.role_type,
-                        rm.subrole_type,
-                        rm.sub_profile_type,
-                        rm.current_designation,
-                        rm.current_location,
-                        rm.current_company,
-                        rm.domain,
-                        rm.education,
-                        rm.resume_summary,
-                        rm.created_at
-                    FROM resume_metadata rm
-                    WHERE rm.status = 'active'
-                      AND LOWER(rm.name) LIKE %s
-                    ORDER BY rm.total_experience DESC
-                    LIMIT %s
-                """
-                db.cursor.execute(sql, (f"%{query.lower()}%", limit))
-                results = db.cursor.fetchall()
-                
-                candidates = []
-                for r in results:
-                    candidates.append({
-                        'candidate_id': r['candidate_id'],
-                        'name': r['name'],
-                        'email': r.get('email', ''),
-                        'phone': r.get('phone', ''),
-                        'total_experience': r.get('total_experience', 0),
-                        'primary_skills': r.get('primary_skills', ''),
-                        'secondary_skills': r.get('secondary_skills', ''),
-                        'all_skills': r.get('all_skills', ''),
-                        'profile_type': r.get('profile_type', ''),
-                        'role_type': r.get('role_type', ''),
-                        'subrole_type': r.get('subrole_type', ''),
-                        'sub_profile_type': r.get('sub_profile_type', ''),
-                        'current_designation': r.get('current_designation', ''),
-                        'current_location': r.get('current_location', ''),
-                        'current_company': r.get('current_company', ''),
-                        'domain': r.get('domain', ''),
-                        'education': r.get('education', ''),
-                        'resume_summary': r.get('resume_summary', ''),
-                    })
-                
-                # Build the response for name search
-                response_data = {
-                    'query': query,
-                    'search_type': 'name_search',
-                    'analysis': {'detected_as': 'name'},
-                    'count': len(candidates),
-                    'results': candidates,
-                    'processing_time_ms': int((time.time() - start_time) * 1000),
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                # === SAVE CHAT HISTORY FOR NAME SEARCH ===
-                chat_role = data.get('role')
-                chat_sub_role = data.get('sub_role')
-                chat_profile_type = data.get('profile_type')
-                chat_sub_profile_type = data.get('sub_profile_type')
-                chat_candidate_id = data.get('candidate_id')
-                
-                try:
-                    db.insert_chat_history(
-                        chat_msg=query,
-                        response=json.dumps(response_data, default=str),
-                        candidate_id=chat_candidate_id,
-                        role=chat_role,
-                        sub_role=chat_sub_role,
-                        profile_type=chat_profile_type,
-                        sub_profile_type=chat_sub_profile_type
-                    )
-                except Exception as history_error:
-                    logger.warning(f"Failed to save chat history for name search: {history_error}")
-                
-                return jsonify(response_data), 200
-        
-        # === STEP 2: Role Detection ===
-        role_info = detect_subrole_from_query(query)
-        detected_subrole = role_info['sub_role'] if role_info else None
-        detected_main_role = role_info['main_role'] if role_info else None
-        detected_profile_type_from_role = role_info['profile_type'] if role_info else None
-        
-        # === STEP 3: Skill Extraction ===
-        detected_skills = extract_master_skills(query)
-        skill_score_columns = [s['score_column'] for s in detected_skills]
-        skill_profile_types = [s['profile_type'] for s in detected_skills]
-        first_skill_profile_type = skill_profile_types[0] if skill_profile_types else None
-        
-        # === STEP 4: Profile Type Detection (for skill-only queries) ===
-        if not detected_profile_type_from_role and first_skill_profile_type:
-            # Use profile_type from first skill
-            detected_profile_type_from_role = first_skill_profile_type
-            # Infer sub-role from profile_type
-            if not detected_subrole:
-                inferred_role_info = infer_subrole_from_profile_type(first_skill_profile_type)
-                if inferred_role_info:
-                    detected_subrole = inferred_role_info['sub_role']
-                    detected_main_role = inferred_role_info['main_role']
-        
-        # === STEP 5: Input Validation ===
-        if not detected_subrole and not detected_skills:
-            return jsonify({
-                'error': 'Please refine the search and include at least one role or one skill.'
-            }), 400
-        
-        # === STEP 6: Build SQL Query ===
-        where_clauses = ["rm.status = 'active'"]
-        params = []
-        
-        # Profile Type filter ONLY (no role_type filter - too strict, causes 0 results)
-        profile_type_filters = []
-        if detected_profile_type_from_role:
-            profile_type_filters.append("rm.profile_type LIKE %s")
-            params.append(f"%{detected_profile_type_from_role}%")
-        # Also add profile types from skills
-        for pt in skill_profile_types:
-            if pt not in [detected_profile_type_from_role] if detected_profile_type_from_role else []:
-                profile_type_filters.append("rm.profile_type LIKE %s")
-                params.append(f"%{pt}%")
-        
-        if profile_type_filters:
-            where_clauses.append("(" + " OR ".join(profile_type_filters) + ")")
-        else:
-            # If no profile_type detected, don't filter by it (return all active candidates)
-            logger.warning("No profile_type detected, returning all active candidates")
-        
-        # Multi-skill AND filter (all scores > 0) - Only apply when multiple skills detected
-        if skill_score_columns and len(detected_skills) > 1:
-            # Need to join with candidate_profile_scores
-            for col in skill_score_columns:
-                where_clauses.append(f"cps.{col} > 0")
-        
-        # Build final SQL
-        join_clause = ""
-        if skill_score_columns and len(detected_skills) > 1:
-            join_clause = "INNER JOIN candidate_profile_scores cps ON rm.candidate_id = cps.candidate_id"
-        
-        sql = f"""
-            SELECT 
-                rm.candidate_id,
-                rm.name,
-                rm.email,
-                rm.phone,
-                rm.total_experience,
-                rm.primary_skills,
-                rm.secondary_skills,
-                rm.all_skills,
-                rm.profile_type,
-                rm.role_type,
-                rm.subrole_type,
-                rm.sub_profile_type,
-                rm.current_designation,
-                rm.current_location,
-                rm.current_company,
-                rm.domain,
-                rm.education,
-                rm.resume_summary,
-                rm.created_at
-            FROM resume_metadata rm
-            {join_clause}
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY rm.total_experience DESC
-            LIMIT %s
-        """
-        params.append(limit)
-        
-        # === STEP 7: Execute Query ===
-        with create_ats_database() as db:
-            db.cursor.execute(sql, params)
-            results = db.cursor.fetchall()
-            
-            sql_candidates = []
-            for r in results:
-                sql_candidates.append({
-                    'candidate_id': r['candidate_id'],
-                    'name': r['name'],
-                    'email': r.get('email', ''),
-                    'phone': r.get('phone', ''),
-                    'total_experience': r.get('total_experience', 0),
-                    'primary_skills': r.get('primary_skills', ''),
-                    'secondary_skills': r.get('secondary_skills', ''),
-                    'all_skills': r.get('all_skills', ''),
-                    'profile_type': r.get('profile_type', ''),
-                    'role_type': r.get('role_type', ''),
-                    'subrole_type': r.get('subrole_type', ''),
-                    'sub_profile_type': r.get('sub_profile_type', ''),
-                    'current_designation': r.get('current_designation', ''),
-                    'current_location': r.get('current_location', ''),
-                    'current_company': r.get('current_company', ''),
-                    'domain': r.get('domain', ''),
-                    'education': r.get('education', ''),
-                    'resume_summary': r.get('resume_summary', ''),
-                })
-        
-        # === STEP 8: Pinecone Semantic Search (Hybrid Approach) ===
-        semantic_applied = False
-        final_candidates = sql_candidates.copy()  # Start with SQL results as fallback
-        semantic_scores = {}
-        
-        # Initialize match_score for SQL-only candidates (will be updated if semantic search succeeds)
-        for candidate in final_candidates:
-            candidate['match_score'] = 1.0  # Perfect SQL match (default)
-        
-        # Apply Pinecone semantic search
-        # If SQL returned 0 results, still try Pinecone (might have candidates in Pinecone but not in DB, or SQL filter too strict)
-        if ATSConfig.USE_PINECONE and ATSConfig.PINECONE_API_KEY:
-            try:
-                # Determine profile_type for index selection
-                search_profile_type = detected_profile_type_from_role or first_skill_profile_type
-                
-                # Get candidate IDs from SQL results (if any)
-                candidate_ids = [c['candidate_id'] for c in sql_candidates[:1000]] if sql_candidates else []
-                
-                if sql_candidates:
-                    logger.info(f"Applying Pinecone semantic search to {len(sql_candidates)} SQL-filtered candidates")
-                else:
-                    logger.info(f"SQL returned 0 candidates. Searching Pinecone directly for profile_type '{search_profile_type}'")
-                
-                # Query Pinecone - get more results than limit for better ranking
-                vector_top_k = min(limit * 3, 200) if limit else 200
-                
-                logger.info(f"Querying Pinecone with profile_type '{search_profile_type}', top_k={vector_top_k}")
-                
-                # Query Pinecone directly
-                # Generate query embedding
-                query_embedding = embedding_service.generate_embedding(query)
-                logger.info(f"Generated query embedding with {len(query_embedding)} dimensions")
-                
-                # Get the correct index name
-                index_name = get_index_name_from_profile_type(search_profile_type) if search_profile_type else 'others'
-                
-                # Connect to Pinecone
-                from pinecone import Pinecone
-                pc = Pinecone(api_key=ATSConfig.PINECONE_API_KEY)
-                
-                # Check if index exists
-                existing_indexes = pc.list_indexes()
-                existing_names = [idx.name for idx in existing_indexes]
-                
-                if index_name not in existing_names:
-                    logger.warning(f"Index '{index_name}' does not exist. Available: {existing_names}. Using first available index.")
-                    if existing_names:
-                        index_name = existing_names[0]
-                    else:
-                        raise Exception(f"No Pinecone indexes available")
-                
-                index = pc.Index(index_name)
-                
-                # Build filter - only filter by candidate IDs if SQL returned results
-                pinecone_filter = None
-                if candidate_ids:
-                    pinecone_filter = {'candidate_id': {'$in': candidate_ids}}
-                    logger.info(f"Filtering Pinecone search to {len(candidate_ids)} SQL candidate IDs")
-                
-                # Query Pinecone
-                vector_results = index.query(
-                    vector=query_embedding,
-                    top_k=vector_top_k,
-                    include_metadata=True,
-                    filter=pinecone_filter
-                )
-                
-                if vector_results and vector_results.matches:
-                    logger.info(f"✅ Pinecone search found {len(vector_results.matches)} results from index '{index_name}'")
-                    
-                    # Extract candidate IDs and scores from Pinecone
-                    pinecone_candidate_ids = []
-                    for match in vector_results.matches:
-                        candidate_id = match.metadata.get('candidate_id')
-                        if candidate_id:
-                            pinecone_candidate_ids.append(candidate_id)
-                            semantic_scores[candidate_id] = match.score
-                    
-                    logger.info(f"Found {len(pinecone_candidate_ids)} unique candidates from Pinecone")
-                    
-                    # Fetch full candidate details from database using candidate IDs from Pinecone
-                    if pinecone_candidate_ids:
-                        with create_ats_database() as db:
-                            # Build SQL query to fetch candidates by IDs
-                            placeholders = ','.join(['%s'] * len(pinecone_candidate_ids))
-                            sql = f"""
-                                SELECT 
-                                    rm.candidate_id,
-                                    rm.name,
-                                    rm.email,
-                                    rm.phone,
-                                    rm.total_experience,
-                                    rm.primary_skills,
-                                    rm.secondary_skills,
-                                    rm.all_skills,
-                                    rm.profile_type,
-                                    rm.role_type,
-                                    rm.subrole_type,
-                                    rm.sub_profile_type,
-                                    rm.current_designation,
-                                    rm.current_location,
-                                    rm.current_company,
-                                    rm.domain,
-                                    rm.education,
-                                    rm.resume_summary,
-                                    rm.created_at
-                                FROM resume_metadata rm
-                                WHERE rm.status = 'active'
-                                  AND rm.candidate_id IN ({placeholders})
-                                ORDER BY FIELD(rm.candidate_id, {placeholders})
-                            """
-                            # Order by IDs in the same order as Pinecone results (by score)
-                            ordered_ids = pinecone_candidate_ids.copy()
-                            db.cursor.execute(sql, ordered_ids + ordered_ids)
-                            results = db.cursor.fetchall()
-                            
-                            # Build candidates list with semantic scores
-                            for r in results:
-                                candidate_id = r['candidate_id']
-                                candidate = {
-                                    'candidate_id': candidate_id,
-                                    'name': r['name'],
-                                    'email': r.get('email', ''),
-                                    'phone': r.get('phone', ''),
-                                    'total_experience': r.get('total_experience', 0),
-                                    'primary_skills': r.get('primary_skills', ''),
-                                    'secondary_skills': r.get('secondary_skills', ''),
-                                    'all_skills': r.get('all_skills', ''),
-                                    'profile_type': r.get('profile_type', ''),
-                                    'role_type': r.get('role_type', ''),
-                                    'subrole_type': r.get('subrole_type', ''),
-                                    'sub_profile_type': r.get('sub_profile_type', ''),
-                                    'current_designation': r.get('current_designation', ''),
-                                    'current_location': r.get('current_location', ''),
-                                    'current_company': r.get('current_company', ''),
-                                    'domain': r.get('domain', ''),
-                                    'education': r.get('education', ''),
-                                    'resume_summary': r.get('resume_summary', ''),
-                                    'semantic_score': round(semantic_scores.get(candidate_id, 0), 4),
-                                    'match_score': round(semantic_scores.get(candidate_id, 0), 4)  # Use semantic score as match_score
-                                }
-                                final_candidates.append(candidate)
-                            
-                            # Sort by semantic score (already ordered by Pinecone, but ensure consistency)
-                            final_candidates.sort(
-                                key=lambda x: x.get('semantic_score', 0),
-                                reverse=True
-                            )
-                            
-                            # Apply limit if specified
-                            if limit:
-                                final_candidates = final_candidates[:limit]
-                            
-                            semantic_applied = True
-                            logger.info(f"✅ Pinecone search completed: {len(final_candidates)} candidates from index '{index_name}'")
-                    else:
-                        logger.warning("No candidate IDs found in Pinecone results")
-                        # Keep SQL results if available
-                        if not sql_candidates:
-                            final_candidates = []
-                    
-            except Exception as e:
-                logger.warning(f"Pinecone semantic search failed: {e}, using SQL-only results")
-                logger.error(traceback.format_exc())
-                # Fallback to SQL-only results (already in final_candidates)
-                semantic_applied = False
-                # Set match_score to 1.0 for SQL-only candidates
-                for candidate in final_candidates:
-                    candidate['match_score'] = 1.0
-        
-        # Build analysis response
-        analysis = {
-            'detected_subrole': detected_subrole,
-            'detected_main_role': detected_main_role,
-            'detected_profile_type': detected_profile_type_from_role,
-            'detected_skills': [s['skill'] for s in detected_skills],
-            'skill_profile_types': skill_profile_types,
-            'skill_score_columns': skill_score_columns,
-            'semantic_search_applied': semantic_applied,
-            'sql_candidates_count': len(sql_candidates),
-            'final_candidates_count': len(final_candidates),
-        }
-        
-        # Determine search type
-        if semantic_applied:
-            search_type = 'sql_pinecone_hybrid'
-        else:
-            search_type = 'role_skill_search'
-        
-        # Build the response
-        response_data = {
-            'query': query,
-            'search_type': search_type,
-            'analysis': analysis,
-            'count': len(final_candidates),
-            'results': final_candidates,
-            'processing_time_ms': int((time.time() - start_time) * 1000),
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # === SAVE CHAT HISTORY ===
-        # Extract role information from request or detected analysis
-        chat_role = data.get('role') or detected_main_role
-        chat_sub_role = data.get('sub_role') or detected_subrole
-        chat_profile_type = data.get('profile_type') or detected_profile_type_from_role
-        chat_sub_profile_type = data.get('sub_profile_type')
-        chat_candidate_id = data.get('candidate_id')  # Optional: if search is for a specific candidate
-        
-        try:
-            with create_ats_database() as history_db:
-                history_db.insert_chat_history(
-                    chat_msg=query,
-                    response=json.dumps(response_data, default=str),
-                    candidate_id=chat_candidate_id,
-                    role=chat_role,
-                    sub_role=chat_sub_role,
-                    profile_type=chat_profile_type,
-                    sub_profile_type=chat_sub_profile_type
-                )
-        except Exception as history_error:
-            # Log error but don't fail the main request
-            logger.warning(f"Failed to save chat history: {history_error}")
-        
-        return jsonify(response_data), 200
-        
+        from role_extract import detect_all_roles
+        roles = detect_all_roles(query)
+        if roles:
+            # Return the highest priority role (first in sorted list)
+            return roles[0][1]  # (priority, role_type, subrole)
     except Exception as e:
-        logger.error(f"Error in /api/searchResume: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        logger.warning(f"Error detecting role from hierarchy: {e}")
+    
+    return None
+
+
+def detect_role_from_processor_table(query: str) -> Optional[str]:
+    """
+    Detect role using role_processor table.
+    Returns normalized role if found.
+    """
+    try:
+        from role_processor import RoleProcessor
+        with RoleProcessor(config=ATSConfig.get_mysql_config()) as rp:
+            # Try to find normalized role
+            normalized = rp.get_normalized_role(query)
+            if normalized:
+                return normalized
+            
+            # Try with cleaned query
+            cleaned = clean_partial_query(query)
+            if cleaned != query:
+                normalized = rp.get_normalized_role(cleaned)
+                if normalized:
+                    return normalized
+    except Exception as e:
+        logger.warning(f"Error detecting role from processor table: {e}")
+    
+    return None
+
+
+def extract_additional_skills(term: str) -> List[Dict[str, str]]:
+    """
+    Extract additional skills not in MASTER_SKILL_TO_PROFILE_AND_SCORE.
+    Handles: "power platform", "ios", "django", "saas", "paas", "iaas", etc.
+    """
+    additional_skills = []
+    term_lower = normalize_text(term)
+    
+    # Power Platform variations
+    if 'power platform' in term_lower or 'powerplatform' in term_lower:
+        additional_skills.append({
+            'skill': 'power platform',
+            'profile_type': 'Microsoft Power Platform',
+            'score_column': 'microsoft_power_platform_score'
+        })
+    
+    # iOS
+    if term_lower in ['ios', 'ios developer', 'ios development']:
+        additional_skills.append({
+            'skill': 'ios',
+            'profile_type': 'Mobile Development',
+            'score_column': 'mobile_development_score'
+        })
+    
+    # Django
+    if 'django' in term_lower:
+        additional_skills.append({
+            'skill': 'django',
+            'profile_type': 'Python',
+            'score_column': 'python_score'
+        })
+    
+    # Flask
+    if 'flask' in term_lower:
+        additional_skills.append({
+            'skill': 'flask',
+            'profile_type': 'Python',
+            'score_column': 'python_score'
+        })
+    
+    # Spring Boot
+    if 'spring boot' in term_lower or 'springboot' in term_lower:
+        additional_skills.append({
+            'skill': 'spring boot',
+            'profile_type': 'Java',
+            'score_column': 'java_score'
+        })
+    
+    # Cloud service models (SaaS, PaaS, IaaS)
+    if term_lower in ['saas', 'software as a service']:
+        additional_skills.append({
+            'skill': 'saas',
+            'profile_type': 'Cloud / Infra',
+            'score_column': 'cloud_infra_score'
+        })
+    
+    if term_lower in ['paas', 'platform as a service']:
+        additional_skills.append({
+            'skill': 'paas',
+            'profile_type': 'Cloud / Infra',
+            'score_column': 'cloud_infra_score'
+        })
+    
+    if term_lower in ['iaas', 'infrastructure as a service']:
+        additional_skills.append({
+            'skill': 'iaas',
+            'profile_type': 'Cloud / Infra',
+            'score_column': 'cloud_infra_score'
+        })
+    
+    # Check TECH_SKILLS for other skills not already detected
+    # Only check if skill wasn't already added above
+    already_detected_skills = {s['skill'].lower() for s in additional_skills}
+    
+    if term_lower not in already_detected_skills:
+        # Check if term is in TECH_SKILLS but not in master list
+        if term_lower in TECH_SKILLS and term_lower not in MASTER_SKILL_TO_PROFILE_AND_SCORE:
+            # Try to infer profile type from PROFILE_TYPE_RULES
+            try:
+                    from profile_type_utils import PROFILE_TYPE_RULES
+                    # Map profile type to score column (only valid columns that exist in database)
+                    profile_to_score = {
+                        'Java': 'java_score',
+                        '.Net': 'dotnet_score',
+                        'Python': 'python_score',
+                        'JavaScript': 'javascript_score',
+                        'Full Stack': 'fullstack_score',
+                        'DevOps': 'devops_score',
+                        'Data Engineering': 'data_engineering_score',
+                        'Data Science': 'data_science_score',
+                        'SAP': 'sap_score',
+                        'ERP': 'erp_score',
+                        'Cloud / Infra': 'cloud_infra_score',
+                        'Database': 'database_score',
+                        'Testing / QA': 'testing_qa_score',
+                        'Mobile Development': 'mobile_development_score',
+                        'Salesforce': 'salesforce_score',
+                        'Microsoft Power Platform': 'microsoft_power_platform_score',
+                        'Business Intelligence (BI)': 'business_intelligence_score',
+                        'RPA': 'rpa_score',
+                        'Cyber Security': 'cyber_security_score',
+                        'Low Code / No Code': 'low_code_no_code_score',
+                        'Integration / APIs': 'integration_apis_score',
+                        'UI/UX': 'ui_ux_score',
+                        'Support': 'support_score',
+                        'Business Development': 'business_development_score'
+                    }
+                    
+                    # Map profile types without score columns to related profile types that have score columns
+                    profile_type_fallback = {
+                        'Dart': 'Mobile Development',  # Dart -> Mobile Development
+                        'Flutter': 'Mobile Development',  # Flutter -> Mobile Development
+                        'Objective-C': 'Mobile Development',  # Objective-C -> Mobile Development
+                        'Go / Golang': 'Python',  # Go -> Python (closest match)
+                        'Ruby': 'Python',  # Ruby -> Python (closest match)
+                        'PHP': 'JavaScript',  # PHP -> JavaScript (web development)
+                        'Rust': 'Python',  # Rust -> Python (closest match)
+                        'Scala': 'Java',  # Scala -> Java (JVM-based)
+                        'C/C++': 'Java',  # C/C++ -> Java (systems programming)
+                    }
+                    
+                    for profile_type, keywords in PROFILE_TYPE_RULES:
+                        if term_lower in keywords:
+                            # Try to get score column for this profile type
+                            score_column = profile_to_score.get(profile_type)
+                            
+                            # If no score column, try fallback profile type
+                            if not score_column:
+                                fallback_profile = profile_type_fallback.get(profile_type)
+                                if fallback_profile:
+                                    score_column = profile_to_score.get(fallback_profile)
+                                    # Use fallback profile type for score, but keep original for profile_type LIKE
+                                    additional_skills.append({
+                                        'skill': term_lower,
+                                        'profile_type': profile_type,  # Original profile type for LIKE filter
+                                        'score_column': score_column  # Fallback score column
+                                    })
+                                    break
+                            
+                            # If we have a valid score column (either direct or from fallback)
+                            if score_column:
+                                additional_skills.append({
+                                    'skill': term_lower,
+                                    'profile_type': profile_type,
+                                    'score_column': score_column
+                                })
+                                break  # Found match, stop searching
+                            else:
+                                # Profile type found but no score column and no fallback
+                                # Add skill but without score column (will use profile_type LIKE only)
+                                additional_skills.append({
+                                    'skill': term_lower,
+                                    'profile_type': profile_type,
+                                    'score_column': None  # No score column available
+                                })
+                                break  # Found match, stop searching
+            except ImportError:
+                pass
+    
+    return additional_skills
+
+
+def extract_skills_from_query_enhanced(query: str, parsed_boolean: Optional[Dict] = None) -> List[Dict[str, str]]:
+    """
+    Extract skills from query with boolean query support.
+    Handles boolean queries by extracting skills from each term.
+    """
+    all_skills = []
+    
+    # If boolean structure provided, extract from each term
+    if parsed_boolean and parsed_boolean.get('and_terms'):
+        all_terms = []
+        for or_group in parsed_boolean['and_terms']:
+            all_terms.extend(or_group)
+    else:
+        # No boolean structure, treat whole query as single term
+        all_terms = [query]
+    
+    # Extract skills from each term
+    for term in all_terms:
+        term_clean = normalize_text(term)
+        
+        # Use existing extract_master_skills function
+        detected_skills = extract_master_skills(term)
+        all_skills.extend(detected_skills)
+        
+        # Also check for additional skills not in MASTER_SKILL dict
+        additional_skills = extract_additional_skills(term_clean)
+        all_skills.extend(additional_skills)
+    
+    # Deduplicate skills (keep first occurrence)
+    seen = set()
+    unique_skills = []
+    for skill in all_skills:
+        skill_key = skill.get('skill', '').lower()
+        if skill_key not in seen:
+            seen.add(skill_key)
+            unique_skills.append(skill)
+    
+    return unique_skills
+
+
+def detect_profile_type_priority(role_type: Optional[str], skills: List[Dict], explicit_subrole: Optional[str]) -> Optional[str]:
+    """
+    Detect profile type with priority:
+    1. From role (if role has associated profile_type)
+    2. From skills (most common profile_type)
+    3. From explicit subrole (if any)
+    """
+    profile_type = None
+    
+    # Priority 1: From role (if role has associated profile_type)
+    # This would need to be implemented based on your role mapping
+    # For now, we'll skip this and go to skills
+    
+    # Priority 2: From skills (most common profile_type)
+    if not profile_type and skills:
+        profile_types = [s.get('profile_type') for s in skills if s.get('profile_type')]
+        if profile_types:
+            # Get most common profile_type
+            profile_type_counter = Counter(profile_types)
+            profile_type = profile_type_counter.most_common(1)[0][0]
+    
+    # Priority 3: From explicit subrole (if any)
+    # Explicit subroles don't directly map to profile_type
+    # But we can infer from context
+    # For now, skip this
+    
+    return profile_type
+
+
+def extract_locations(query: str) -> List[str]:
+    """
+    Extract location patterns from query.
+    Example: "developer in hyderabad" → ["hyderabad"]
+    """
+    location_pattern = r'\b(?:in|at|from|near)\s+([a-z\s]+?)(?:\s|$|AND|OR)'
+    locations = re.findall(location_pattern, normalize_text(query))
+    return [loc.strip() for loc in locations if loc.strip()]
 
 
 @app.route('/api/profileRankingByJD', methods=['POST'])

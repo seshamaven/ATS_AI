@@ -12,7 +12,11 @@ Author: ATS System
 """
 
 import re
+import logging
 from typing import List, Set, Dict, Tuple
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PREDEFINED SKILL LISTS
@@ -1578,6 +1582,18 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
     text_clean = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '', text_clean)  # Phone
     text_clean = re.sub(r'https?://\S+', '', text_clean)  # URLs
     
+    # DEBUG: Log text info for suspicious skills
+    suspicious_skills = ['azure communication services', 'spring']
+    if any(sus_skill in skill_set for sus_skill in suspicious_skills):
+        logger.info(f"[SKILL_EXTRACTION_DEBUG] Text length: {len(text_clean)} chars")
+        logger.debug(f"[SKILL_EXTRACTION_DEBUG] First 500 chars of cleaned text: {text_clean[:500]}")
+        logger.debug(f"[SKILL_EXTRACTION_DEBUG] Last 500 chars of cleaned text: {text_clean[-500:]}")
+        # Check if 'azure' exists in text
+        if 'azure' in text_clean:
+            logger.warning(f"[SKILL_EXTRACTION_DEBUG] 'azure' FOUND in text at positions: {[m.start() for m in re.finditer(r'\\bazure\\b', text_clean, re.IGNORECASE)]}")
+        else:
+            logger.info(f"[SKILL_EXTRACTION_DEBUG] 'azure' NOT FOUND in text")
+    
     # Sort skills by length (longest first) to avoid partial matches
     sorted_skills = sorted(skill_set, key=len, reverse=True)
     
@@ -1588,7 +1604,10 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
         # Normalize skill for matching
         skill_normalized = skill.lower().strip()
         
-        # Create pattern for skill matching
+        # DEBUG: Special logging for suspicious skills
+        is_suspicious = skill_normalized in suspicious_skills
+        
+        # Create pattern for skill matching with STRICT word boundaries
         # Handle special characters in skill names
         skill_pattern = re.escape(skill_normalized)
         skill_pattern = skill_pattern.replace(r'\ ', r'\s+')  # Allow flexible spacing
@@ -1598,15 +1617,64 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
         
         if has_special_chars:
             # For skills with special chars (c++, c#, .net), use exact matching
-            # with optional word boundaries where applicable
-            pattern = skill_pattern
+            # BUT still enforce word boundaries where possible
+            # For multi-word special skills, add boundaries between words
+            if ' ' in skill_normalized or '\s+' in skill_pattern:
+                # Multi-word special skill: add word boundaries around the whole pattern
+                pattern = rf'\b{skill_pattern}\b'
+            else:
+                # Single-word special skill: use exact matching (word boundaries handled by validation)
+                pattern = skill_pattern
         else:
-            # For regular skills, use word boundaries
+            # For regular skills, ALWAYS use word boundaries to prevent substring matches
+            # This ensures "gem" doesn't match in "management" and "v" doesn't match in "vision"
             pattern = rf'\b{skill_pattern}\b'
         
+        # DEBUG: Log pattern for suspicious skills
+        if is_suspicious:
+            logger.info(f"[SKILL_EXTRACTION_DEBUG] Checking skill: '{skill_normalized}'")
+            logger.info(f"[SKILL_EXTRACTION_DEBUG] Pattern: {pattern}")
+            logger.debug(f"[SKILL_EXTRACTION_DEBUG] Skill normalized: '{skill_normalized}', has_special_chars: {has_special_chars}")
+        
         # Find all matches
-        for match in re.finditer(pattern, text_clean, re.IGNORECASE):
+        matches_found = list(re.finditer(pattern, text_clean, re.IGNORECASE))
+        
+        if is_suspicious and matches_found:
+            logger.warning(f"[SKILL_EXTRACTION_DEBUG] MATCH FOUND for '{skill_normalized}'! Found {len(matches_found)} match(es)")
+            for idx, match in enumerate(matches_found):
+                start, end = match.span()
+                matched_text = match.group()
+                context_start = max(0, start - 100)
+                context_end = min(len(text_clean), end + 100)
+                context = text_clean[context_start:context_end]
+                logger.warning(f"[SKILL_EXTRACTION_DEBUG] Match #{idx+1}: Position {start}-{end}, Matched text: '{matched_text}'")
+                logger.warning(f"[SKILL_EXTRACTION_DEBUG] Context: ...{context}...")
+                # Check what's before and after
+                char_before = text_clean[start-1] if start > 0 else '[START]'
+                char_after = text_clean[end] if end < len(text_clean) else '[END]'
+                logger.warning(f"[SKILL_EXTRACTION_DEBUG] Character before: '{char_before}' (ord: {ord(char_before) if start > 0 else 'N/A'})")
+                logger.warning(f"[SKILL_EXTRACTION_DEBUG] Character after: '{char_after}' (ord: {ord(char_after) if end < len(text_clean) else 'N/A'})")
+        elif is_suspicious:
+            logger.info(f"[SKILL_EXTRACTION_DEBUG] No match found for '{skill_normalized}' (pattern: {pattern})")
+        
+        for match in matches_found:
             start, end = match.span()
+            
+            # CRITICAL: Validate that skill is NOT inside a larger word (applies to ALL skills)
+            # Get characters immediately before and after the match
+            char_before = text_clean[start - 1] if start > 0 else ' '
+            char_after = text_clean[end] if end < len(text_clean) else ' '
+            
+            # Reject if skill is inside a larger word (surrounded by letters)
+            # This prevents "gem" from matching in "management" or "v" in "vision"
+            if char_before.isalpha() or char_after.isalpha():
+                if is_suspicious:
+                    logger.warning(f"[SKILL_EXTRACTION_DEBUG] ⚠️  Rejecting '{skill_normalized}' - appears inside larger word")
+                    logger.warning(f"[SKILL_EXTRACTION_DEBUG] Char before: '{char_before}' (isalpha: {char_before.isalpha()}), Char after: '{char_after}' (isalpha: {char_after.isalpha()})")
+                    context_start = max(0, start - 20)
+                    context_end = min(len(text_clean), end + 20)
+                    logger.warning(f"[SKILL_EXTRACTION_DEBUG] Context: ...{text_clean[context_start:context_end]}...")
+                continue  # Skip - skill is inside a larger word
             
             # Special validation for short skills (1-2 letters) to prevent false positives
             # Short skills are prone to matching from within longer words
@@ -1614,6 +1682,8 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
                 # Validate context for short skill matches
                 # Use text_clean for validation since that's what we matched against
                 if not _is_valid_short_skill_match(text_clean, start, end, skill_normalized):
+                    if is_suspicious:
+                        logger.debug(f"[SKILL_EXTRACTION_DEBUG] Short skill '{skill_normalized}' failed validation, skipping")
                     continue  # Skip invalid short skill matches
             
             # Check if this span overlaps with any previously matched span
@@ -1622,10 +1692,22 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
                 for prev_start, prev_end in matched_spans
             )
             
+            if overlaps:
+                if is_suspicious:
+                    logger.debug(f"[SKILL_EXTRACTION_DEBUG] Skill '{skill_normalized}' overlaps with previous match, skipping")
+                continue
+            
             if not overlaps:
                 found_skills.add(skill_normalized)
                 matched_spans.append((start, end))
+                if is_suspicious:
+                    logger.warning(f"[SKILL_EXTRACTION_DEBUG] ✓ Added skill '{skill_normalized}' to found_skills (position {start}-{end})")
                 break  # Found this skill, move to next
+    
+    # DEBUG: Log final results for suspicious skills
+    if any(sus_skill in found_skills for sus_skill in suspicious_skills):
+        logger.warning(f"[SKILL_EXTRACTION_DEBUG] Final found_skills containing suspicious skills: {[s for s in found_skills if s in suspicious_skills]}")
+        logger.info(f"[SKILL_EXTRACTION_DEBUG] Total skills found: {len(found_skills)}")
     
     return found_skills
 

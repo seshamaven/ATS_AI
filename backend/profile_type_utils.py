@@ -2299,6 +2299,59 @@ def _check_business_development(text: str) -> bool:
     
     return medium_matches >= 2
 
+def _get_core_keywords(profile_type: str, keyword_weights: Dict[str, float]) -> List[str]:
+    """
+    Get core/primary keywords for a profile type (highest weight keywords).
+    These are required to exist before a profile type can be assigned.
+    
+    Args:
+        profile_type: Profile type name
+        keyword_weights: Dictionary of keyword -> weight
+        
+    Returns:
+        List of core keywords (typically highest weight, e.g., 5.0)
+    """
+    if not keyword_weights:
+        return []
+    
+    # Find maximum weight
+    max_weight = max(keyword_weights.values())
+    
+    # Core keywords are those with maximum weight (typically 5.0)
+    # For most profiles, this is the primary technology name
+    core_keywords = [kw for kw, weight in keyword_weights.items() if weight == max_weight]
+    
+    return core_keywords
+
+def _has_core_keyword(text_blob: str, profile_type: str, core_keywords: List[str]) -> bool:
+    """
+    Check if any core keyword exists in the text blob.
+    This is required before a profile type can be assigned.
+    
+    Args:
+        text_blob: Normalized text to search in
+        profile_type: Profile type name (for pattern lookup)
+        core_keywords: List of core keywords to check
+        
+    Returns:
+        True if at least one core keyword exists, False otherwise
+    """
+    if not core_keywords:
+        # If no core keywords defined, allow scoring (backward compatibility)
+        return True
+    
+    for core_keyword in core_keywords:
+        # Use the same pattern matching logic as keyword scoring
+        count = _count_keyword_matches(core_keyword, text_blob, profile_type)
+        if count > 0:
+            # Check for negative context (e.g., "not java", "avoid java")
+            if not _has_negative_context(core_keyword, text_blob, profile_type):
+                logger.info(f"Core keyword '{core_keyword}' found for profile type '{profile_type}'")
+                return True
+    
+    logger.info(f"No core keywords found for profile type '{profile_type}'. Core keywords required: {core_keywords}")
+    return False
+
 def _calculate_normalized_scores(
     text_blob: str,
     primary_skills: str,
@@ -2324,6 +2377,13 @@ def _calculate_normalized_scores(
         logger.info("Business Development signals detected, but allowing all profiles to compete")
     
     for profile_type, keyword_weights in PROFILE_TYPE_RULES_ENHANCED:
+        # CRITICAL: Require core keyword to exist before scoring this profile type
+        # This prevents false positives (e.g., "Spring Hill College" matching "spring" → "Java")
+        core_keywords = _get_core_keywords(profile_type, keyword_weights)
+        if not _has_core_keyword(text_blob, profile_type, core_keywords):
+            # Skip this profile type entirely if core keyword doesn't exist
+            logger.debug(f"Skipping profile type '{profile_type}' - core keywords not found: {core_keywords}")
+            continue
         
         raw_score = 0.0
         matched_keywords = []

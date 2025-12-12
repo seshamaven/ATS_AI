@@ -630,13 +630,13 @@ def process_resume():
             # Add base64 to parsed data for storage
             parsed_data['file_base64'] = file_base64
             
-            # Generate embedding from resume text
-            logger.info("Generating embedding for resume...")
-            #resume_embedding = embedding_service.generate_embedding(parsed_data['resume_text'])
-            resume_embedding = []
+            # Skip embedding generation - will be done later via /api/indexExistingResumes
+            logger.info("Skipping embedding generation - will be indexed later via /api/indexExistingResumes")
             # Store in database (without embedding - stored in Pinecone only)
             try:
                 with create_ats_database() as db:
+                    # Ensure pinecone_indexed is set to False
+                    parsed_data['pinecone_indexed'] = False
                     candidate_id = db.insert_resume(parsed_data)
                     
                     if not candidate_id:
@@ -704,72 +704,11 @@ def process_resume():
                     'details': str(e)
                 }), 500
             
-            # Index in Pinecone if enabled
+            # Skip Pinecone indexing - will be done later via /api/indexExistingResumes
+            # This allows batch processing and avoids embedding generation during resume upload
             pinecone_indexed = False
-            pinecone_error = None
-            
-            # Check Pinecone configuration
-            if not ATSConfig.USE_PINECONE:
-                logger.warning(f"Pinecone indexing skipped: USE_PINECONE={ATSConfig.USE_PINECONE}")
-                pinecone_error = "Pinecone is disabled (USE_PINECONE=False)"
-            elif not ATSConfig.PINECONE_API_KEY:
-                logger.warning(f"Pinecone indexing skipped: PINECONE_API_KEY is missing")
-                pinecone_error = "Pinecone API key is missing"
-            else:
-                try:
-                    logger.info(f"Attempting to index resume {candidate_id} in Pinecone...")
-                    
-                    # Determine the correct index based on profile_type
-                    profile_type = parsed_data.get('profile_type') or 'Generalist'
-                    index_name = get_index_name_from_profile_type(profile_type)
-                    logger.info(f"Profile type '{profile_type}' mapped to index '{index_name}'")
-                    logger.info(f"Pinecone config: index={index_name}, dimension={ATSConfig.EMBEDDING_DIMENSION}")
-                    
-                    from enhanced_pinecone_manager import EnhancedPineconeManager
-                    pinecone_manager = EnhancedPineconeManager(
-                        api_key=ATSConfig.PINECONE_API_KEY,
-                        index_name=index_name,  # Use the profile-specific index
-                        dimension=ATSConfig.EMBEDDING_DIMENSION
-                    )
-                    pinecone_manager.get_or_create_index()
-                    
-                    # Prepare metadata for Pinecone with NULL value handling
-                    pinecone_metadata = {
-                        'candidate_id': candidate_id,
-                        'name': parsed_data.get('name') or 'Unknown',
-                        'email': parsed_data.get('email') or 'No email',
-                        'domain': parsed_data.get('domain') or 'Unknown',
-                        'primary_skills': parsed_data.get('primary_skills') or 'No skills',
-                        'total_experience': parsed_data.get('total_experience', 0),
-                        'education': parsed_data.get('education') or 'Unknown',
-                        'profile_type': parsed_data.get('profile_type') or 'Generalist',
-                        'role_type': parsed_data.get('role_type') or 'Unknown',
-                        'subrole_type': parsed_data.get('subrole_type') or 'Unknown',
-                        'sub_profile_type': parsed_data.get('sub_profile_type') or 'Unknown',
-                        'current_location': parsed_data.get('current_location') or 'Unknown',
-                        'current_designation': parsed_data.get('current_designation') or 'Unknown',
-                        'file_type': file_type or 'Unknown',
-                        'source': 'resume_upload',
-                        'created_at': datetime.now().isoformat()
-                    }
-                    
-                    # Create vector for Pinecone
-                    vector_data = {
-                        'id': f'resume_{candidate_id}',
-                        'values': resume_embedding,
-                        'metadata': pinecone_metadata
-                    }
-                    
-                    # Upsert to Pinecone without namespace (using separate indexes)
-                    pinecone_manager.upsert_vectors([vector_data], namespace=None)
-                    pinecone_indexed = True
-                    logger.info(f"Successfully indexed resume {candidate_id} in Pinecone index '{index_name}'")
-                    
-                except Exception as e:
-                    error_msg = str(e)
-                    logger.error(f"Failed to index resume {candidate_id} in Pinecone: {error_msg}", exc_info=True)
-                    pinecone_error = error_msg
-                    # Don't fail the entire request if Pinecone indexing fails
+            pinecone_error = "Indexing deferred to /api/indexExistingResumes endpoint"
+            logger.info(f"Pinecone indexing skipped for resume {candidate_id} - will be indexed later via /api/indexExistingResumes")
             
             # Clean up uploaded file
             if os.path.exists(file_path):
@@ -1104,26 +1043,32 @@ def index_existing_resumes():
         if not ATSConfig.USE_PINECONE or not ATSConfig.PINECONE_API_KEY:
             return jsonify({'error': 'Pinecone indexing is not enabled'}), 400
         
-        # Get all resumes from database
+        # Get only unindexed resumes from database
         with create_ats_database() as db:
-            resumes = db.get_all_resumes()
+            resumes = db.get_resumes_by_index_status(indexed=False)
         
         if not resumes:
-            return jsonify({'message': 'No resumes found in database'}), 200
+            return jsonify({
+                'status': 'success',
+                'message': 'No unindexed resumes found in database. All resumes are already indexed.',
+                'total_resumes': 0,
+                'indexed_count': 0,
+                'failed_count': 0,
+                'skipped_count': 0,
+                'timestamp': datetime.now().isoformat()
+            }), 200
         
-        # Initialize Pinecone
-        from enhanced_pinecone_manager import EnhancedPineconeManager
-        pinecone_manager = EnhancedPineconeManager(
-            api_key=ATSConfig.PINECONE_API_KEY,
-            index_name=ATSConfig.PINECONE_INDEX_NAME,
-            dimension=ATSConfig.EMBEDDING_DIMENSION
-        )
-        pinecone_manager.get_or_create_index()
+        logger.info(f"Found {len(resumes)} unindexed resumes to process")
+        
+        # Initialize Pinecone managers for different profile types
+        # We'll create managers on-demand based on profile_type
+        pinecone_managers = {}  # Cache of managers by index_name
         
         indexed_count = 0
         failed_count = 0
-        # Group vectors by namespace for efficient batch upserting
-        vectors_by_namespace = {}
+        skipped_count = 0
+        # Group vectors by index_name for efficient batch upserting
+        vectors_by_index = {}
         
         for resume in resumes:
             temp_file_path = None
@@ -1196,21 +1141,46 @@ def index_existing_resumes():
                     'metadata': pinecone_metadata
                 }
                 
-                # Determine namespace from profile_type
+                # Determine index name from profile_type (using separate indexes, not namespaces)
                 profile_type = resume.get('profile_type') or 'Generalist'
-                namespace = get_namespace_from_profile_type(profile_type)
+                index_name = get_index_name_from_profile_type(profile_type)
                 
-                # Group vectors by namespace
-                if namespace not in vectors_by_namespace:
-                    vectors_by_namespace[namespace] = []
-                vectors_by_namespace[namespace].append(vector_data)
-                indexed_count += 1
+                # Get or create Pinecone manager for this index
+                if index_name not in pinecone_managers:
+                    from enhanced_pinecone_manager import EnhancedPineconeManager
+                    pinecone_managers[index_name] = EnhancedPineconeManager(
+                        api_key=ATSConfig.PINECONE_API_KEY,
+                        index_name=index_name,
+                        dimension=ATSConfig.EMBEDDING_DIMENSION
+                    )
+                    pinecone_managers[index_name].get_or_create_index()
+                    logger.info(f"Initialized Pinecone manager for index '{index_name}'")
                 
-                # Batch upsert every 100 vectors per namespace
-                if len(vectors_by_namespace[namespace]) >= 100:
-                    pinecone_manager.upsert_vectors(vectors_by_namespace[namespace], namespace=namespace)
-                    logger.info(f"Upserted 100 vectors to namespace '{namespace}'")
-                    vectors_by_namespace[namespace] = []
+                # Group vectors by index_name
+                if index_name not in vectors_by_index:
+                    vectors_by_index[index_name] = []
+                vectors_by_index[index_name].append(vector_data)
+                
+                # Batch upsert every 100 vectors per index
+                if len(vectors_by_index[index_name]) >= 100:
+                    try:
+                        pinecone_managers[index_name].upsert_vectors(vectors_by_index[index_name], namespace=None)
+                        logger.info(f"Upserted 100 vectors to index '{index_name}'")
+                        
+                        # Update database status for successfully indexed resumes
+                        with create_ats_database() as db:
+                            for vec in vectors_by_index[index_name]:
+                                vec_candidate_id = int(vec['id'].replace('resume_', ''))
+                                if db.update_pinecone_index_status(vec_candidate_id, indexed=True):
+                                    indexed_count += 1
+                                else:
+                                    failed_count += 1
+                        
+                        vectors_by_index[index_name] = []
+                    except Exception as e:
+                        logger.error(f"Failed to upsert batch to index '{index_name}': {e}")
+                        failed_count += len(vectors_by_index[index_name])
+                        vectors_by_index[index_name] = []
                     
             except Exception as e:
                 logger.error(f"Failed to prepare resume {resume.get('candidate_id', 'unknown')} for indexing: {e}")
@@ -1224,18 +1194,37 @@ def index_existing_resumes():
                     except Exception as e:
                         logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
         
-        # Upsert remaining vectors grouped by namespace
-        for namespace, vectors in vectors_by_namespace.items():
+        # Upsert remaining vectors grouped by index_name
+        for index_name, vectors in vectors_by_index.items():
             if vectors:
-                pinecone_manager.upsert_vectors(vectors, namespace=namespace)
-                logger.info(f"Upserted {len(vectors)} remaining vectors to namespace '{namespace}'")
+                try:
+                    pinecone_managers[index_name].upsert_vectors(vectors, namespace=None)
+                    logger.info(f"Upserted {len(vectors)} remaining vectors to index '{index_name}'")
+                    
+                    # Update database status for successfully indexed resumes
+                    with create_ats_database() as db:
+                        for vec in vectors:
+                            vec_candidate_id = int(vec['id'].replace('resume_', ''))
+                            db.update_pinecone_index_status(vec_candidate_id, indexed=True)
+                            indexed_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to upsert remaining vectors to index '{index_name}': {e}")
+                    failed_count += len(vectors)
+        
+        # Calculate skipped count (resumes that were already indexed)
+        with create_ats_database() as db:
+            total_resumes = len(db.get_all_resumes(status='active', limit=100000))
+            indexed_resumes = len(db.get_resumes_by_index_status(indexed=True, status='active', limit=100000))
+            skipped_count = indexed_resumes
         
         return jsonify({
             'status': 'success',
             'message': 'Batch indexing completed',
-            'total_resumes': len(resumes),
+            'total_resumes': total_resumes,
+            'processed_count': len(resumes),
             'indexed_count': indexed_count,
             'failed_count': failed_count,
+            'skipped_count': skipped_count,
             'timestamp': datetime.now().isoformat()
         }), 200
         

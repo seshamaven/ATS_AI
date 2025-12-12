@@ -946,39 +946,103 @@ Resume Text (look for name in FIRST FEW LINES):
     def _extract_skills_from_text_with_word_boundaries(self, resume_text: str, existing_skills: List[str], existing_skills_set: set, max_skills: Optional[int] = None) -> List[str]:
         """Extract skills from resume text using word-boundary matching with TECH_SKILLS from skill_extractor.py."""
         logger.info(f"Running word-boundary matching on entire resume... (currently have {len(existing_skills)} skills)")
+        # DEBUG: Log initial skills
+        logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Initial existing_skills: {existing_skills}")
+        logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Initial existing_skills_set: {sorted(existing_skills_set)}")
+        if 'azure communication services' in existing_skills_set:
+            logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] ⚠️  'azure communication services' ALREADY in existing_skills_set at START!")
         resume_text_lower = resume_text.lower()
         
         # Import validation function for short skills
         from skill_extractor import _is_valid_short_skill_match
         
         # Use case-insensitive whole-word matching for each skill in TECH_SKILLS (imported from skill_extractor.py)
+        skills_checked_count = 0
         for skill in sorted(TECH_SKILLS, key=len, reverse=True):  # Check longer skills first
             skill_lower = skill.lower()
+            skills_checked_count += 1
+            
+            # DEBUG: Log every 1000th skill to track progress, and ALL suspicious skills
+            suspicious_skills = ['azure communication services', 'spring']
+            is_suspicious = skill_lower in suspicious_skills
+            
+            if is_suspicious or skills_checked_count % 1000 == 0:
+                logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Checking skill #{skills_checked_count}: '{skill}' (length: {len(skill)})")
             
             # Skip if already in existing skills
             if skill_lower in existing_skills_set:
+                if is_suspicious:
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] ⚠️  Skill '{skill}' already in existing_skills_set, skipping")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Current existing_skills: {existing_skills}")
                 continue
             
-            # Match whole words only (case-insensitive) using word boundaries
+            # Match whole words only (case-insensitive) using STRICT word boundaries
+            # This prevents substring matches (e.g., "gem" in "management", "v" in "vision")
             pattern = r'\b' + re.escape(skill_lower) + r'\b'
             
             # Also handle compound words (e.g., "MicrosoftSqlServer" should match "sql server")
-            # Create a pattern without word boundaries to match compound words
+            # Create a pattern with word boundaries to match compound words
             skill_words = skill_lower.split()
             if len(skill_words) > 1:
                 # For multi-word skills, check if they appear together without spaces
                 # e.g., "sql server" -> "sqlserver" or "sql-server" or "sql_server"
+                # BUT still enforce word boundaries at the start and end
                 pattern_compound = r'\b' + r'[\s\-_]?'.join(re.escape(w) for w in skill_words) + r'\b'
             else:
                 pattern_compound = pattern
+            
+            # DEBUG: Special logging for suspicious skills
+            if is_suspicious:
+                logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Processing suspicious skill: '{skill}'")
+                logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Pattern: {pattern}")
+                logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Compound pattern: {pattern_compound}")
+                # Check if skill words exist separately
+                skill_words_list = skill_lower.split()
+                for word in skill_words_list:
+                    if word in resume_text_lower:
+                        positions = [m.start() for m in re.finditer(rf'\b{re.escape(word)}\b', resume_text_lower)]
+                        logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Word '{word}' found at positions: {positions}")
+                    else:
+                        logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] Word '{word}' NOT FOUND in resume_text")
             
             # Search for matches
             match = re.search(pattern, resume_text_lower)
             if not match:
                 match = re.search(pattern_compound, resume_text_lower)
             
+            # DEBUG: Log match attempts for suspicious skills
+            if is_suspicious:
+                if match:
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] ⚠️  MATCH FOUND for '{skill}'!")
+                    start, end = match.span()
+                    matched_text = resume_text_lower[start:end]
+                    context_start = max(0, start - 100)
+                    context_end = min(len(resume_text_lower), end + 100)
+                    context = resume_text_lower[context_start:context_end]
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Matched text: '{matched_text}' at position {start}-{end}")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Context: ...{context}...")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Pattern used: {pattern if match else pattern_compound}")
+                else:
+                    logger.info(f"[WORD_BOUNDARY_MATCH_DEBUG] No match found for '{skill}' (tried both patterns)")
+            
             if match:
                 start, end = match.span()
+                
+                # CRITICAL: Validate that skill is NOT inside a larger word (applies to ALL skills)
+                # Get characters immediately before and after the match
+                char_before = resume_text_lower[start - 1] if start > 0 else ' '
+                char_after = resume_text_lower[end] if end < len(resume_text_lower) else ' '
+                
+                # Reject if skill is inside a larger word (surrounded by letters)
+                # This prevents "gem" from matching in "management" or "v" in "vision"
+                if char_before.isalpha() or char_after.isalpha():
+                    if is_suspicious:
+                        logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] ⚠️  Rejecting '{skill}' - appears inside larger word")
+                        logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Char before: '{char_before}' (isalpha: {char_before.isalpha()}), Char after: '{char_after}' (isalpha: {char_after.isalpha()})")
+                        context_start = max(0, start - 20)
+                        context_end = min(len(resume_text_lower), end + 20)
+                        logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Context: ...{resume_text_lower[context_start:context_end]}...")
+                    continue  # Skip - skill is inside a larger word
                 
                 # CRITICAL: Apply strict validation for short skills (1-2 letters) to prevent false positives
                 # This prevents "r" from "related", "v" from "version", "ti" from "activities", etc.
@@ -991,6 +1055,19 @@ Resume Text (look for name in FIRST FEW LINES):
                 existing_skills.append(skill)
                 existing_skills_set.add(skill_lower)
                 logger.info(f"Added skill via word-boundary matching: {skill}")
+                # DEBUG: Special logging for suspicious skills
+                if is_suspicious:
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] ✓✓✓ ADDED skill '{skill}' to existing_skills list (current count: {len(existing_skills)})")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Match position: {start}-{end}")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Matched text from resume: '{resume_text_lower[start:end]}'")
+                    logger.warning(f"[WORD_BOUNDARY_MATCH_DEBUG] Current skills list: {existing_skills}")
+                    # Double-check: verify the match is correct
+                    if skill_lower == 'azure communication services':
+                        # Check if 'azure' actually exists in the matched text
+                        matched_actual = resume_text_lower[start:end]
+                        if 'azure' not in matched_actual:
+                            logger.error(f"[WORD_BOUNDARY_MATCH_DEBUG] ⚠️⚠️⚠️ CRITICAL BUG: 'azure communication services' matched but 'azure' not in matched text: '{matched_actual}'")
+                            logger.error(f"[WORD_BOUNDARY_MATCH_DEBUG] This indicates a pattern matching bug!")
                 if max_skills is not None and len(existing_skills) >= max_skills:  # Stop after finding max skills (if limit set)
                     break
         
@@ -1594,9 +1671,26 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # ALWAYS supplement with word-boundary matching to catch any missed skills
                 logger.info(f"Supplementing with word-boundary matching from entire resume...")
+                # DEBUG: Log resume text info before skill extraction
+                logger.debug(f"[RESUME_PARSER_DEBUG] Resume text length: {len(resume_text)} chars")
+                logger.debug(f"[RESUME_PARSER_DEBUG] Checking if 'azure' exists in resume_text: {'azure' in resume_text.lower()}")
+                if 'azure' not in resume_text.lower():
+                    logger.warning(f"[RESUME_PARSER_DEBUG] 'azure' NOT FOUND in resume_text, but may be extracted as skill - this indicates a bug!")
+                # DEBUG: Log skills BEFORE word-boundary matching
+                logger.info(f"[RESUME_PARSER_DEBUG] Skills BEFORE word-boundary matching: {technical_skills}")
+                logger.info(f"[RESUME_PARSER_DEBUG] Skills count BEFORE: {len(technical_skills)}")
+                
                 technical_skills = self._extract_skills_from_text_with_word_boundaries(
                     resume_text, technical_skills, technical_skills_lower, max_skills=None  # No limit - extract all skills
                 )
+                
+                # DEBUG: Log skills AFTER word-boundary matching
+                logger.info(f"[RESUME_PARSER_DEBUG] Skills AFTER word-boundary matching: {technical_skills}")
+                logger.info(f"[RESUME_PARSER_DEBUG] Skills count AFTER: {len(technical_skills)}")
+                if any('azure' in skill.lower() for skill in technical_skills):
+                    logger.warning(f"[RESUME_PARSER_DEBUG] ⚠️  WARNING: Found Azure-related skills: {[s for s in technical_skills if 'azure' in s.lower()]}")
+                    logger.warning(f"[RESUME_PARSER_DEBUG] This is suspicious if 'azure' was not in the original resume text!")
+                    logger.warning(f"[RESUME_PARSER_DEBUG] Full technical_skills list: {technical_skills}")
                 
                 # CRITICAL: Post-process to remove invalid short skills (1-2 letters) that may have been added
                 # This is a safety net to catch any short skills that bypassed validation
@@ -1681,9 +1775,20 @@ Resume Text (look for name in FIRST FEW LINES):
                 technical_skills = filtered_technical_skills
                 technical_skills_lower = filtered_technical_skills_lower
                 
+                # DEBUG: Log skills before formatting
+                logger.info(f"[RESUME_PARSER_DEBUG] Skills BEFORE formatting: {technical_skills}")
+                if any('azure' in skill.lower() for skill in technical_skills):
+                    logger.warning(f"[RESUME_PARSER_DEBUG] ⚠️  Azure skills found BEFORE formatting: {[s for s in technical_skills if 'azure' in s.lower()]}")
+                
                 # Format skills - primary_skills should ONLY contain TECHNICAL_SKILLS
                 primary_skills = ', '.join(technical_skills) if technical_skills else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills) if secondary_skills else ''  # Non-technical skills
+                
+                # DEBUG: Log formatted primary_skills
+                logger.info(f"[RESUME_PARSER_DEBUG] Formatted primary_skills string: '{primary_skills}'")
+                if 'azure' in primary_skills.lower():
+                    logger.warning(f"[RESUME_PARSER_DEBUG] ⚠️  'azure' found in formatted primary_skills string!")
+                    logger.warning(f"[RESUME_PARSER_DEBUG] Full primary_skills: '{primary_skills}'")
                 
                 # all_skills = primary_skills + secondary_skills
                 all_skills_combined = technical_skills + secondary_skills
@@ -1962,9 +2067,20 @@ Resume Text (look for name in FIRST FEW LINES):
                 technical_skills_list = filtered_technical_skills_list
                 technical_skills_set = filtered_technical_skills_set
                 
+                # DEBUG: Log skills before formatting (fallback path)
+                logger.info(f"[RESUME_PARSER_DEBUG] [FALLBACK PATH] Skills BEFORE formatting: {technical_skills_list}")
+                if any('azure' in skill.lower() for skill in technical_skills_list):
+                    logger.warning(f"[RESUME_PARSER_DEBUG] [FALLBACK PATH] ⚠️  Azure skills found BEFORE formatting: {[s for s in technical_skills_list if 'azure' in s.lower()]}")
+                
                 # Format primary_skills after potential lenient extraction
                 primary_skills = ', '.join(technical_skills_list) if technical_skills_list else ''  # All technical skills
                 secondary_skills_str = ', '.join(secondary_skills_list) if secondary_skills_list else ''
+                
+                # DEBUG: Log formatted primary_skills (fallback path)
+                logger.info(f"[RESUME_PARSER_DEBUG] [FALLBACK PATH] Formatted primary_skills string: '{primary_skills}'")
+                if 'azure' in primary_skills.lower():
+                    logger.warning(f"[RESUME_PARSER_DEBUG] [FALLBACK PATH] ⚠️  'azure' found in formatted primary_skills string!")
+                    logger.warning(f"[RESUME_PARSER_DEBUG] [FALLBACK PATH] Full primary_skills: '{primary_skills}'")
                 
                 # all_skills = primary_skills + secondary_skills (combine lists, then join)
                 all_skills_combined = technical_skills_list + secondary_skills_list
@@ -2223,6 +2339,13 @@ Resume Text (look for name in FIRST FEW LINES):
             # Apply profile-type-aware domain filtering (e.g., for Java/.Net drop stray pharma domains)
             domain = self._filter_domain_by_profile_type(domain, profile_type)
 
+            # DEBUG: Log primary_skills before creating parsed_data
+            logger.info(f"[RESUME_PARSER_DEBUG] [FINAL] primary_skills before parsed_data: '{primary_skills}'")
+            if 'azure' in primary_skills.lower():
+                logger.warning(f"[RESUME_PARSER_DEBUG] [FINAL] ⚠️  'azure' found in primary_skills before parsed_data!")
+                logger.warning(f"[RESUME_PARSER_DEBUG] [FINAL] Full primary_skills: '{primary_skills}'")
+                logger.warning(f"[RESUME_PARSER_DEBUG] [FINAL] primary_skills type: {type(primary_skills)}, length: {len(primary_skills)}")
+            
             # Prepare parsed data
             parsed_data = {
                 'name': name,

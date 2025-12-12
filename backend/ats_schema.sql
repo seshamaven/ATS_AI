@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     -- Status and Metadata
     status VARCHAR(50) DEFAULT 'active' COMMENT 'active, archived, blacklisted',
     
+    -- Pinecone Indexing Status
+    pinecone_indexed BOOLEAN DEFAULT FALSE COMMENT 'Whether resume has been indexed in Pinecone',
+    embedding_generated_at TIMESTAMP NULL COMMENT 'Timestamp when embedding was generated and indexed in Pinecone',
+    
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -72,6 +76,7 @@ CREATE TABLE IF NOT EXISTS resume_metadata (
     INDEX idx_experience (total_experience),
     INDEX idx_status (status),
     INDEX idx_created_at (created_at),
+    INDEX idx_pinecone_indexed (pinecone_indexed),
     FULLTEXT INDEX idx_skills (primary_skills, secondary_skills, all_skills)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -363,6 +368,27 @@ CREATE INDEX idx_sub_profile_type ON resume_metadata(sub_profile_type);
 -- Verify the changes
 DESCRIBE resume_metadata;
 
+-- Migration Script: Add pinecone_indexed and embedding_generated_at columns to resume_metadata
+-- Date: 2024
+-- Description: Adds columns to track Pinecone indexing status for resumes
+
+USE ats_db;
+
+-- Add pinecone_indexed column
+ALTER TABLE resume_metadata 
+ADD COLUMN pinecone_indexed BOOLEAN DEFAULT FALSE 
+COMMENT 'Whether resume has been indexed in Pinecone';
+
+-- Add embedding_generated_at column
+ALTER TABLE resume_metadata 
+ADD COLUMN embedding_generated_at TIMESTAMP NULL 
+COMMENT 'Timestamp when embedding was generated and indexed in Pinecone';
+
+-- Add index for faster queries
+CREATE INDEX idx_pinecone_indexed ON resume_metadata(pinecone_indexed);
+
+-- Verify the changes
+DESCRIBE resume_metadata;
 
 -- Chat History Table for storing AI Search conversations
 -- Run this migration to create the Chat_history table

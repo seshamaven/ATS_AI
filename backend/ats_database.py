@@ -38,6 +38,8 @@ class ATSDatabase:
             logger.info(f"Connected to MySQL database: {self.config['database']}")
             # Ensure required columns exist (role_type, subrole_type)
             self._ensure_role_columns_exist()
+            # Ensure Pinecone indexing columns exist
+            self._ensure_pinecone_columns_exist()
             # Ensure Chat_history table exists
             self._ensure_chat_history_table_exists()
             return True
@@ -73,6 +75,8 @@ class ATSDatabase:
                     logger.info(f"Connected to MySQL database: {self.config['database']}")
                     # Ensure required columns exist (role_type, subrole_type)
                     self._ensure_role_columns_exist()
+                    # Ensure Pinecone indexing columns exist
+                    self._ensure_pinecone_columns_exist()
                     # Ensure Chat_history table exists
                     self._ensure_chat_history_table_exists()
                     return True
@@ -167,6 +171,65 @@ class ATSDatabase:
             logger.warning(f"Could not verify/add role columns: {e}")
             # Don't fail connection if columns can't be added - might be permission issue
     
+    def _ensure_pinecone_columns_exist(self):
+        """Ensure pinecone_indexed and embedding_generated_at columns exist in resume_metadata table."""
+        try:
+            # Check if pinecone_indexed column exists
+            self.cursor.execute("""
+                SELECT COUNT(*) as col_count
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = %s 
+                  AND TABLE_NAME = 'resume_metadata' 
+                  AND COLUMN_NAME = 'pinecone_indexed'
+            """, (self.config['database'],))
+            
+            result = self.cursor.fetchone()
+            col_count = result['col_count'] if result else 0
+            
+            if col_count == 0:
+                logger.info("Adding missing column 'pinecone_indexed' to resume_metadata table...")
+                self.cursor.execute("""
+                    ALTER TABLE resume_metadata 
+                    ADD COLUMN pinecone_indexed BOOLEAN DEFAULT FALSE 
+                    COMMENT 'Whether resume has been indexed in Pinecone'
+                """)
+                self.connection.commit()
+                logger.info("✓ Column 'pinecone_indexed' added successfully")
+            
+            # Check if embedding_generated_at column exists
+            self.cursor.execute("""
+                SELECT COUNT(*) as col_count
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = %s 
+                  AND TABLE_NAME = 'resume_metadata' 
+                  AND COLUMN_NAME = 'embedding_generated_at'
+            """, (self.config['database'],))
+            
+            result = self.cursor.fetchone()
+            col_count = result['col_count'] if result else 0
+            
+            if col_count == 0:
+                logger.info("Adding missing column 'embedding_generated_at' to resume_metadata table...")
+                self.cursor.execute("""
+                    ALTER TABLE resume_metadata 
+                    ADD COLUMN embedding_generated_at TIMESTAMP NULL 
+                    COMMENT 'Timestamp when embedding was generated and indexed in Pinecone'
+                """)
+                self.connection.commit()
+                logger.info("✓ Column 'embedding_generated_at' added successfully")
+            
+            # Add index if it doesn't exist
+            try:
+                self.cursor.execute("CREATE INDEX idx_pinecone_indexed ON resume_metadata(pinecone_indexed)")
+                logger.debug("✓ Index 'idx_pinecone_indexed' created")
+            except Error as e:
+                if "Duplicate key name" not in str(e):
+                    logger.warning(f"Could not create idx_pinecone_indexed: {e}")
+                    
+        except Error as e:
+            logger.warning(f"Could not verify/add Pinecone columns: {e}")
+            # Don't fail connection if columns can't be added - might be permission issue
+    
     def disconnect(self):
         """Close MySQL connection."""
         try:
@@ -230,7 +293,7 @@ class ATSDatabase:
                     notice_period, expected_salary, current_salary,
                     resume_summary,
                     file_name, file_type, file_size_kb, file_base64,
-                    status
+                    status, pinecone_indexed
                 ) VALUES (
                     %(name)s, %(email)s, %(phone)s,
                     %(total_experience)s, %(primary_skills)s, %(secondary_skills)s, %(all_skills)s, %(profile_type)s,
@@ -242,7 +305,7 @@ class ATSDatabase:
                     %(notice_period)s, %(expected_salary)s, %(current_salary)s,
                     %(resume_summary)s,
                     %(file_name)s, %(file_type)s, %(file_size_kb)s, %(file_base64)s,
-                    %(status)s
+                    %(status)s, %(pinecone_indexed)s
                 )
             """
             
@@ -288,7 +351,8 @@ class ATSDatabase:
                 'file_type': (resume_data.get('file_type') or '')[:50],
                 'file_size_kb': resume_data.get('file_size_kb'),
                 'file_base64': resume_data.get('file_base64'),
-                'status': (resume_data.get('status') or 'active')[:50]
+                'status': (resume_data.get('status') or 'active')[:50],
+                'pinecone_indexed': resume_data.get('pinecone_indexed', False)  # Default to False - will be indexed later
             }
             
             self.cursor.execute(query, data)
@@ -389,6 +453,93 @@ class ATSDatabase:
         except Error as e:
             logger.error(f"Error fetching resumes: {e}")
             return []
+    
+    def get_resumes_by_index_status(self, indexed: bool = False, status: str = 'active', limit: int = 10000) -> List[Dict[str, Any]]:
+        """
+        Get resumes that are indexed or not indexed in Pinecone.
+        
+        Args:
+            indexed: If True, returns resumes that are already indexed. If False, returns unindexed resumes.
+            status: Resume status filter (default: 'active')
+            limit: Maximum number of resumes to return
+            
+        Returns:
+            List of resume dictionaries
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot get resumes.")
+                return []
+            query = """
+                SELECT 
+                    candidate_id,
+                    name,
+                    email,
+                    total_experience,
+                    primary_skills,
+                    domain,
+                    education,
+                    profile_type,
+                    role_type,
+                    subrole_type,
+                    sub_profile_type,
+                    current_location,
+                    current_company,
+                    current_designation,
+                    resume_summary,
+                    file_name,
+                    file_type,
+                    file_size_kb,
+                    file_base64,
+                    created_at
+                FROM resume_metadata
+                WHERE status = %s AND pinecone_indexed = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """
+            self.cursor.execute(query, (status, indexed, limit))
+            results = self.cursor.fetchall()
+            logger.info(f"Found {len(results)} resumes with pinecone_indexed={indexed}")
+            return results
+        except Error as e:
+            logger.error(f"Error fetching resumes by index status: {e}")
+            return []
+    
+    def update_pinecone_index_status(self, candidate_id: int, indexed: bool = True) -> bool:
+        """
+        Update Pinecone indexing status for a resume.
+        
+        Args:
+            candidate_id: Candidate ID to update
+            indexed: Whether the resume is indexed (True) or not (False)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not self.is_connected():
+                logger.error("Database not connected. Cannot update index status.")
+                return False
+            
+            from datetime import datetime
+            timestamp = datetime.now() if indexed else None
+            
+            query = """
+                UPDATE resume_metadata 
+                SET pinecone_indexed = %s,
+                    embedding_generated_at = %s
+                WHERE candidate_id = %s
+            """
+            self.cursor.execute(query, (indexed, timestamp, candidate_id))
+            self.connection.commit()
+            
+            logger.info(f"Updated pinecone_indexed={indexed} for candidate_id={candidate_id}")
+            return True
+        except Error as e:
+            logger.error(f"Error updating Pinecone index status: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
     
     def search_resumes_by_skills(self, skills: List[str], limit: int = 50) -> List[Dict[str, Any]]:
         """Search resumes by skills using FULLTEXT search."""

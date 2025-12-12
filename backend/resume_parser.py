@@ -2200,7 +2200,14 @@ Resume Text (look for name in FIRST FEW LINES):
                 primary_profile_type = profile_type.split(',')[0].strip() if ',' in profile_type else profile_type
                 
                 # Get base designation from profile type
-                base_designation = profile_type_designation_map.get(primary_profile_type, "Software Engineer")
+                # CRITICAL: Return None instead of defaulting to "Software Engineer" for unknown profile types
+                # This prevents incorrect designations like "Software Engineer" for non-tech resumes (e.g., Security Officer)
+                base_designation = profile_type_designation_map.get(primary_profile_type, None)
+                
+                # If no mapping found, return None (don't infer a false designation)
+                if base_designation is None:
+                    logger.info(f"DEBUG: No designation mapping found for profile_type '{primary_profile_type}' - returning None instead of defaulting to 'Software Engineer'")
+                    return None, None, None
                 
                 # Determine subrole from skills if available
                 subrole = None
@@ -2263,12 +2270,16 @@ Resume Text (look for name in FIRST FEW LINES):
                     profile_type, primary_skills, secondary_skills_str
                 )
                 logger.info(f"DEBUG: Derived designation from profile_type: '{derived_designation}' (role_type: '{derived_role_type}', subrole: '{derived_subrole}')")
-                current_designation = derived_designation
-                if not role_type:
-                    role_type = derived_role_type
-                if not subrole_type:
-                    subrole_type = derived_subrole
-                logger.info(f"✓ Final fallback: Set current_designation from profile_type: '{current_designation}'")
+                # Only set designation if it was successfully derived (not None)
+                if derived_designation:
+                    current_designation = derived_designation
+                    if not role_type:
+                        role_type = derived_role_type
+                    if not subrole_type:
+                        subrole_type = derived_subrole
+                    logger.info(f"✓ Final fallback: Set current_designation from profile_type: '{current_designation}'")
+                else:
+                    logger.info(f"✗ Could not derive designation from profile_type '{profile_type}' - designation will remain empty")
             else:
                 if current_designation:
                     logger.info(f"✓ Using extracted designation (not using profile_type fallback): '{current_designation}'")

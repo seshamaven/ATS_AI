@@ -15,6 +15,7 @@ Lightweight Designation Extractor
 import re
 from difflib import SequenceMatcher
 from typing import Optional, List, Tuple
+from datetime import datetime
 
 
 # -------------------------------------------------------------------------
@@ -32,9 +33,13 @@ COMMON_TITLES = {
     "lead", "technical architect", "solutions architect", "business analyst",
     "system administrator", "administrator", "senior consultant", "senior manager",
     "senior engineer", "senior software engineer", "senior consultant", "senior",
-    "associate consultant", "associate", "intern", "trainee",
+    "associate consultant", "associate", "intern", "trainee","Operations & Technology Intern","Product Manager",
+    "Graphic Designer", "Production Artist","Senior Reviewer/Writer",
+    "Technical Writer Volunteer","Content Writer","Reporter and Editor","Data Collection Specialist","Administrative Assistant","Sales Consultant","Executive Assistant","Security Officer","Recreation Leader","Landscaper","E-Learning Case Manager and Content Specialist",
+    "Technical Success Specialist",
+
     # Director roles
-        "director", "technical director", "director - technology", "director technology", "Director - Technology",
+        "director", "technical director", "director - technology", "director technology", "Director - Technology","Volunteer",
         "director of technology", "it director", "software director", "engineering director",
         "development director", "program director", "project director", "delivery director",
         "senior director", "sr. director", "sr director", "associate director",
@@ -569,7 +574,16 @@ COMMON_TITLES = {
         "windows sys debug developer", "windows systems engineer", "windows systems programmer",
         "windows systems test engineer", "windows/linux systems engineer",
         "wired ethernet validation engineer", "wireless network engineer",
-        "wireless systems engineer", "wix developer", "xcelsius developer"
+        "wireless systems engineer", "wix developer", "xcelsius developer",
+        # Education & Training roles
+        "teacher", "health teacher", "wellness teacher", "physical education teacher",
+        "english teacher", "secondary english teacher", "journalism teacher",
+        "adviser", "advisor", "journalism adviser", "journalism advisor",
+        "instructional designer", "learning designer", "curriculum designer",
+        "e-learning case manager", "e-learning content specialist",
+        "content specialist", "case manager", "training consultant",
+        "instructor", "trainer", "coordinator", "training coordinator",
+        "department chair", "department head"
 }
 
 # Extra tokens that should cause rejection if present in the candidate line
@@ -672,9 +686,9 @@ def crop_to_experience_section(text: str) -> str:
         slice_text = text[start:]
         logger.info(f"DEBUG: ✓ Found 'Work history' header at position {start}")
     else:
-        # Try other experience headers
+        # Try other experience headers (including "RELEVANT EXPERIENCE", "ADDITIONAL EXPERIENCE")
         experience_header_pattern = re.compile(
-            r'^(?:[#\s\-•]*)?(employment\s+history|professional\s+experience|career\s+development)\s*[:#]?\s*$',
+            r'^(?:[#\s\-•]*)?(employment\s+history|professional\s+experience|career\s+development|relevant\s+experience|additional\s+experience)\s*[:#]?\s*$',
             re.IGNORECASE | re.MULTILINE
         )
         m = experience_header_pattern.search(lower)
@@ -768,8 +782,8 @@ def candidate_title_lines(segment: str) -> List[Tuple[int, str]]:
         lines.append(line)
 
     # First, identify lines with "till date", "present", "current" patterns for priority boost
-    current_date_patterns = re.compile(r'\b(till\s+date|to\s+date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
-    current_date_range_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to|till|-)\s+(?:till\s+date|date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
+    current_date_patterns = re.compile(r'\b(till\s+date|to\s+date|present|current|till\s+now|ongoing|now)\b', re.IGNORECASE)
+    current_date_range_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s*(?:to|till|[-–—])\s*(?:till\s+date|date|present|current|till\s+now|ongoing|now)\b', re.IGNORECASE)
     
     # Split segment into lines to check proximity
     segment_lines = segment.split('\n')
@@ -802,7 +816,7 @@ def candidate_title_lines(segment: str) -> List[Tuple[int, str]]:
             score -= 10  # Heavy penalty for soft skills
         
         # Check for actual job title keywords (prioritize these)
-        title_keywords = ['senior', 'sr', 'manager', 'director', 'consultant', 'engineer', 'developer', 'architect', 'analyst', 'lead', 'principal']
+        title_keywords = ['senior', 'sr', 'manager', 'director', 'consultant', 'engineer', 'developer', 'architect', 'analyst', 'lead', 'principal', 'teacher', 'adviser', 'advisor', 'designer', 'instructor', 'trainer', 'coordinator', 'specialist']
         if any(keyword in lw for keyword in title_keywords):
             # But only if it's part of a real title pattern, not just "leadership"
             if lw in SOFT_SKILLS:
@@ -827,7 +841,7 @@ def candidate_title_lines(segment: str) -> List[Tuple[int, str]]:
             score -= 2
         
         # Penalty for lines that are just single words (unless they're known titles)
-        if len(lw.split()) == 1 and lw not in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect']:
+        if len(lw.split()) == 1 and lw not in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect', 'teacher', 'adviser', 'advisor', 'designer', 'instructor', 'trainer', 'coordinator', 'specialist']:
             score -= 3
             
         prioritized.append((score, line))
@@ -937,7 +951,7 @@ def is_invalid_title_line(line: str) -> bool:
         return True
     
     # Reject lines that look like sentence fragments (start with lowercase, no title keywords)
-    if re.match(r'^[a-z]', line) and not any(title in lw for title in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect', 'lead', 'senior', 'sr']):
+    if re.match(r'^[a-z]', line) and not any(title in lw for title in ['engineer', 'developer', 'consultant', 'manager', 'director', 'analyst', 'architect', 'lead', 'senior', 'sr', 'teacher', 'adviser', 'advisor', 'designer', 'instructor', 'trainer', 'coordinator', 'specialist']):
         return True
     
     return False
@@ -963,6 +977,12 @@ def best_match_from_known(line: str, is_power_platform_resume: bool = False) -> 
     logger.info(f"DEBUG: best_match_from_known called with line='{line}', normalized='{lw}'")
     if not lw:
         logger.info(f"DEBUG: best_match_from_known returning None - empty line after normalization")
+        return None
+    
+    # CRITICAL: Reject single-character inputs (they cause false matches)
+    # Single letters like "W", "H", "F" should not match long titles
+    if len(lw) == 1:
+        logger.info(f"DEBUG: best_match_from_known returning None - single character input '{lw}' rejected")
         return None
     
     # Limit processing for very long lines (unlikely to be titles)
@@ -1015,17 +1035,51 @@ def best_match_from_known(line: str, is_power_platform_resume: bool = False) -> 
             if any(edu_word in lw for edu_word in ['institute', 'institution', 'university', 'college', 'school', 'gates']):
                 continue  # Skip this known title if it's part of an institution name
         
-        # Check if known title is contained in line (whole word match preferred)
+        # CRITICAL: Normalize known title the same way as the input line
+        # This ensures "Operations & Technology Intern" matches "operations technology intern"
+        # Remove special characters (except spaces) and normalize
+        known_normalized = re.sub(r'[^a-z0-9 ]', ' ', known.lower())
+        known_normalized = re.sub(r'\s+', ' ', known_normalized).strip()
+        
+        # Check if normalized known title is contained in normalized line (whole word match preferred)
         # Use word boundaries to avoid partial word matches
-        pattern = r'\b' + re.escape(known) + r'\b'
+        pattern = r'\b' + re.escape(known_normalized) + r'\b'
         if re.search(pattern, lw, re.IGNORECASE):
             if len(known) > best_exact_len:
                 best_exact = known
                 best_exact_len = len(known)
                 # Check if the known title has a dash version
                 best_exact_has_dash = '-' in known or '–' in known or '—' in known
-        # Also check if line is contained in known (for abbreviations)
-        elif lw in known and len(known) > best_exact_len:
+        # Also check if normalized line is contained in normalized known (for abbreviations)
+        # CRITICAL: Reject single-word matches to multi-word titles unless it's a known abbreviation
+        # This prevents "contact" from matching "contact center solutions engineer"
+        elif lw in known_normalized and len(known) > best_exact_len:
+            # Reject if line is a single word and known title is multi-word (unless it's a valid abbreviation)
+            line_words = lw.split()
+            known_words = known_normalized.split()
+            # Known abbreviations that are acceptable (2-3 letters, all caps or mixed case)
+            is_abbreviation = len(line_words) == 1 and len(lw) <= 4 and (lw.isupper() or lw.islower())
+            # CRITICAL: Reject single-word matches to multi-word titles unless it's an abbreviation
+            # This prevents "intern" from matching when "Operations & Technology Intern" exists
+            if len(line_words) == 1 and len(known_words) > 1 and not is_abbreviation:
+                logger.info(f"DEBUG: Rejecting single-word match '{lw}' to multi-word title '{known}' (likely section header or part of longer title)")
+                continue  # Skip this match - it's probably a section header or part of a longer title
+            # CRITICAL: Also reject if the line is a single word that's part of a longer known title
+            # Check if this single word appears in any longer known title
+            should_reject = False
+            if len(line_words) == 1:
+                # Check if this word is part of any longer known title (that we haven't matched yet)
+                for other_known in sorted_titles:
+                    if len(other_known) > len(known):
+                        other_known_normalized = re.sub(r'[^a-z0-9 ]', ' ', other_known.lower())
+                        other_known_normalized = re.sub(r'\s+', ' ', other_known_normalized).strip()
+                        if lw in other_known_normalized and lw != other_known_normalized:
+                            # This single word is part of a longer title, prefer the longer one
+                            logger.info(f"DEBUG: Rejecting single-word match '{lw}' - it's part of longer title '{other_known}'")
+                            should_reject = True
+                            break
+            if should_reject:
+                continue  # Skip this match - prefer the longer title
             best_exact = known
             best_exact_len = len(known)
             best_exact_has_dash = '-' in known or '–' in known or '—' in known
@@ -1069,6 +1123,7 @@ def best_match_from_known(line: str, is_power_platform_resume: bool = False) -> 
 
     if best_fuzzy[0] and best_fuzzy[1] >= FUZZY_THRESHOLD:
         logger.info(f"DEBUG: best_match_from_known found fuzzy match: '{best_fuzzy[0]}' (score: {best_fuzzy[1]:.2f}) for line '{line}'")
+        logger.info(f"DEBUG: best_match_from_known - Original line: '{original_line}' | Normalized: '{lw}' | Matched title: '{best_fuzzy[0]}'")
         # If original line has dash and we matched a non-dash version, try to find dash version
         if has_dash and not best_fuzzy[2]:
             # Look for dash version of the matched title
@@ -1084,7 +1139,307 @@ def best_match_from_known(line: str, is_power_platform_resume: bool = False) -> 
         logger.info(f"DEBUG: best_match_from_known returning: '{best_fuzzy[0]}'")
         return title_case(best_fuzzy[0])
     score_value = best_fuzzy[1] if best_fuzzy[0] else 0.0
-    logger.info(f"DEBUG: best_match_from_known returning None - no match found (best_fuzzy: {best_fuzzy[0]}, score: {score_value:.2f})")
+    if best_fuzzy[0]:
+        logger.info(f"DEBUG: best_match_from_known - Best candidate was '{best_fuzzy[0]}' but score {score_value:.2f} < threshold {FUZZY_THRESHOLD} for line '{line}'")
+    else:
+        logger.info(f"DEBUG: best_match_from_known returning None - no match found (best_fuzzy: {best_fuzzy[0]}, score: {score_value:.2f})")
+    return None
+
+
+def parse_date_range_end_date(date_str: str) -> Optional[datetime]:
+    """
+    Parse a date range string and return the end date as a datetime object.
+    Handles formats like:
+    - "December 2023 - August 2025"
+    - "January 2025 to May 2025" (with "to" keyword)
+    - "Jan 2024 - Jun 2024"
+    - "06/2021 - 01/2025" (MM/YYYY format)
+    - "04/2023 – 03/2025" (MM/YYYY with en dash)
+    - "01/2025 – Present" (MM/YYYY with Present)
+    - "2023 - 2025"
+    - "Jul 2024 - Dec 2024"
+    Returns None if parsing fails.
+    """
+    if not date_str:
+        return None
+    
+    date_str = date_str.strip()
+    
+    # Month name mapping
+    month_map = {
+        'jan': 1, 'january': 1, 'feb': 2, 'february': 2,
+        'mar': 3, 'march': 3, 'apr': 4, 'april': 4,
+        'may': 5, 'jun': 6, 'june': 6,
+        'jul': 7, 'july': 7, 'aug': 8, 'august': 8,
+        'sep': 9, 'september': 9, 'oct': 10, 'october': 10,
+        'nov': 11, 'november': 11, 'dec': 12, 'december': 12
+    }
+    
+    # Pattern 1: "Month Year - Month Year" or "Month Year to Month Year" (e.g., "December 2023 - August 2025", "January 2025 to May 2025")
+    pattern1 = re.compile(r'([A-Za-z]+)\s+(\d{4})\s*([-–—]|to)\s*([A-Za-z]+)\s+(\d{4})', re.IGNORECASE)
+    match = pattern1.search(date_str)
+    if match:
+        end_month_name = match.group(4).lower()[:3]  # Take first 3 chars (group 4 because "to" is now group 3)
+        end_year = int(match.group(5))  # Year is now group 5
+        # Find matching month
+        for month_key, month_num in month_map.items():
+            if month_key.startswith(end_month_name):
+                try:
+                    return datetime(end_year, month_num, 1)
+                except:
+                    pass
+    
+    # Pattern 1.25: "Month Year - Present/Now/Current" or "Month Year to Present/Now/Current" (e.g., "March 2025 - Now", "January 2025 to Present")
+    pattern1_25 = re.compile(r'([A-Za-z]+)\s+(\d{4})\s*([-–—]|to)\s*(present|till\s+date|current|now|ongoing)', re.IGNORECASE)
+    match = pattern1_25.search(date_str)
+    if match:
+        # It's "Present"/"Till Date"/"Current"/"Now"/"Ongoing" - return current date
+        return datetime.now()
+    
+    # Pattern 1.5: "MM/YYYY - MM/YYYY" or "MM/YYYY to MM/YYYY" or "MM/YYYY – Present" (e.g., "06/2021 - 01/2025", "06/2021 to 01/2025", "01/2025 – Present")
+    pattern1_5 = re.compile(r'(\d{1,2})/(\d{4})\s*([-–—]|to)\s*((\d{1,2})/(\d{4})|present|till\s+date|current|now|ongoing)', re.IGNORECASE)
+    match = pattern1_5.search(date_str)
+    if match:
+        # Check if second part is a date (MM/YYYY) or "Present"/"Till Date"/"Current"/"Now"/"Ongoing"
+        second_part = match.group(4).strip()  # Group 4 because separator is now group 3
+        if re.match(r'\d{1,2}/\d{4}', second_part, re.IGNORECASE):
+            # It's MM/YYYY format
+            end_month = int(match.group(5))  # Group 5 because separator is now group 3
+            end_year = int(match.group(6))  # Group 6 because separator is now group 3
+            # Validate month (1-12)
+            if 1 <= end_month <= 12:
+                try:
+                    return datetime(end_year, end_month, 1)
+                except:
+                    pass
+        elif re.search(r'present|till\s+date|current|now|ongoing', second_part, re.IGNORECASE):
+            # It's "Present"/"Till Date"/"Current"/"Now"/"Ongoing" - return current date
+            return datetime.now()
+    
+    # Pattern 2: "Year - Year" (e.g., "2023 - 2025")
+    pattern2 = re.compile(r'(\d{4})\s*[-–—]\s*(\d{4})', re.IGNORECASE)
+    match = pattern2.search(date_str)
+    if match:
+        end_year = int(match.group(2))
+        try:
+            return datetime(end_year, 12, 31)  # Use end of year
+        except:
+            pass
+    
+    # Pattern 3: "Month Year" (single date, treat as end date)
+    pattern3 = re.compile(r'([A-Za-z]+)\s+(\d{4})', re.IGNORECASE)
+    match = pattern3.search(date_str)
+    if match:
+        month_name = match.group(1).lower()[:3]
+        year = int(match.group(2))
+        for month_key, month_num in month_map.items():
+            if month_key.startswith(month_name):
+                try:
+                    return datetime(year, month_num, 1)
+                except:
+                    pass
+    
+    # Pattern 4: "MM/YYYY" (single date in MM/YYYY format, treat as end date)
+    pattern4 = re.compile(r'(\d{1,2})/(\d{4})', re.IGNORECASE)
+    match = pattern4.search(date_str)
+    if match:
+        month = int(match.group(1))
+        year = int(match.group(2))
+        # Validate month (1-12)
+        if 1 <= month <= 12:
+            try:
+                return datetime(year, month, 1)
+            except:
+                pass
+    
+    return None
+
+
+def extract_date_range_from_context(line: str, context_lines: List[str], line_idx: int) -> Optional[datetime]:
+    """
+    Extract date range from a line or nearby context lines.
+    Returns the end date of the range, or None if not found.
+    """
+    # Check the line itself first
+    end_date = parse_date_range_end_date(line)
+    if end_date:
+        return end_date
+    
+    # Check nearby lines (before and after) - expanded range to catch dates that appear before titles
+    # Look further back (up to 5 lines) since dates often appear before job titles
+    for check_idx in range(max(0, line_idx - 5), min(len(context_lines), line_idx + 3)):
+        if check_idx != line_idx:
+            check_line = context_lines[check_idx]
+            end_date = parse_date_range_end_date(check_line)
+            if end_date:
+                return end_date
+    
+    return None
+
+
+def extract_title_from_candidate_line(line: str) -> str:
+    """
+    Extract just the title part from a candidate line that might include company names.
+    Examples:
+    - "Security Officer Global 360 Protective Services, Beverly Hills, CA" -> "Security Officer"
+    - "Recreation Leader 1 City of Bell Gardens, Bell Gardens, CA" -> "Recreation Leader"
+    - "Senior Consultant" -> "Senior Consultant"
+    - "WORK HISTORY" -> "WORK HISTORY" (section header, return as-is)
+    """
+    line_clean = line.strip()
+    if not line_clean:
+        return line_clean
+    
+    # Title keywords that indicate where the title ends
+    title_keywords = ['officer', 'leader', 'manager', 'engineer', 'developer', 'consultant', 
+                     'analyst', 'director', 'specialist', 'coordinator', 'supervisor', 'architect',
+                     'administrator', 'executive', 'assistant', 'representative', 'trainee',
+                     'teacher', 'adviser', 'advisor', 'designer', 'instructor', 'trainer']
+    
+    # Company/location indicators that mark where title ends
+    company_indicators = ['global', 'corporate', 'technologies', 'solutions', 'systems', 'services',
+                         'pvt', 'ltd', 'inc', 'corp', 'company', 'city of', 'of bell', 'gardens',
+                         'hills', 'beverly', 'monterey', 'park', 'protective']
+    
+    words = line_clean.split()
+    
+    # If line is very short (1-2 words) and doesn't look like a title, return as-is
+    if len(words) <= 2:
+        # Check if it's a section header (all caps, no title keywords)
+        if line_clean.isupper() and not any(keyword in line_clean.lower() for keyword in title_keywords):
+            return line_clean
+        # Otherwise, return as-is (might be a short title)
+        return line_clean
+    
+    # Strategy 1: If line contains comma, split and check first part
+    if ',' in line_clean:
+        parts = line_clean.split(',')
+        first_part = parts[0].strip()
+        first_words = first_part.split()
+        
+        # Find where title ends (look for title keyword, then stop before company indicators)
+        title_end_idx = len(first_words)
+        found_title_keyword = False
+        
+        for i, word in enumerate(first_words):
+            word_lower = word.lower().rstrip('.,')
+            # Check if this word is a title keyword
+            if any(keyword in word_lower for keyword in title_keywords):
+                found_title_keyword = True
+                # Title ends after this word (or next word if it's a number like "Leader 1")
+                if i + 1 < len(first_words) and first_words[i + 1].isdigit():
+                    title_end_idx = i + 2
+                else:
+                    title_end_idx = i + 1
+                break
+            # Check if we hit a company indicator (stop before it)
+            if any(indicator in word_lower for indicator in company_indicators):
+                if found_title_keyword:
+                    title_end_idx = i
+                    break
+        
+        # Extract title (first 1-4 words up to title_end_idx)
+        if found_title_keyword and title_end_idx > 0:
+            title_words = first_words[:min(title_end_idx, 4)]
+            extracted = ' '.join(title_words)
+            # Remove trailing numbers (e.g., "Recreation Leader 1" -> "Recreation Leader")
+            extracted = re.sub(r'\s+\d+$', '', extracted).strip()
+            if extracted:
+                return extracted
+    
+    # Strategy 2: Find title keywords and extract up to that point
+    words_lower = [w.lower().rstrip('.,') for w in words]
+    title_end_idx = None
+    
+    for i, word_lower in enumerate(words_lower):
+        # Check if this word contains a title keyword
+        if any(keyword in word_lower for keyword in title_keywords):
+            # Title ends after this word (or next if it's a number)
+            if i + 1 < len(words) and words[i + 1].isdigit():
+                title_end_idx = i + 2
+            else:
+                title_end_idx = i + 1
+            break
+        # Stop if we hit a company indicator
+        if any(indicator in word_lower for indicator in company_indicators):
+            if title_end_idx is None:
+                # No title keyword found yet, might not be a title line
+                break
+            else:
+                # Found title keyword, stop here
+                break
+    
+    if title_end_idx and title_end_idx > 0:
+        title_words = words[:min(title_end_idx, 4)]
+        extracted = ' '.join(title_words)
+        # Remove trailing numbers
+        extracted = re.sub(r'\s+\d+$', '', extracted).strip()
+        # CRITICAL: Remove date patterns from the end (e.g., "March 2025 - Now", "Jan 2024 - Present")
+        extracted = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}.*$', '', extracted, flags=re.IGNORECASE).strip()
+        extracted = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:present|current|now|ongoing|till\s+date).*$', '', extracted, flags=re.IGNORECASE).strip()
+        extracted = re.sub(r'\s+\d{1,2}/\d{4}\s*([-–—]|to)\s*(?:\d{1,2}/\d{4}|present|current|now|ongoing|till\s+date).*$', '', extracted, flags=re.IGNORECASE).strip()
+        if extracted:
+            return extracted
+    
+    # Strategy 3: If line is short (<= 6 words) and contains title keyword, return first few words
+    if len(words) <= 6:
+        if any(keyword in line_clean.lower() for keyword in title_keywords):
+            # Return first 3 words max
+            extracted = ' '.join(words[:3])
+            extracted = re.sub(r'\s+\d+$', '', extracted).strip()
+            # CRITICAL: Remove date patterns from the end
+            extracted = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}.*$', '', extracted, flags=re.IGNORECASE).strip()
+            extracted = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:present|current|now|ongoing|till\s+date).*$', '', extracted, flags=re.IGNORECASE).strip()
+            extracted = re.sub(r'\s+\d{1,2}/\d{4}\s*([-–—]|to)\s*(?:\d{1,2}/\d{4}|present|current|now|ongoing|till\s+date).*$', '', extracted, flags=re.IGNORECASE).strip()
+            return extracted
+    
+    # Fallback: return as-is but strip dates first
+    # CRITICAL: Remove date patterns from the end before returning
+    line_clean = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}.*$', '', line_clean, flags=re.IGNORECASE).strip()
+    line_clean = re.sub(r'\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:present|current|now|ongoing|till\s+date).*$', '', line_clean, flags=re.IGNORECASE).strip()
+    line_clean = re.sub(r'\s+\d{1,2}/\d{4}\s*([-–—]|to)\s*(?:\d{1,2}/\d{4}|present|current|now|ongoing|till\s+date).*$', '', line_clean, flags=re.IGNORECASE).strip()
+    return line_clean
+
+
+def find_date_for_title_in_segment(title: str, exp_segment: str, exp_lines: List[str]) -> Optional[datetime]:
+    """
+    Find the date range associated with a title by searching the experience segment.
+    Looks for date patterns near where the title appears.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    title_lower = title.lower()
+    title_words = title_lower.split()
+    
+    # Search for the title in exp_lines
+    for idx, exp_line in enumerate(exp_lines):
+        exp_line_lower = exp_line.lower()
+        
+        # Check if this line contains the title (or key words from the title)
+        # Match if at least 2 words from title are in the line, or if title is a substring
+        title_match = False
+        if title_lower in exp_line_lower:
+            title_match = True
+        elif len(title_words) >= 2:
+            # Check if at least 2 words from title are in the line
+            matching_words = sum(1 for word in title_words if word in exp_line_lower)
+            if matching_words >= 2:
+                title_match = True
+        
+        if title_match:
+            # Found the title line, now look for date nearby
+            # Check lines after first (dates often appear after titles in modern resume formats)
+            # Then check lines before (dates can also appear before titles)
+            # Expanded range to catch dates that appear 2-3 lines after the title
+            for check_idx in range(max(0, idx - 5), min(len(exp_lines), idx + 5)):
+                if check_idx == idx:  # Skip the title line itself
+                    continue
+                check_line = exp_lines[check_idx]
+                end_date = parse_date_range_end_date(check_line)
+                if end_date:
+                    logger.info(f"DEBUG: Found date {end_date.strftime('%Y-%m')} for title '{title}' at line {check_idx} (title at line {idx})")
+                    return end_date
+    
     return None
 
 
@@ -1094,6 +1449,8 @@ def regex_extract_from_line(line: str) -> Optional[str]:
     E.g. picks "Senior Consultant" from "April 2023 to till date\nSenior Consultant"
     or from "Senior Consultant at RAMA corporate and IT solutions"
     """
+    import logging
+    logger = logging.getLogger(__name__)
     lw = line.lower()
     
     # CRITICAL: Reject degree patterns first (e.g., "Btech, Civil Engineering")
@@ -1122,19 +1479,24 @@ def regex_extract_from_line(line: str) -> Optional[str]:
     # Pattern: optional seniority + core role (removed "lead" from roles group to avoid duplication)
     roles_pattern = r'\b(?:(senior|sr|junior|jr|lead|principal|assistant|associate)\b[\s\.\-]*)?(' \
                     + r'engineer|developer|consultant|manager|architect|analyst|administrator|specialist|officer|director' \
+                    + r'|teacher|adviser|advisor|designer|instructor|trainer|coordinator' \
                     + r')(?:\b|s\b)'
     m = re.search(roles_pattern, line, re.IGNORECASE)
     if m:
         groups = [g for g in m.groups() if g]
         cleaned = ' '.join(groups)
+        logger.info(f"DEBUG: regex_extract_from_line found match via roles_pattern: '{cleaned}' from line '{line}'")
         return title_case(cleaned)
     # fallback: if line is short and contains 1-4 words and at least one core role keyword
     words = lw.split()
-    if 1 <= len(words) <= 6 and any(k in lw for k in ['engineer', 'developer', 'consultant', 'manager', 'architect', 'lead', 'director', 'analyst']):
+    if 1 <= len(words) <= 6 and any(k in lw for k in ['engineer', 'developer', 'consultant', 'manager', 'architect', 'lead', 'director', 'analyst', 'teacher', 'adviser', 'advisor', 'designer', 'instructor', 'trainer', 'coordinator', 'specialist']):
         # Additional check: reject if it looks like a degree (e.g., "Civil Engineering" after "Btech")
         if any(deg in lw for deg in ['btech', 'b.tech', 'mtech', 'm.tech', 'be', 'b.e', 'me', 'm.e', 'bachelor', 'master']):
+            logger.info(f"DEBUG: regex_extract_from_line rejected '{lw}' - looks like a degree")
             return None
+        logger.info(f"DEBUG: regex_extract_from_line found match via fallback: '{lw}' from line '{line}'")
         return title_case(lw)
+    logger.info(f"DEBUG: regex_extract_from_line returning None for line '{line}'")
     return None
 
 
@@ -1223,16 +1585,7 @@ def extract_designation(resume_text: str) -> Optional[str]:
     # CRITICAL: Early rejection for fresher resumes with education section
     # Check if this is clearly a fresher resume (has education but no experience section)
     has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', text, re.IGNORECASE))
-    has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', text, re.IGNORECASE))
-    has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', text, re.IGNORECASE))
-    
-    # CRITICAL: If institution name is detected, skip designation extraction entirely
-    # Institution names like "Gates Institute Of Technology" can fuzzy match to "Director Of Technology"
-    # This is the safest approach - skip extraction for resumes with institution names
-    if has_institution:
-        # Return None immediately - don't even try to extract designation
-        # The fallback logic in resume_parser.py will use profile_type to infer designation
-        return None
+    has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development|relevant experience|additional experience)\b', text, re.IGNORECASE))
     
     # If it has education but no experience section, it's likely a fresher
     # CRITICAL: For fresher resumes, skip designation extraction entirely
@@ -1249,6 +1602,16 @@ def extract_designation(resume_text: str) -> Optional[str]:
     # DEBUG: Log experience segment
     import logging
     logger = logging.getLogger(__name__)
+    
+    # CRITICAL: Only reject if institution name appears in the EXPERIENCE section (not education)
+    # Institution names like "Gates Institute Of Technology" in experience section can fuzzy match to "Director Of Technology"
+    # But if it's only in education section, the person has valid work experience and should be processed
+    has_institution_in_experience = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', exp_segment, re.IGNORECASE))
+    if has_institution_in_experience:
+        # Return None immediately - institution name in experience section is suspicious
+        # The fallback logic in resume_parser.py will use profile_type to infer designation
+        logger.warning(f"DEBUG: Institution name found in experience section - skipping designation extraction")
+        return None
     logger.info(f"DEBUG: Experience segment length: {len(exp_segment)}")
     logger.info(f"DEBUG: Experience segment (first 500 chars): {exp_segment[:500]}")
     
@@ -1264,7 +1627,7 @@ def extract_designation(resume_text: str) -> Optional[str]:
         # Check if this is a fresher resume (has education but no experience)
         has_education = bool(re.search(r'\b(education|educational|academic|qualification)\b', text, re.IGNORECASE))
         has_institution = bool(re.search(r'\b(gates\s+institute\s+of\s+technology|institute\s+of\s+technology)\b', text, re.IGNORECASE))
-        has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development)\b', text, re.IGNORECASE))
+        has_experience_section = bool(re.search(r'\b(experience|work history|employment history|professional experience|career development|relevant experience|additional experience)\b', text, re.IGNORECASE))
         
         # If it's a fresher resume, don't search entire text - return None
         if (has_education or has_institution) and not has_experience_section:
@@ -1275,6 +1638,7 @@ def extract_designation(resume_text: str) -> Optional[str]:
 
     # Collect prioritized candidate lines
     candidates = candidate_title_lines(exp_segment)
+    logger.info(f"DEBUG: Found {len(candidates)} candidate title lines to process")
     
     # PRIORITIZE: First check for designations near "till date" or "present" dates
     # This ensures we get the CURRENT position, not just any position
@@ -1282,48 +1646,142 @@ def extract_designation(resume_text: str) -> Optional[str]:
     # Handle both "to till date" and "till date" formats
     # FIXED: Pattern now correctly matches "April 2023 to till date" (month + year + "to" + "till date")
     current_date_range_pattern = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+to\s+till\s+date\b', re.IGNORECASE)
-    # Also match other patterns
-    current_date_range_pattern2 = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s+(?:to\s+date|till\s+date|to\s+present|till\s+present|to\s+current|till\s+current|to\s+till\s+now|till\s+now|to\s+ongoing|till\s+ongoing|to|-)\s*(?:date|present|current|till\s+now|ongoing)?\b', re.IGNORECASE)
-    current_date_keywords = re.compile(r'\b(till\s+date|to\s+date|to\s+till\s+date|present|current|till\s+now|ongoing)\b', re.IGNORECASE)
+    # Also match other patterns - FIXED: Now properly handles "Aug 2017 - Present" format (space-dash-space)
+    current_date_range_pattern2 = re.compile(r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|[A-Za-z]+)\s+\d{4}\s*(?:to\s+date|till\s+date|to\s+present|till\s+present|to\s+current|till\s+current|to\s+till\s+now|till\s+now|to\s+ongoing|till\s+ongoing|to\s+now|till\s+now|to\s*[-–—]\s*present|to\s*[-–—]\s*current|to\s*[-–—]\s*date|to\s*[-–—]\s*now|[-–—]\s*present|[-–—]present|[-–—]\s*current|[-–—]current|[-–—]\s*date|[-–—]date|[-–—]\s*now|[-–—]now|to|-)\s*(?:date|present|current|till\s+now|ongoing|now)?\b', re.IGNORECASE)
+    current_date_keywords = re.compile(r'\b(till\s+date|to\s+date|to\s+till\s+date|present|current|till\s+now|ongoing|now)\b', re.IGNORECASE)
     
     exp_lines = exp_segment.split('\n')
     current_position_candidates = []
     
-    # First pass: Find titles near "till date" or "present"
+    # First pass: Find titles near "till date" or "present" - COLLECT ALL with dates, don't return immediately
     import logging
     logger = logging.getLogger(__name__)
     
     logger.info(f"DEBUG: Starting designation extraction - experience segment has {len(exp_lines)} lines")
     
+    # Collect all candidates with their dates for comparison
+    candidates_with_dates_list = []
+    
     for idx, line in enumerate(exp_lines):
         line_lower = line.lower()
         # Check if this line has a date with "till date" or "present"
         # Also check for simple patterns like "to till date", "till date", "to present"
-        has_till_date = 'till date' in line_lower or 'to till date' in line_lower or 'to date' in line_lower
-        has_present = 'present' in line_lower or 'current' in line_lower or 'ongoing' in line_lower
+        # CRITICAL: Use word boundaries to avoid false matches like "presenting" matching "present"
+        has_till_date = bool(re.search(r'\b(till\s+date|to\s+till\s+date|to\s+date)\b', line_lower))
+        # CRITICAL: Only match "present", "current", "ongoing", "now" as standalone words or in date patterns
+        # This prevents "presenting", "presented", "presentation" from matching
+        has_present = bool(re.search(r'\b(present|current|ongoing|now)\b', line_lower)) and (
+            # Must be in a date pattern (MM/YYYY - Present, Month Year - Present, Month Year - Now, etc.)
+            # Support both "March 2023 - Present" (with spaces) and "March 2023-Present" (no spaces)
+            re.search(r'\d{1,2}/\d{4}\s*[-–—]\s*(present|current|ongoing|now)', line, re.IGNORECASE) or
+            re.search(r'\d{4}\s*[-–—]\s*(present|current|ongoing|now)', line, re.IGNORECASE) or
+            re.search(r'[A-Za-z]+\s+\d{4}\s*[-–—]\s*(present|current|ongoing|now)', line, re.IGNORECASE) or
+            # Also support "March 2023-Present" (no space after dash)
+            re.search(r'[A-Za-z]+\s+\d{4}[-–—](present|current|ongoing|now)', line, re.IGNORECASE) or
+            # Or standalone at end of line (common pattern: "Jan 2020 - Present" or "March 2025 - Now")
+            re.search(r'(present|current|ongoing|now)\s*$', line_lower)
+        )
         has_date_with_current = bool(current_date_range_pattern.search(line) or current_date_range_pattern2.search(line) or current_date_keywords.search(line_lower))
         
         # DEBUG: Log date detection
         if has_till_date or has_present or has_date_with_current:
             logger.info(f"DEBUG: Line {idx}: '{line}' - has_till_date={has_till_date}, has_present={has_present}, has_date_with_current={has_date_with_current}")
         
-        if has_date_with_current or (has_till_date and re.search(r'\d{4}', line)) or has_present:
+        # Check if this line has a date range (even without "present"/"till date")
+        # We'll check if the end date is in the future (treat as current position)
+        end_date = parse_date_range_end_date(line)
+        is_future_date = False
+        if end_date:
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            # If end date is in the future OR is datetime.now() (from "Now"/"Present"), treat as current position
+            # datetime.now() from parse_date_range_end_date indicates "Now"/"Present"/"Current"
+            # Allow small time difference (within 1 second) to account for execution time
+            time_diff = abs((end_date - now).total_seconds())
+            if end_date > now or time_diff < 1:
+                is_future_date = True
+                logger.info(f"DEBUG: Line {idx} has current/future end date {end_date.strftime('%Y-%m-%d %H:%M:%S')} - treating as current position")
+        
+        if has_date_with_current or (has_till_date and re.search(r'\d{4}', line)) or has_present or is_future_date:
+            # Extract end date from this date line (if not already extracted)
+            if not end_date:
+                end_date = parse_date_range_end_date(line)
+            if not end_date:
+                # If no end date found, treat "till date"/"present" as current (use today's date)
+                from datetime import datetime
+                end_date = datetime.now()
+            
+            # CRITICAL: First check if the date line itself contains a title
+            # Some resumes have "Title Date" on the same line (e.g., "Senior Reviewer/Writer March 2025 - Now")
+            date_line_with_title = extract_title_from_candidate_line(line)
+            if date_line_with_title and date_line_with_title != line.strip():
+                # The date line contains a title - check if it's valid
+                if not is_invalid_title_line(date_line_with_title):
+                    # Try to match the extracted title
+                    match = best_match_from_known(date_line_with_title, is_power_platform_resume) or regex_extract_from_line(date_line_with_title)
+                    if match:
+                        if is_power_platform_resume and match.lower() == 'data analyst':
+                            pass  # Skip, continue to check other lines
+                        elif is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                            logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                        else:
+                            validated_result = _validate_designation_result(match, resume_text)
+                            if validated_result:
+                                candidates_with_dates_list.append((end_date, validated_result, line))
+                                logger.info(f"DEBUG: Added candidate from date line itself: '{validated_result}' with end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}")
+            
             # CRITICAL: Prioritize lines near the date line
             # Job title can appear BEFORE the date (e.g., "Web Developer" before "Jun 2017 - Present")
             # OR AFTER the date (e.g., "Senior Consultant" after "April 2023 to till date")
-            # Create prioritized list: [idx - 1, idx + 1] first (before and after date), then other nearby lines
-            priority_indices = []
-            if idx > 0:
-                priority_indices.append(idx - 1)  # Line immediately before date (high priority)
-            if idx < len(exp_lines) - 1:
-                priority_indices.append(idx + 1)  # Line immediately after date (high priority - common pattern)
-            # Add other nearby lines (before and after)
-            for check_idx in range(max(0, idx - 2), min(len(exp_lines), idx + 4)):
-                if check_idx != idx and check_idx not in priority_indices:  # Skip date line and already-added lines
-                    priority_indices.append(check_idx)
+            # EXPANDED: Look further back (up to 6 lines) since titles often appear before company names
+            # Title keywords to prioritize
+            title_keywords = ['assistant', 'consultant', 'engineer', 'developer', 'manager', 'director', 
+                            'analyst', 'architect', 'specialist', 'coordinator', 'officer', 'leader',
+                            'executive', 'administrative', 'sales', 'technical', 'senior', 'principal', 'reviewer', 'writer']
+            
+            # Collect all candidate lines with their scores
+            candidate_scores = []
+            # Look further back (up to 6 lines before, 3 lines after) to catch titles that appear before company names
+            for check_idx in range(max(0, idx - 6), min(len(exp_lines), idx + 4)):
+                if check_idx == idx:  # Skip the date line itself
+                    continue
+                check_line = exp_lines[check_idx].strip()
+                if not check_line:
+                    continue
+                
+                # Score this line based on how likely it is to be a title
+                score = 0
+                check_line_lower = check_line.lower()
+                
+                # High priority: Contains title keywords
+                if any(keyword in check_line_lower for keyword in title_keywords):
+                    score += 100
+                
+                # Medium priority: Close to date line
+                distance = abs(check_idx - idx)
+                if distance == 1:
+                    score += 50
+                elif distance == 2:
+                    score += 30
+                elif distance <= 3:
+                    score += 10
+                
+                # Penalty: Looks like company name or location
+                if ',' in check_line or any(loc in check_line_lower for loc in ['atlanta', 'ga', 'springs', 'group', 'corp', 'inc', 'ltd']):
+                    score -= 20
+                
+                # Penalty: Too long (likely description, not title)
+                if len(check_line.split()) > 6:
+                    score -= 30
+                
+                candidate_scores.append((score, check_idx, check_line))
+            
+            # Sort by score (highest first), then by distance (closer first)
+            candidate_scores.sort(key=lambda x: (-x[0], abs(x[1] - idx)))
+            priority_indices = [check_idx for score, check_idx, check_line in candidate_scores]
             
             # Check lines in prioritized order
-            logger.info(f"DEBUG: Found date line at idx={idx}: '{line}' - checking priority_indices={priority_indices}")
+            logger.info(f"DEBUG: Found date line at idx={idx}: '{line}' (end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}) - checking priority_indices={priority_indices}")
             for check_idx in priority_indices:
                 check_line = exp_lines[check_idx].strip()
                 if not check_line or check_line == line.strip():
@@ -1331,6 +1789,40 @@ def extract_designation(resume_text: str) -> Optional[str]:
                     continue
                 
                 logger.info(f"DEBUG: Checking line {check_idx}: '{check_line}'")
+                
+                # CRITICAL: Reject description lines that start with action verbs
+                # These are job descriptions, not job titles (e.g., "Provided remote support to General Manager...")
+                action_verbs = ['provided', 'managed', 'developed', 'created', 'implemented', 'designed', 
+                              'integrated', 'automated', 'conducted', 'deployed', 'offered', 'achieved', 
+                              'enhanced', 'reduced', 'improved', 'streamlined', 'optimized', 'utilized',
+                              'established', 'initiated', 'standardized', 'formalized', 'responsible',
+                              'playing', 'managing', 'strategizing', 'optimizing', 'empowering', 'coaching',
+                              'configured', 'enabled', 'has', 'improving', 'establishing']
+                check_line_lower_start = check_line.lower().strip()
+                if any(check_line_lower_start.startswith(verb + ' ') for verb in action_verbs):
+                    logger.info(f"DEBUG: Rejected '{check_line}' - starts with action verb (description line, not title)")
+                    continue
+                
+                # CRITICAL: Reject lines that mention titles in the context of working with/for someone
+                # Patterns like "to General Manager", "for Manager", "with Director" indicate the title belongs to someone else
+                # This prevents "Manager" from "Provided remote support to General Manager..." from being extracted
+                title_reference_patterns = [
+                    r'\bto\s+(?:the\s+)?(?:general\s+)?(?:senior\s+)?(?:executive\s+)?(?:assistant\s+)?(?:manager|director|engineer|developer|consultant|analyst|architect|officer|executive)\b',
+                    r'\bfor\s+(?:the\s+)?(?:general\s+)?(?:senior\s+)?(?:executive\s+)?(?:assistant\s+)?(?:manager|director|engineer|developer|consultant|analyst|architect|officer|executive)\b',
+                    r'\bwith\s+(?:the\s+)?(?:general\s+)?(?:senior\s+)?(?:executive\s+)?(?:assistant\s+)?(?:manager|director|engineer|developer|consultant|analyst|architect|officer|executive)\b',
+                    r'\bsupport\s+(?:to|for)\s+(?:the\s+)?(?:general\s+)?(?:senior\s+)?(?:executive\s+)?(?:assistant\s+)?(?:manager|director|engineer|developer|consultant|analyst|architect|officer|executive)\b'
+                ]
+                if any(re.search(pattern, check_line, re.IGNORECASE) for pattern in title_reference_patterns):
+                    logger.info(f"DEBUG: Rejected '{check_line}' - mentions title in context of working with/for someone (not candidate's title)")
+                    continue
+                
+                # CRITICAL: Extract title from line that might include company names
+                # This allows "Security Officer Global 360..." to become "Security Officer"
+                extracted_title = extract_title_from_candidate_line(check_line)
+                logger.info(f"DEBUG: Extracted title '{extracted_title}' from line '{check_line}'")
+                
+                # Use extracted title for validation, but keep original for matching
+                title_to_check = extracted_title if extracted_title != check_line else check_line
                 
                 # CRITICAL: Reject company name patterns (e.g., "Company Name, Location")
                 # Company names often appear before dates and can be mistaken for titles
@@ -1341,12 +1833,16 @@ def extract_designation(resume_text: str) -> Optional[str]:
                     location_indicators = ['hyderabad', 'bangalore', 'mumbai', 'chennai', 'delhi', 'pune', 'kolkata', 
                                          'india', 'usa', 'uk', 'corporate', 'technologies', 'solutions', 'pvt', 'ltd', 'inc']
                     if any(indicator in check_line_lower for indicator in location_indicators):
-                        # Likely a company name, not a job title - skip it
-                        logger.info(f"DEBUG: Rejected '{check_line}' - looks like company name")
-                        continue
+                        # But check if extracted title is valid - if we extracted "Security Officer", it's valid
+                        if is_invalid_title_line(title_to_check):
+                            logger.info(f"DEBUG: Rejected '{check_line}' - looks like company name (extracted title also invalid)")
+                            continue
+                        # If extracted title is valid, use it
+                        logger.info(f"DEBUG: Using extracted title '{extracted_title}' instead of full line '{check_line}'")
                 
-                if is_invalid_title_line(check_line):
-                    logger.info(f"DEBUG: Rejected '{check_line}' - is_invalid_title_line returned True")
+                # Check validity using extracted title
+                if is_invalid_title_line(title_to_check):
+                    logger.info(f"DEBUG: Rejected '{title_to_check}' (extracted from '{check_line}') - is_invalid_title_line returned True")
                     continue
                 
                 # CRITICAL: Reject if this line appears to be in a certifications section
@@ -1364,14 +1860,15 @@ def extract_designation(resume_text: str) -> Optional[str]:
                         logger.info(f"DEBUG: Rejected '{check_line}' - appears to be in certifications section")
                         continue
                 
-                # CRITICAL: For current positions, prioritize exact matches over fuzzy matches
-                # First try exact match (case-insensitive)
+                # CRITICAL: For current positions, try to match using both original line and extracted title
+                # First try exact match (case-insensitive) using extracted title
+                title_to_check_lower = title_to_check.lower().strip()
                 check_line_lower = check_line.lower().strip()
-                logger.info(f"DEBUG: Attempting exact match for '{check_line}' (normalized: '{check_line_lower}')")
+                logger.info(f"DEBUG: Attempting exact match for '{title_to_check}' (normalized: '{title_to_check_lower}') and original '{check_line}'")
                 exact_match = None
                 # Use COMMON_TITLES from module scope (already defined at top of file)
                 for known_title in COMMON_TITLES:
-                    if known_title.lower() == check_line_lower:
+                    if known_title.lower() == title_to_check_lower or known_title.lower() == check_line_lower:
                         # CRITICAL: Reject "Data Analyst" for Power Platform resumes
                         if is_power_platform_resume and known_title.lower() == 'data analyst':
                             logger.info(f"DEBUG: Skipping 'Data Analyst' exact match for Power Platform resume")
@@ -1382,21 +1879,31 @@ def extract_designation(resume_text: str) -> Optional[str]:
                             logger.info(f"DEBUG: Skipping '{known_title}' exact match for Python/developer resume (likely project role, not job title)")
                             continue  # Skip UX titles for Python resumes
                         exact_match = known_title
-                        logger.info(f"DEBUG: ✓ Exact match found: '{known_title}' matches '{check_line}'")
+                        logger.info(f"DEBUG: ✓ Exact match found: '{known_title}' matches '{title_to_check}'")
                         break
                 
                 if exact_match:
-                    # Found exact match - return immediately (highest priority for current positions)
-                    logger.info(f"DEBUG: Found exact match: '{exact_match}' from line '{check_line}'")
+                    # Found exact match - collect it with date instead of returning immediately
+                    logger.info(f"DEBUG: Found exact match: '{exact_match}' from line '{check_line}' (extracted: '{title_to_check}') with end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}")
                     result = title_case(exact_match)
-                    logger.info(f"DEBUG: Returning designation: '{result}'")
-                    return _validate_designation_result(result, resume_text)
+                    validated_result = _validate_designation_result(result, resume_text)
+                    if validated_result:
+                        candidates_with_dates_list.append((end_date, validated_result, check_line))
+                        logger.info(f"DEBUG: Added candidate: '{validated_result}' with end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}")
+                    continue  # Continue to check other dates, don't return yet
                 
-                # If no exact match, try best_match_from_known (includes fuzzy matching)
-                logger.info(f"DEBUG: No exact match for '{check_line}', trying best_match_from_known/regex...")
-                match = best_match_from_known(check_line, is_power_platform_resume) or regex_extract_from_line(check_line)
+                # If no exact match, try best_match_from_known (includes fuzzy matching) using extracted title
+                logger.info(f"DEBUG: No exact match for '{title_to_check}', trying best_match_from_known/regex...")
+                # Try matching with extracted title first, then original line
+                match = best_match_from_known(title_to_check, is_power_platform_resume) or regex_extract_from_line(title_to_check)
+                if not match:
+                    # Fallback to original line
+                    match = best_match_from_known(check_line, is_power_platform_resume) or regex_extract_from_line(check_line)
+                
+                if not match:
+                    logger.warning(f"DEBUG: Title candidate '{title_to_check}' (from '{check_line}') near 'present/till date' was NOT matched - may be missing from COMMON_TITLES or regex pattern")
                 if match:
-                    logger.info(f"DEBUG: Found match via best_match_from_known/regex: '{match}' from line '{check_line}'")
+                    logger.info(f"DEBUG: Found match via best_match_from_known/regex: '{match}' from line '{check_line}' (extracted: '{title_to_check}')")
                     # CRITICAL: Reject "Data Analyst" for Power Platform resumes
                     if is_power_platform_resume and match.lower() == 'data analyst':
                         logger.info(f"DEBUG: Rejected 'Data Analyst' for Power Platform resume")
@@ -1405,29 +1912,77 @@ def extract_designation(resume_text: str) -> Optional[str]:
                     if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
                         logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role, not job title)")
                         continue  # Skip UX titles for Python resumes
-                    # This is a current position - return it immediately
-                    logger.info(f"DEBUG: Returning designation from match: '{match}'")
-                    return _validate_designation_result(match, resume_text)
+                    # Collect this match with date instead of returning immediately
+                    validated_result = _validate_designation_result(match, resume_text)
+                    if validated_result:
+                        candidates_with_dates_list.append((end_date, validated_result, check_line))
+                        logger.info(f"DEBUG: Added candidate: '{validated_result}' with end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}")
                 else:
-                    logger.info(f"DEBUG: No match found for line '{check_line}' (exact match failed, best_match_from_known returned None, regex_extract returned None)")
+                    logger.info(f"DEBUG: No match found for line '{title_to_check}' (extracted from '{check_line}') (exact match failed, best_match_from_known returned None, regex_extract returned None)")
+    
+    # After collecting all candidates with dates, compare and return the one with latest end date
+    if candidates_with_dates_list:
+        from datetime import datetime
+        now = datetime.now()
+        # CRITICAL: Separate future dates (current positions) from past dates
+        # Future dates should always be prioritized, even if they don't have "present" or "till date"
+        # datetime.now() from parse_date_range_end_date indicates "Now"/"Present"/"Current" - treat as current
+        from datetime import timedelta
+        future_candidates = [(ed, des, ln) for ed, des, ln in candidates_with_dates_list if ed and (ed > now or abs((ed - now).total_seconds()) < 1)]
+        past_candidates = [(ed, des, ln) for ed, des, ln in candidates_with_dates_list if ed and ed <= now and abs((ed - now).total_seconds()) >= 1]
+        candidates_without_dates = [(ed, des, ln) for ed, des, ln in candidates_with_dates_list if not ed]
+        
+        # Sort each group: future dates by end_date (latest first), past dates by end_date (latest first)
+        future_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        past_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        
+        # Combine: future dates first (current positions), then past dates, then candidates without dates
+        candidates_with_dates_list = future_candidates + past_candidates + candidates_without_dates
+        
+        logger.info(f"DEBUG: Found {len(candidates_with_dates_list)} candidates with 'till date'/'present'/future dates. Prioritizing by latest end date:")
+        for end_date, designation, original_line in candidates_with_dates_list:
+            logger.info(f"DEBUG:   - '{designation}' (end_date: {end_date.strftime('%Y-%m') if end_date else 'None'}, from line: '{original_line[:80]}...')")
+        
+        # Return the one with the latest end date (future dates prioritized)
+        best_end_date, best_designation, best_line = candidates_with_dates_list[0]
+        logger.info(f"DEBUG: ✓ Returning best candidate: '{best_designation}' with end_date: {best_end_date.strftime('%Y-%m') if best_end_date else 'None'}")
+        return best_designation
 
     # SECOND PASS: If no "till date" or "present" found, prioritize the FIRST position in experience section
-    # This handles cases like "Feb 2025 – Jun 2025" where the most recent position is first but has no "till date"
+    # This handles cases like "Feb 2025 – Jun 2025" or "January 2025 to May 2025" where the most recent position is first but has no "till date"
     logger.info(f"DEBUG: No 'till date' or 'present' found. Checking first position in experience section...")
     
-    # Pattern to detect date ranges (e.g., "Feb 2025 – Jun 2025", "Jan 2024 - Oct 2024")
-    # Handle both en-dash (–) and hyphen (-), with or without spaces
-    date_range_pattern = re.compile(r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}\s*[–\-\s]+\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}', re.IGNORECASE)
+    # Pattern to detect date ranges (e.g., "Feb 2025 – Jun 2025", "January 2025 to May 2025", "Jan 2024 - Oct 2024")
+    # Handle both abbreviated (jan, feb) and full month names (january, february), en-dash (–), hyphen (-), "to" keyword, with or without spaces
+    date_range_pattern = re.compile(r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\s*([-–—]|to)\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}', re.IGNORECASE)
     
-    # Find the first date range in the experience section (most recent position)
-    first_date_idx = None
-    first_date_line = None
+    # Find date ranges in the experience section
+    # CRITICAL: Prioritize future dates (end date > today) as they indicate current positions
+    # Collect all date ranges first, then prioritize future dates
+    date_ranges = []
+    from datetime import datetime
+    now = datetime.now()
     for idx, line in enumerate(exp_lines):
         if date_range_pattern.search(line):
-            first_date_idx = idx
-            first_date_line = line
-            logger.info(f"DEBUG: Found first date range at idx={idx}: '{line}'")
-            break
+            # Parse the end date to check if it's in the future
+            end_date = parse_date_range_end_date(line)
+            if end_date:
+                # Store with priority: future dates first
+                is_future = end_date > now
+                date_ranges.append((is_future, end_date, idx, line))
+                logger.info(f"DEBUG: Found date range at idx={idx}: '{line}' (end_date: {end_date.strftime('%Y-%m')}, future: {is_future})")
+    
+    # Sort: future dates first (by end_date descending), then past dates (by end_date descending)
+    if date_ranges:
+        date_ranges.sort(key=lambda x: (not x[0], x[1]), reverse=True)  # Future first (True < False), then by end_date
+        first_date_idx = date_ranges[0][2]
+        first_date_line = date_ranges[0][3]
+        first_date_end_date = date_ranges[0][1]
+        logger.info(f"DEBUG: Prioritized date range at idx={first_date_idx}: '{first_date_line}' (end_date: {first_date_end_date.strftime('%Y-%m')}, future: {date_ranges[0][0]})")
+    else:
+        first_date_idx = None
+        first_date_line = None
+        first_date_end_date = None
     
     # If we found a date range, prioritize lines near it (similar to "till date" logic)
     if first_date_idx is not None:
@@ -1734,10 +2289,126 @@ def extract_designation(resume_text: str) -> Optional[str]:
                 logger.info(f"DEBUG: Found match from first position: '{match}'")
                 return _validate_designation_result(match, resume_text)
 
-    # Try each candidate in prioritized order
+    # SECOND PRIORITY: If no "till date"/"present" found, compare end dates
+    # Collect all candidates with their date ranges and prioritize by latest end date
+    logger.info(f"DEBUG: No 'till date'/'present' found, checking end dates for all candidates")
+    candidates_with_dates = []
+    
+    # Build a map of line -> index for faster lookup
+    line_to_index = {}
+    for idx, exp_line in enumerate(exp_lines):
+        line_to_index[exp_line.strip()] = idx
+    
     for score, line in candidates:
+        # Extract just the title part (remove company names/locations)
+        title = extract_title_from_candidate_line(line)
+        logger.info(f"DEBUG: Extracted title '{title}' from candidate line '{line[:100]}...'")
+        
+        # Try multiple strategies to find the date:
+        # 1. Try exact line match first
+        line_stripped = line.strip()
+        line_idx = line_to_index.get(line_stripped, -1)
+        
+        # 2. Try matching the extracted title
+        if line_idx < 0:
+            title_stripped = title.strip()
+            line_idx = line_to_index.get(title_stripped, -1)
+        
+        # 3. Try fuzzy matching (line contains title or vice versa)
+        if line_idx < 0:
+            for idx, exp_line in enumerate(exp_lines):
+                exp_line_lower = exp_line.lower()
+                line_lower = line_stripped.lower()
+                title_lower = title.lower()
+                
+                # Check if candidate line or title appears in exp_line
+                if (line_lower in exp_line_lower or exp_line_lower in line_lower or
+                    title_lower in exp_line_lower or exp_line_lower in title_lower):
+                    line_idx = idx
+                    break
+        
+        # 4. Use broader search in experience segment
+        end_date = None
+        if line_idx >= 0:
+            end_date = extract_date_range_from_context(line, exp_lines, line_idx)
+        
+        # 5. If still no date, search the entire segment for the title
+        if not end_date:
+            end_date = find_date_for_title_in_segment(title, exp_segment, exp_lines)
+        
+        if end_date:
+            # Boost score for future dates (they indicate current positions)
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            # Treat datetime.now() (from "Now"/"Present") or future dates as current positions
+            time_diff = abs((end_date - now).total_seconds()) if end_date else 999
+            if end_date and (end_date > now or time_diff < 1):
+                score += 1000  # Major boost for future dates (current positions)
+                logger.info(f"DEBUG: Candidate with FUTURE/CURRENT date (current position): '{line[:100]}...' (title: '{title}') -> end_date: {end_date.strftime('%Y-%m-%d %H:%M:%S')} (score boosted by 1000)")
+            candidates_with_dates.append((end_date, score, line))
+            logger.info(f"DEBUG: Candidate with date: '{line[:100]}...' (title: '{title}') -> end_date: {end_date.strftime('%Y-%m')}")
+        else:
+            logger.info(f"DEBUG: No date found for candidate: '{line[:100]}...' (title: '{title}')")
+    
+    # Sort by end date (latest first), then by score
+    # Future dates (end_date > today) should be prioritized as they indicate current positions
+    if candidates_with_dates:
+        from datetime import datetime
+        now = datetime.now()
+        # Separate future dates (current positions) from past dates
+        # datetime.now() from parse_date_range_end_date indicates "Now"/"Present"/"Current" - treat as current
+        from datetime import timedelta
+        future_candidates = [(ed, sc, ln) for ed, sc, ln in candidates_with_dates if ed and (ed > now or abs((ed - now).total_seconds()) < 1)]
+        past_candidates = [(ed, sc, ln) for ed, sc, ln in candidates_with_dates if ed and ed <= now and abs((ed - now).total_seconds()) >= 1]
+        
+        # Sort each group: future dates by end_date (latest first), past dates by end_date (latest first)
+        future_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        past_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        
+        # Combine: future dates first (current positions), then past dates
+        candidates_with_dates = future_candidates + past_candidates
+        logger.info(f"DEBUG: Found {len(candidates_with_dates)} candidates with date ranges, prioritizing by latest end date")
+        
+        # Process candidates in order of latest end date
+        for end_date, score, line in candidates_with_dates:
+            logger.info(f"DEBUG: Processing candidate with end_date {end_date.strftime('%Y-%m')} (score: {score:.2f}): '{line[:150]}...'")
+            
+            if is_invalid_title_line(line):
+                logger.info(f"DEBUG: Candidate rejected - invalid title line")
+                continue
+            
+            # Try to extract designation from this line
+            match = best_match_from_known(line, is_power_platform_resume)
+            if match:
+                if is_power_platform_resume and match.lower() == 'data analyst':
+                    continue
+                if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                    logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                    continue
+                result = _validate_designation_result(match, resume_text)
+                if result:
+                    logger.info(f"DEBUG: ✓ FINAL RESULT from latest end date candidate: '{result}'")
+                    return result
+            
+            match = regex_extract_from_line(line)
+            if match:
+                logger.info(f"DEBUG: regex_extract_from_line returned: '{match}' for line: '{line[:100]}...'")
+                if is_power_platform_resume and match.lower() == 'data analyst':
+                    continue
+                if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
+                    logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
+                    continue
+                result = _validate_designation_result(match, resume_text)
+                if result:
+                    logger.info(f"DEBUG: ✓ FINAL RESULT from latest end date candidate (regex): '{result}'")
+                    return result
+
+    # Try each candidate in prioritized order (fallback if no dates found)
+    for idx, (score, line) in enumerate(candidates):
+        logger.info(f"DEBUG: Processing candidate #{idx+1}/{len(candidates)} (score: {score:.2f}): '{line[:150]}...' (truncated if long)")
         # Quick reject
         if is_invalid_title_line(line):
+            logger.info(f"DEBUG: Candidate #{idx+1} rejected - invalid title line")
             continue
         
         # CRITICAL: Reject if this line appears to be in a certifications section
@@ -1840,8 +2511,10 @@ def extract_designation(resume_text: str) -> Optional[str]:
         # 1) best match from known titles (fast)
         match = best_match_from_known(line, is_power_platform_resume)
         if match:
+            logger.info(f"DEBUG: best_match_from_known returned: '{match}' for line: '{line[:100]}...'")
             # CRITICAL: Reject "Data Analyst" for Power Platform resumes
             if is_power_platform_resume and match.lower() == 'data analyst':
+                logger.info(f"DEBUG: Rejected '{match}' for Power Platform resume")
                 continue  # Skip this match, try next candidate
             # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
             if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
@@ -1849,18 +2522,25 @@ def extract_designation(resume_text: str) -> Optional[str]:
                 continue
             result = _validate_designation_result(match, resume_text)
             if result:
+                logger.info(f"DEBUG: ✓ FINAL RESULT from best_match_from_known: '{result}' (validated)")
                 return result
+            else:
+                logger.info(f"DEBUG: ✗ Validation failed for '{match}', trying next method")
 
         # 2) regex heuristics
         match = regex_extract_from_line(line)
         if match:
+            logger.info(f"DEBUG: regex_extract_from_line returned: '{match}' for line: '{line[:100]}...'")
             # CRITICAL: Reject UX/UI analyst titles for Python/developer resumes
             if is_python_resume and any(ux_term in match.lower() for ux_term in ['user experience', 'ux analyst', 'ui analyst', 'user interface']):
                 logger.info(f"DEBUG: Rejected '{match}' for Python/developer resume (likely project role)")
                 continue
             result = _validate_designation_result(match, resume_text)
             if result:
+                logger.info(f"DEBUG: ✓ FINAL RESULT from regex_extract_from_line: '{result}' (validated)")
                 return result
+            else:
+                logger.info(f"DEBUG: ✗ Validation failed for '{match}', continuing to next candidate")
 
     # Final fallback: search entire text for patterns like "\n<Title>\n" near company/date mentions
     # CRITICAL: Skip this fallback if text contains education section (fresher resumes)

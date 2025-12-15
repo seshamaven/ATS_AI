@@ -859,14 +859,18 @@ def determine_subrole_type_from_profile_and_skills(
     profile_type: str,
     primary_skills: str,
     secondary_skills: str = "",
-) -> str:
+) -> Optional[str]:
     """
     Determine subrole_type based on profile_type and skills.
-    Always returns one of: "Backend Developer", "Full Stack Developer", or "Frontend Developer".
+    Returns one of: "Backend Developer", "Full Stack Developer", "Frontend Developer", or None for non-IT profiles.
     This is used to populate subrole_type (not sub_profile_type).
     """
     if not profile_type or not primary_skills:
-        return "Backend Developer"  # Default
+        return None  # Return None instead of defaulting to Backend Developer
+    
+    # Check if this is a non-IT profile first
+    if is_non_it_profile(profile_type):
+        return None  # Non-IT profiles should not have developer subroles
     
     # Combine all skills for matching
     all_skills_text = f"{primary_skills}, {secondary_skills}".lower()
@@ -891,6 +895,11 @@ def determine_subrole_type_from_profile_and_skills(
     # Count matches for frontend and backend skills
     frontend_score = sum(1 for keyword in frontend_keywords if keyword in all_skills_text)
     backend_score = sum(1 for keyword in backend_keywords if keyword in all_skills_text)
+    
+    # CRITICAL: If no IT/developer skills are detected, return None (not a developer role)
+    # This handles cases like "Generalist" profile with non-technical skills
+    if frontend_score == 0 and backend_score == 0:
+        return None
     
     # Normalize profile_type for comparison
     profile_lower = profile_type.lower()
@@ -926,21 +935,20 @@ def determine_subrole_type_from_profile_and_skills(
             # No backend skills -> Frontend
             return "Frontend Developer"
     elif is_non_technical:
-        # Non-technical profiles - default to Backend Developer (or could be None, but we need one of the three)
-        # If they have strong technical skills, determine from skills
-        if frontend_score > 0 and backend_score > 0:
-            return "Full Stack Developer"
-        elif frontend_score > backend_score and frontend_score >= 2:  # Need at least 2 frontend skills
-            return "Frontend Developer"
-        else:
-            return "Backend Developer"  # Default for non-technical
+        # Non-technical profiles - return None (not applicable for developer subroles)
+        # Even if they have some technical skills, if profile_type is non-technical, don't assign developer subrole
+        return None
     else:
         # Other technical profiles (Data Science, DevOps, etc.) - determine from skills
-        if frontend_score > 0 and backend_score > 0:
+        # Safety check: if no IT skills detected, return None
+        if frontend_score == 0 and backend_score == 0:
+            return None
+        elif frontend_score > 0 and backend_score > 0:
             return "Full Stack Developer"
         elif frontend_score > backend_score:
             return "Frontend Developer"
         else:
+            # backend_score >= frontend_score and at least one is > 0
             return "Backend Developer"
 
 

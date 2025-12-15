@@ -482,6 +482,30 @@ Resume Text (look for name in FIRST FEW LINES):
             if not line or ',' in line:
                 continue
             
+            # CRITICAL: Skip lines that contain email addresses (these are not names)
+            # Check this FIRST before other checks
+            if '@' in line and any(domain in line.lower() for domain in ['.com', '.org', '.net', '.edu', '.gov']):
+                continue
+            
+            # CRITICAL: Skip lines that are header labels (EMAIL, PHONE, LINKEDIN, etc.)
+            # These are often extracted from PDF headers and are not names
+            header_labels = ['email', 'phone', 'linkedin', 'address', 'location', 'contact']
+            line_upper = line.strip().upper()
+            # Check if line is exactly a header label
+            if line_upper in [h.upper() for h in header_labels]:
+                continue
+            # Check if line starts with header label (with optional whitespace/newline after)
+            if any(line_upper.startswith(h.upper()) and (len(line_upper) == len(h.upper()) or line_upper[len(h.upper()):len(h.upper())+1] in [' ', '\n', '\t', '\r'] or '@' in line or 'http' in line.lower()) for h in header_labels):
+                continue
+            # Check if line contains multiple header labels (e.g., "EMAIL ... PHONE")
+            header_count = sum(1 for h in header_labels if h.upper() in line_upper)
+            if header_count >= 2:
+                continue
+            
+            # CRITICAL: Skip lines that are clearly contact info headers (EMAIL, PHONE, etc. on their own line)
+            if re.match(r'^(EMAIL|PHONE|LINKEDIN|ADDRESS|LOCATION|CONTACT)\s*$', line_upper):
+                continue
+            
             # Skip section headers (but check if NOT in first 3 lines where actual name might be)
             if idx > 2 and line.lower() in invalid_names:
                 continue
@@ -591,6 +615,30 @@ Resume Text (look for name in FIRST FEW LINES):
             
             # Skip empty lines or lines without commas (already checked in first pass)
             if not line or ',' not in line:
+                continue
+            
+            # CRITICAL: Skip lines that contain email addresses (these are not names)
+            # Check this FIRST before other checks
+            if '@' in line and any(domain in line.lower() for domain in ['.com', '.org', '.net', '.edu', '.gov']):
+                continue
+            
+            # CRITICAL: Skip lines that are header labels (EMAIL, PHONE, LINKEDIN, etc.)
+            # These are often extracted from PDF headers and are not names
+            header_labels = ['email', 'phone', 'linkedin', 'address', 'location', 'contact']
+            line_upper = line.strip().upper()
+            # Check if line is exactly a header label
+            if line_upper in [h.upper() for h in header_labels]:
+                continue
+            # Check if line starts with header label (with optional whitespace/newline after)
+            if any(line_upper.startswith(h.upper()) and (len(line_upper) == len(h.upper()) or line_upper[len(h.upper()):len(h.upper())+1] in [' ', '\n', '\t', '\r'] or '@' in line or 'http' in line.lower()) for h in header_labels):
+                continue
+            # Check if line contains multiple header labels (e.g., "EMAIL ... PHONE")
+            header_count = sum(1 for h in header_labels if h.upper() in line_upper)
+            if header_count >= 2:
+                continue
+            
+            # CRITICAL: Skip lines that are clearly contact info headers (EMAIL, PHONE, etc. on their own line)
+            if re.match(r'^(EMAIL|PHONE|LINKEDIN|ADDRESS|LOCATION|CONTACT)\s*$', line_upper):
                 continue
             
             # Skip section headers (but check if NOT in first 3 lines where actual name might be)
@@ -1491,7 +1539,7 @@ Resume Text (look for name in FIRST FEW LINES):
         text_lower = text.lower()
         
         # Find education section
-        edu_section_pattern = r'(?i)(?:education|academic|qualification)[:\s]+(.*?)(?=\n\n[A-Z]|experience|skills|$)'
+        edu_section_pattern = r'(?i)(?:education|education\s*&\s*certifications|academic|qualification)[:\s]+(.*?)(?=\n\n[A-Z]|experience|skills|$)'
         edu_match = re.search(edu_section_pattern, text, re.DOTALL)
         
         if edu_match:

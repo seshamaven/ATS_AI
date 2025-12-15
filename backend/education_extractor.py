@@ -36,6 +36,7 @@ class EducationExtractor:
         r'\bacademic\s*(background|credentials|qualifications?)?\b',
         r'\bscholastic\s*record\b',
         r'\beducation\s*(&|and)\s*(training|certifications?)\b',
+        r'\beducation\s*(&|and)\s*certifications\b',  # cover "Education & Certifications"
     ]
     
     # Section end keywords (next section headers)
@@ -254,6 +255,8 @@ class EducationExtractor:
             (r"\b(Master(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 6),
             # Abbreviations: M.S., M.A., MBA, MCA, M.Tech, M.E., M.Sc, M.Com
             (r'\b(M\.?S\.?(?:c\.?)?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
+            # M.A. / MA directly followed by subject: e.g., "MA English Education"
+            (r'\b(M\.?A\.?\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 6),
             (r'\b(M\.?A\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
             (r'\b(M\.?B\.?A\.?|MBA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 6),
             (r'\b(M\.?C\.?A\.?|MCA)(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?', 6),
@@ -267,8 +270,17 @@ class EducationExtractor:
             (r"\b(Bachelor(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 5),
             (r'\b(Bachelors?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
             (r"\b(Bachelor(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 5),
+            # B.A. / BA directly followed by subject: e.g., "BA English Literature"
+            (r'\b(B\.?A\.?\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
             # Specific pattern for "Bachelor's in Computer Science"
             (r"\b(Bachelor'?s?\s+in\s+Computer\s+Science)\b", 5),
+            # Pattern for "Computer Science, Bachelors (BSCS)" format - fixed word boundary issue
+            (r'\b(Computer\s+Science,?\s+Bachelors?\s*\([A-Z]+\))', 5),
+            # Pattern for "Field, Bachelors (Abbreviation)" format - more general (e.g., "Computer Science, Bachelors (BSCS)")
+            (r'\b([A-Za-z][A-Za-z\s&/\-\.]+,?\s+Bachelors?\s*\([A-Z]+\))', 5),
+            # Standalone "Bachelors" pattern (with or without parentheses abbreviation)
+            (r'\b(Bachelors?\s*\([A-Z]+\))', 5),
+            (r'\b(Bachelors?)\b', 5),  # Standalone "Bachelors" or "Bachelor"
             # B.Tech / B. Tech / BTech - with specialization (comma, in, from)
             (r'\b(B\.?\s*[-]?\s*Tech\.?(?:nology)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
             (r'\b(B\.?\s*[-]?\s*E\.?(?:ng)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),

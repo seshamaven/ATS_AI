@@ -6,7 +6,7 @@ Extracts structured information from PDF, DOCX, and DOC resumes with AI-powered 
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
 import os
 
@@ -57,7 +57,7 @@ except ImportError:
     extract_location_advanced = None
 from skill_extractor import extract_skills as extract_skills_advanced, extract_tech_skills, extract_soft_skills, TECH_SKILLS
 from email_extractor import extract_email_and_provider
-from name_extraction import extract_name_with_ai
+from name_extraction import extract_name_with_ai, extract_name
 from company_AI_extraction import extract_company_with_ai
 from designation_extraction import extract_designation
 from domain_extraction import extract_domains
@@ -453,7 +453,14 @@ Resume Text (look for name in FIRST FEW LINES):
             raise ValueError(f"Unsupported file type: {file_type}")
     
     def extract_name(self, text: str) -> Optional[str]:
-        """Extract candidate name from resume text with PDF header handling."""
+        """
+        Extract candidate name from resume text with PDF header handling.
+        
+        NOTE: This method is kept for backward compatibility. 
+        The improved name extraction is now in name_extraction.extract_name() 
+        which checks 8-10 lines, handles ALL CAPS, and strips prefixes.
+        This method is deprecated and may be removed in future versions.
+        """
         # Common section headers to exclude (but NOT in first 3 lines - those might be the actual name!)
         invalid_names = {'education', 'experience', 'skills', 'contact', 'objective', 
                         'summary', 'qualifications', 'work history', 'professional summary',
@@ -842,7 +849,7 @@ Resume Text (look for name in FIRST FEW LINES):
         
         return None
     
-    def extract_comprehensive_data_with_ai(self, text: str) -> Dict[str, Any]:
+    def extract_comprehensive_data_with_ai(self, text: str, extracted_skills: Optional[Set[str]] = None) -> Dict[str, Any]:
         """Extract comprehensive resume data using AI-powered analysis."""
         if not self.use_ai_extraction or not self.ai_client:
             logger.warning("AI extraction not available, falling back to regex-based extraction")
@@ -907,8 +914,9 @@ Resume Text (look for name in FIRST FEW LINES):
                     text=text,
                     ai_client=self.ai_client,
                     ai_model=self.ai_model,
-                    fallback_extractor=self.extract_name,  # Pass the regex fallback method
-                    nlp=self.nlp  # Pass NLP for final fallback
+                    fallback_extractor=extract_name,  # Use improved name extraction as fallback
+                    nlp=self.nlp,  # Pass NLP for final fallback
+                    extracted_skills=extracted_skills if extracted_skills else None  # Pass extracted skills for filtering
                 )
                 
                 if extracted_name:
@@ -1617,10 +1625,17 @@ Resume Text (look for name in FIRST FEW LINES):
             if not resume_text or len(resume_text) < 100:
                 raise ValueError("Resume text is too short or empty")
             
-            # Try comprehensive AI extraction first
+            # Extract skills FIRST (before name extraction) for skill-based filtering
+            # This prevents tools/skills like "Visual Studio" from being extracted as names
+            logger.info("Extracting skills for name filtering...")
+            skills_result = self.extract_skills(resume_text)
+            extracted_skills_set = set(skills_result.get('all_skills', []))
+            logger.info(f"Extracted {len(extracted_skills_set)} skills for name filtering")
+            
+            # Try comprehensive AI extraction first (with skills for name filtering)
             ai_data = None
             if self.use_ai_extraction:
-                ai_data = self.extract_comprehensive_data_with_ai(resume_text)
+                ai_data = self.extract_comprehensive_data_with_ai(resume_text, extracted_skills_set)
             
             # Use AI data if available, otherwise fallback to regex-based extraction
             if ai_data:
@@ -1633,10 +1648,10 @@ Resume Text (look for name in FIRST FEW LINES):
                 degree_keywords = ['b.a.', 'm.a.', 'b.s.', 'm.s.', 'phd', 'mba', 'degree']
                 
                 if not name or name.lower() in ['unknown', 'education', 'experience']:
-                    logger.warning(f"AI name extraction failed or returned invalid: '{name}', trying regex fallback...")
-                    # Try regex extraction
-                    name = self.extract_name(resume_text)
-                    logger.info(f"Regex fallback returned: {name}")
+                    logger.warning(f"AI name extraction failed or returned invalid: '{name}', trying improved name extraction with skill filtering...")
+                    # Try improved name extraction with skill filtering (checks 8-10 lines, handles ALL CAPS, filters skills)
+                    name = extract_name(resume_text, extracted_skills=extracted_skills_set)
+                    logger.info(f"Improved name extraction returned: {name}")
                     
                     # If still not found, try a simple heuristic: first line that looks like a name
                     if not name or name == 'Unknown':
@@ -1674,8 +1689,9 @@ Resume Text (look for name in FIRST FEW LINES):
                 
                 # SKILL EXTRACTION: Use ONLY Python-based extraction (NO AI)
                 # Uses skill_extractor.py module (2000+ technical skills, 50+ soft skills)
-                logger.info("Extracting skills using Python-only approach (skill_extractor.py)...")
-                python_skills = self.extract_skills(resume_text)
+                # Skills already extracted above for name filtering, reuse the result
+                logger.info("Using skills extracted earlier for name filtering...")
+                python_skills = skills_result
                 
                 # Get technical and soft skills from Python extraction
                 technical_skills_list = python_skills.get('primary_skills', [])  # Technical skills
@@ -1967,14 +1983,22 @@ Resume Text (look for name in FIRST FEW LINES):
                 location = self.extract_location(resume_text)
                 
             else:
-                # Fallback to regex-based extraction
-                name = self.extract_name(resume_text)
+                # Extract skills FIRST (before name extraction) for skill-based filtering
+                # This prevents tools/skills like "Visual Studio" from being extracted as names
+                logger.info("Extracting skills for name filtering...")
+                skills_result = self.extract_skills(resume_text)
+                extracted_skills_set = set(skills_result.get('all_skills', []))
+                logger.info(f"Extracted {len(extracted_skills_set)} skills for name filtering")
+                
+                # Use improved name extraction with skill filtering (checks 8-10 lines, handles ALL CAPS, strips prefixes, filters skills)
+                name = extract_name(resume_text, extracted_skills=extracted_skills_set)
                 email = self.extract_email(resume_text)
                 phone = self.extract_phone(resume_text)
                 # Use Python-based extraction (NO AI) - uses comprehensive ExperienceExtractor
                 experience = self.extract_experience(resume_text)
                 
-                skills = self.extract_skills(resume_text)
+                # Skills already extracted above for name filtering, reuse the result
+                skills = skills_result
                 
                 # CRITICAL: Filter to ONLY include skills from TECHNICAL_SKILLS list
                 all_extracted_skills = skills['all_skills']

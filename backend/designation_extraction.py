@@ -88,7 +88,7 @@ COMMON_TITLES = {
     "Graphic Designer", "Production Artist","Senior Reviewer/Writer",
     "Technical Writer Volunteer","Content Writer","Reporter and Editor","Data Collection Specialist","Administrative Assistant","Sales Consultant","Executive Assistant","Security Officer","Recreation Leader","Landscaper","E-Learning Case Manager and Content Specialist",
     "Technical Success Specialist", "Operations Manager","Program Management  Consultant", "Sr. Automation Engineer",
-    "Assistant Manager - Enterprise Digitalization","Mental Health","Life Coach","Instructional Designer","Corporate Trainer",
+    "Assistant Manager - Enterprise Digitalization","Mental Health","Life Coach","Instructional Designer","Corporate Trainer", "JavaScript Developer"
 
     # Director roles
         "director", "technical director", "director - technology", "director technology", "Director - Technology","Volunteer",
@@ -228,7 +228,7 @@ COMMON_TITLES = {
         "web system analyst", "windchill product analyst", "workforce planning analyst",
         "sr .net developer", "sr .net web developer", "sr android developer", "sr c++ programmer",
         "sr data engineer", "sr developer", "sr java developer", "sr python full stack developer",
-        "sr software engineer", "sr. .net developer", "sr. c# programmer", "sr. c++ developer",
+        "sr software engineer", "sr .net developer", "sr. c# programmer", "sr. c++ developer",
         "sr. c++ programmer", "sr. developer", "sr. full stack engineer/architect",
         "sr. full stack engineer/architect1", "sr. fullstack developer", "sr. fullstack engineer",
         "sr. java developer", "sr. java programmer", "sr. net developer", "sr. programmer",
@@ -303,7 +303,7 @@ COMMON_TITLES = {
         "sr. virtualization developer", "sr. visual basic 6.0 programmer",
         "sr. web applications developer", "sr. web developer", "sr. web software developer",
         "sr. windows driver developer", "sr. windows installer c++ developer",
-        "sr. wireless automation developer", "sr. xml developer", "sr.. net developer",
+        "sr. wireless automation developer", "sr. xml developer", "sr .net developer",
         "sr.android software engineer", "sr.application developer", "sr.asp.net developer",
         "sr.build engineer", "sr.c++ validation engineer", "sr.c/c++ network evaluation engineer",
         "sr.cad engineer", "sr.excel vba software developer", "sr.firmware engineer",
@@ -505,7 +505,7 @@ COMMON_TITLES = {
         "ms sql bi developer", "ms sql database developer", "ms sql developer",
         "ms sql reporting services developer", "mule soft developer", "mulesoft developer",
         "multimedia test engineer", "net application programmer", "net applications programmer",
-        "net developer", "net full stack developer", "net fullstack developer",".Net fullstack developer",".Net full stack developer",
+        "net developer", "net full stack developer", "net fullstack developer",".Net fullstack developer",".Net full stack developer","Sr .Net Full Stack Developer", "Senior full stack .Net developer", "Full stack Dot Net developer",
         "net mobile application developer", "net programmer", "net qa engineer",
         "net software engineer", "net sw applications developer", "net web application developer",
         "net web applications developer", "net web developer", "net web programmer",
@@ -1585,6 +1585,17 @@ def parse_date_range_end_date(date_str: str) -> Optional[datetime]:
             except:
                 pass
     
+    # Pattern 5: Single 4-digit year (e.g., "2023") - treat as end of that year
+    # This is a fallback when only the year is present (common in some PDFs)
+    pattern5 = re.compile(r'\b(19|20)\d{2}\b')
+    match = pattern5.search(date_str)
+    if match:
+        try:
+            year = int(match.group(0))
+            return datetime(year, 12, 31)
+        except:
+            pass
+    
     return None
 
 
@@ -2062,29 +2073,29 @@ def _reconstruct_date_string_from_lines(exp_lines: List[str], idx: int, block_st
         if re.match(r'^[-–—]$', line):
             dash_line = (line_idx, line)
     
-    # Reconstruct if we have month and year
+    # Reconstruct if we have month and year (year can be before or after month in the text)
     if month_line and year_line:
         parts = []
         
-        # Add month
+        # Add month text (may already contain start month/year and "to" part)
         month_text = month_line[1]
         parts.append(month_text)
         
-        # Add year (should be after month)
-        if year_line[0] >= month_line[0]:
-            year_text = year_line[1]
-            # Extract just the year if line has other text
-            year_match = year_pattern.search(year_text)
-            if year_match:
-                parts.append(year_match.group(0))
-            else:
-                parts.append(year_text)
+        # Always append the standalone year we found somewhere in the window.
+        # This handles cases where the year appears on its own line either
+        # before or after the month range (common in PDF text extraction).
+        year_text = year_line[1]
+        year_match = year_pattern.search(year_text)
+        if year_match:
+            parts.append(year_match.group(0))
+        else:
+            parts.append(year_text)
         
-        # Add dash if present
+        # Add dash if present as a standalone line (rare, but supported)
         if dash_line:
             parts.append('-')
         
-        # Add current indicator or end date
+        # Add current indicator or end date (e.g., "Present")
         if current_line:
             parts.append(current_line[1])
         
@@ -2380,61 +2391,82 @@ def _find_roles_with_dates(exp_segment: str, exp_lines: List[str]) -> List[Tuple
         re.IGNORECASE
     )
     
+    # Treat entire experience segment as a single block for date reconstruction
+    block_start = 0
+    block_end = len(exp_lines) - 1
+    
     for idx, line in enumerate(exp_lines):
+        date_line_to_parse = None
+        
+        # First, try direct date range patterns on this line
         has_date = date_range_pattern.search(line) or date_range_pattern2.search(line) or date_range_pattern2_5.search(line) or date_range_pattern2_6.search(line) or date_range_pattern3.search(line)
         if has_date:
-            end_date = parse_date_range_end_date(line)
-            if not end_date:
+            date_line_to_parse = line
+        else:
+            # If no full date range is found on this line, try to reconstruct a split date
+            # This handles cases like:
+            #   "October 2020 to April"
+            #   "2023"
+            # split across adjacent lines in PDFs.
+            reconstructed = _reconstruct_date_string_from_lines(exp_lines, idx, block_start, block_end)
+            if reconstructed:
+                date_line_to_parse = reconstructed
+        
+        if not date_line_to_parse:
+            continue
+        
+        end_date = parse_date_range_end_date(date_line_to_parse)
+        if not end_date:
+            continue
+            
+        # ENHANCED: Check up to 5 lines before the date (like Priority 1)
+        # Prioritize closer lines but check all within range
+        max_proximity = 5
+        check_indices = [idx]  # Same line (highest priority)
+        
+        # Add lines before (closer first)
+        for offset in range(1, min(max_proximity + 1, idx + 1)):
+            check_idx = idx - offset
+            if check_idx >= 0:
+                check_indices.append(check_idx)
+        
+        # Process check_indices (already sorted by priority: same line, then by distance)
+        for check_idx in check_indices:
+            check_line = exp_lines[check_idx].strip()
+            
+            # Skip empty lines
+            if not check_line:
                 continue
             
-            # ENHANCED: Check up to 5 lines before the date (like Priority 1)
-            # Prioritize closer lines but check all within range
-            max_proximity = 5
-            check_indices = [idx]  # Same line (highest priority)
+            # Skip bullet points and action verb lines
+            if re.match(r'^[\-\–\—\•\*\u2022]\s+', check_line):
+                continue
+            if re.match(r'^(aided|helped|supported|assisted|facilitated|playing|managing|strategizing|front|optimizing|empowering|coaching|initiated|standardizing|formalizing|responsible|establishing|improving|has|utilized|developed|created|configured|implemented|enabled|designed|integrated|automated|conducted|deployed|provided|offered|achieved|enhanced|reduced|improved|streamlined|optimized)\s+', check_line, re.IGNORECASE):
+                continue
             
-            # Add lines before (closer first)
-            for offset in range(1, min(max_proximity + 1, idx + 1)):
-                check_idx = idx - offset
-                if check_idx >= 0:
-                    check_indices.append(check_idx)
+            # Skip lines that are just dashes or separators
+            if re.match(r'^[-–—]+$', check_line):
+                continue
             
-            # Process check_indices (already sorted by priority: same line, then by distance)
-            for check_idx in check_indices:
-                check_line = exp_lines[check_idx].strip()
-                
-                # Skip empty lines
-                if not check_line:
-                    continue
-                
-                # Skip bullet points and action verb lines
-                if re.match(r'^[\-\–\—\•\*\u2022]\s+', check_line):
-                    continue
-                if re.match(r'^(aided|helped|supported|assisted|facilitated|playing|managing|strategizing|front|optimizing|empowering|coaching|initiated|standardizing|formalizing|responsible|establishing|improving|has|utilized|developed|created|configured|implemented|enabled|designed|integrated|automated|conducted|deployed|provided|offered|achieved|enhanced|reduced|improved|streamlined|optimized)\s+', check_line, re.IGNORECASE):
-                    continue
-                
-                # Skip lines that are just dashes or separators
-                if re.match(r'^[-–—]+$', check_line):
-                    continue
-                
-                # Skip lines that are just numbers (likely part of date on another line)
-                if re.match(r'^\d+$', check_line):
-                    continue
-                
-                # Skip lines that are clearly company names (long lines with location patterns)
-                if re.search(r',\s*[A-Z]{2}\s+\d{5}', check_line):  # City, ST ZIP pattern
-                    continue
-                
-                if not is_invalid_title_line(check_line):
-                    # Try extracting from the line directly
-                    title_from_line = extract_title_from_candidate_line(check_line)
-                    if title_from_line and not is_invalid_title_line(title_from_line):
-                        match = best_match_from_known(title_from_line, False) or regex_extract_from_line(title_from_line)
-                        if match:
-                            # Validate: 1-6 words (allow single-word designations)
-                            words = match.split()
-                            if 1 <= len(words) <= 6:
-                                candidates.append((end_date, match, check_line, check_idx))
-                                break  # Found valid match for this date, move to next date
+            # Skip lines that are just numbers (likely part of date on another line)
+            if re.match(r'^\d+$', check_line):
+                continue
+            
+            # Skip lines that are clearly company names (long lines with location patterns)
+            if re.search(r',\s*[A-Z]{2}\s+\d{5}', check_line):  # City, ST ZIP pattern
+                continue
+            
+            if not is_invalid_title_line(check_line):
+                # Try extracting from the line directly
+                title_from_line = extract_title_from_candidate_line(check_line)
+                if title_from_line and not is_invalid_title_line(title_from_line):
+                    match = best_match_from_known(title_from_line, False) or regex_extract_from_line(title_from_line)
+                    if match:
+                        # Validate: 1-6 words (allow single-word designations)
+                        words = match.split()
+                        if 1 <= len(words) <= 6:
+                            candidates.append((end_date, match, check_line, check_idx))
+                            break  # Found valid match for this date, move to next date
     
     return candidates
 

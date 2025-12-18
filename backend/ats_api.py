@@ -669,13 +669,20 @@ def process_resume():
                             secondary_skills=parsed_data.get('secondary_skills', ''),
                             resume_text=parsed_data.get('resume_text', '')
                         )
-                        db.insert_or_update_profile_scores(candidate_id, profile_scores)
-                        logger.info(f"Stored profile scores for candidate_id={candidate_id}")
                         
-                        # Log all profile scores for debugging
+                        # Log profile scores before storing
                         sorted_scores = sorted(profile_scores.items(), key=lambda x: x[1], reverse=True)
                         non_zero_scores = [(pt, score) for pt, score in sorted_scores if score > 0]
-                        logger.info(f"Profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                        logger.info(f"Calculated profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                        
+                        # Store profile scores and check return value
+                        success = db.insert_or_update_profile_scores(candidate_id, profile_scores)
+                        if success:
+                            logger.info(f"Successfully stored profile scores for candidate_id={candidate_id}")
+                        else:
+                            logger.error(f"FAILED to store profile scores for candidate_id={candidate_id}. Check database logs for details.")
+                            # Log the scores that should have been stored for debugging
+                            logger.error(f"Profile scores that failed to store: {non_zero_scores}")
                         
                         # Set sub_profile_type to the second highest scoring profile type
                         second_highest_profile = get_second_highest_profile_type(profile_scores)
@@ -867,13 +874,20 @@ def process_resume_base64():
                         secondary_skills=parsed_data.get('secondary_skills', ''),
                         resume_text=parsed_data.get('resume_text', '')
                     )
-                    db.insert_or_update_profile_scores(candidate_id, profile_scores)
-                    logger.info(f"Stored profile scores for candidate_id={candidate_id}")
                     
-                    # Log all profile scores for debugging
+                    # Log profile scores before storing
                     sorted_scores = sorted(profile_scores.items(), key=lambda x: x[1], reverse=True)
                     non_zero_scores = [(pt, score) for pt, score in sorted_scores if score > 0]
-                    logger.info(f"Profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                    logger.info(f"Calculated profile scores for candidate_id={candidate_id}: {non_zero_scores[:5]}")  # Top 5
+                    
+                    # Store profile scores and check return value
+                    success = db.insert_or_update_profile_scores(candidate_id, profile_scores)
+                    if success:
+                        logger.info(f"Successfully stored profile scores for candidate_id={candidate_id}")
+                    else:
+                        logger.error(f"FAILED to store profile scores for candidate_id={candidate_id}. Check database logs for details.")
+                        # Log the scores that should have been stored for debugging
+                        logger.error(f"Profile scores that failed to store: {non_zero_scores}")
                     
                     # Set sub_profile_type to the second highest scoring profile type
                     second_highest_profile = get_second_highest_profile_type(profile_scores)

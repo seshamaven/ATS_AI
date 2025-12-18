@@ -1040,8 +1040,20 @@ class ATSDatabase:
         """
         try:
             if not self.is_connected():
-                logger.error("Database not connected. Cannot insert/update profile scores.")
+                logger.error(f"[PROFILE_SCORES] Database not connected. Cannot insert/update profile scores for candidate_id={candidate_id}.")
                 return False
+            
+            # Validate candidate_id
+            if not candidate_id or candidate_id <= 0:
+                logger.error(f"[PROFILE_SCORES] Invalid candidate_id={candidate_id}. Cannot store profile scores.")
+                return False
+            
+            # Validate profile_scores
+            if not profile_scores or not isinstance(profile_scores, dict):
+                logger.error(f"[PROFILE_SCORES] Invalid profile_scores for candidate_id={candidate_id}. Expected dict, got {type(profile_scores)}")
+                return False
+            
+            logger.debug(f"[PROFILE_SCORES] Attempting to store scores for candidate_id={candidate_id} with {len(profile_scores)} profile types")
             
             # Helper function to convert profile type name to column name
             def profile_type_to_column_name(profile_type: str) -> str:
@@ -1072,6 +1084,7 @@ class ATSDatabase:
                     "F#": "fsharp",
                     "VB.NET": "vb_net",
                     "Objective-C": "objective_c",
+                    "Full Stack": "fullstack",  # Database uses fullstack_score, not full_stack_score
                 }
                 if profile_type in special_cases:
                     return f"{special_cases[profile_type]}_score"
@@ -1091,6 +1104,7 @@ class ATSDatabase:
             
             # Generate mapping from PROFILE_TYPE_RULES dynamically
             # Import here to avoid circular imports
+            profile_type_to_column = None  # Initialize for error handling
             try:
                 from profile_type_utils import PROFILE_TYPE_RULES
                 profile_type_to_column = {}
@@ -1128,38 +1142,261 @@ class ATSDatabase:
                     "Business Development": "business_development_score",
                 }
             
-            # Build the INSERT ... ON DUPLICATE KEY UPDATE query
-            columns = ["candidate_id"] + list(profile_type_to_column.values())
+            if not profile_type_to_column:
+                logger.error(f"[PROFILE_SCORES] Failed to generate profile_type_to_column mapping for candidate_id={candidate_id}")
+                return False
+            
+            # Check if table exists
+            try:
+                self.cursor.execute("SHOW TABLES LIKE 'candidate_profile_scores'")
+                table_exists = self.cursor.fetchone() is not None
+                if not table_exists:
+                    logger.error(f"[PROFILE_SCORES] Table 'candidate_profile_scores' does not exist. Cannot store scores for candidate_id={candidate_id}.")
+                    logger.error(f"[PROFILE_SCORES] Please create the table with the required columns.")
+                    return False
+            except Error as e:
+                logger.error(f"[PROFILE_SCORES] Error checking if table exists: {e}")
+                return False
+            
+            # Get existing columns from the table and check for PRIMARY KEY
+            candidate_id_has_key = False  # Initialize outside try block for later use
+            try:
+                self.cursor.execute("DESCRIBE candidate_profile_scores")
+                describe_rows = self.cursor.fetchall()
+                
+                # Handle both dictionary (dictionary=True) and tuple results
+                if describe_rows and isinstance(describe_rows[0], dict):
+                    # Dictionary cursor: use 'Field' key
+                    existing_columns = {row['Field'] for row in describe_rows}
+                else:
+                    # Tuple cursor: use index 0
+                    existing_columns = {row[0] for row in describe_rows}
+                
+                logger.debug(f"[PROFILE_SCORES] Table has {len(existing_columns)} columns")
+                
+                # Check if candidate_id has PRIMARY KEY or UNIQUE constraint (required for ON DUPLICATE KEY UPDATE)
+                candidate_id_is_unique = False
+                has_id_column = False
+                
+                for row in describe_rows:
+                    # Handle both dictionary and tuple formats
+                    if isinstance(row, dict):
+                        col_name = row.get('Field', '')
+                        key_info = str(row.get('Key', ''))
+                    else:
+                        col_name = row[0] if len(row) > 0 else ''
+                        key_info = str(row[3]) if len(row) > 3 else ''
+                    
+                    if col_name == 'candidate_id':
+                        if 'PRI' in key_info or 'UNI' in key_info:
+                            candidate_id_has_key = True
+                            candidate_id_is_unique = True
+                    elif col_name == 'id' and 'PRI' in key_info:
+                        has_id_column = True
+                
+                # Check for UNIQUE constraint on candidate_id separately
+                if not candidate_id_is_unique:
+                    try:
+                        self.cursor.execute("SHOW KEYS FROM candidate_profile_scores WHERE Column_name = 'candidate_id' AND Non_unique = 0")
+                        unique_keys = self.cursor.fetchall()
+                        if unique_keys:
+                            candidate_id_is_unique = True
+                            candidate_id_has_key = True
+                    except:
+                        pass
+                
+                if not candidate_id_has_key:
+                    logger.warning(f"[PROFILE_SCORES] WARNING: candidate_id column does not have PRIMARY KEY or UNIQUE constraint.")
+                    logger.warning(f"[PROFILE_SCORES] ON DUPLICATE KEY UPDATE will not work properly.")
+                    if has_id_column:
+                        logger.warning(f"[PROFILE_SCORES] Table has 'id' as PRIMARY KEY. Consider adding UNIQUE constraint:")
+                        logger.warning(f"[PROFILE_SCORES]   ALTER TABLE candidate_profile_scores ADD UNIQUE KEY unique_candidate_id (candidate_id);")
+                    else:
+                        logger.warning(f"[PROFILE_SCORES] Consider adding PRIMARY KEY: ALTER TABLE candidate_profile_scores ADD PRIMARY KEY (candidate_id);")
+                    
+                    # Try to check if there's a separate primary key constraint
+                    try:
+                        self.cursor.execute("SHOW KEYS FROM candidate_profile_scores WHERE Key_name = 'PRIMARY'")
+                        primary_key_info = self.cursor.fetchall()
+                        if primary_key_info:
+                            logger.info(f"[PROFILE_SCORES] Table has PRIMARY KEY on: {[row[4] for row in primary_key_info]}")
+                        else:
+                            logger.error(f"[PROFILE_SCORES] No PRIMARY KEY found on candidate_profile_scores table.")
+                    except:
+                        pass
+                else:
+                    logger.debug(f"[PROFILE_SCORES] candidate_id has PRIMARY/UNIQUE constraint - ON DUPLICATE KEY UPDATE will work")
+            except Error as e:
+                logger.error(f"[PROFILE_SCORES] Error getting table columns: {e}")
+                return False
+            
+            # Filter profile_type_to_column to only include columns that exist in the table
+            filtered_profile_type_to_column = {}
+            missing_columns = []
+            
+            for profile_type, column_name in profile_type_to_column.items():
+                if column_name in existing_columns:
+                    filtered_profile_type_to_column[profile_type] = column_name
+                else:
+                    missing_columns.append((profile_type, column_name))
+            
+            if missing_columns:
+                logger.warning(f"[PROFILE_SCORES] Table missing {len(missing_columns)} columns. Skipping those profile types:")
+                for profile_type, column_name in missing_columns[:10]:  # Show first 10
+                    logger.warning(f"[PROFILE_SCORES]   - {profile_type} -> {column_name}")
+                if len(missing_columns) > 10:
+                    logger.warning(f"[PROFILE_SCORES]   ... and {len(missing_columns) - 10} more")
+            
+            if not filtered_profile_type_to_column:
+                logger.error(f"[PROFILE_SCORES] No valid columns found in table for candidate_id={candidate_id}. Cannot store any scores.")
+                return False
+            
+            logger.info(f"[PROFILE_SCORES] Will store scores for {len(filtered_profile_type_to_column)} profile types (out of {len(profile_type_to_column)} total)")
+            
+            # Build the INSERT ... ON DUPLICATE KEY UPDATE query using only existing columns
+            columns = ["candidate_id"] + list(filtered_profile_type_to_column.values())
             placeholders = ["%s"] * len(columns)
             values = [candidate_id]
             
             # Add scores in the same order as columns (after candidate_id)
-            for profile_type, column_name in profile_type_to_column.items():
+            for profile_type, column_name in filtered_profile_type_to_column.items():
                 score = profile_scores.get(profile_type, 0.0)
+                # Ensure score is a valid float
+                try:
+                    score = float(score) if score is not None else 0.0
+                except (ValueError, TypeError):
+                    logger.warning(f"[PROFILE_SCORES] Invalid score value for {profile_type}: {score}. Using 0.0")
+                    score = 0.0
                 values.append(score)
             
-            # Build UPDATE clause for ON DUPLICATE KEY UPDATE
-            update_clauses = [f"{col} = VALUES({col})" for col in profile_type_to_column.values()]
+            # Build UPDATE clause for ON DUPLICATE KEY UPDATE (only for existing columns)
+            update_clauses = [f"{col} = VALUES({col})" for col in filtered_profile_type_to_column.values()]
             
-            query = f"""
-                INSERT INTO candidate_profile_scores (
-                    {', '.join(columns)}
-                ) VALUES (
-                    {', '.join(placeholders)}
-                )
-                ON DUPLICATE KEY UPDATE
-                    {', '.join(update_clauses)},
-                    updated_at = CURRENT_TIMESTAMP
-            """
+            # Check if row already exists for this candidate_id
+            row_exists = False
+            if not candidate_id_has_key:
+                # If no PRIMARY/UNIQUE on candidate_id, check if row exists manually
+                try:
+                    self.cursor.execute("SELECT COUNT(*) FROM candidate_profile_scores WHERE candidate_id = %s", (candidate_id,))
+                    row_exists = self.cursor.fetchone()[0] > 0
+                    if row_exists:
+                        logger.debug(f"[PROFILE_SCORES] Row already exists for candidate_id={candidate_id}, will use UPDATE")
+                    else:
+                        logger.debug(f"[PROFILE_SCORES] No existing row for candidate_id={candidate_id}, will use INSERT")
+                except Error as e:
+                    logger.warning(f"[PROFILE_SCORES] Could not check if row exists: {e}")
             
-            self.cursor.execute(query, values)
-            self.connection.commit()
-            logger.info(f"Successfully stored profile scores for candidate_id={candidate_id}")
-            return True
+            # Build query - use ON DUPLICATE KEY UPDATE if candidate_id has key, otherwise use manual UPDATE
+            if candidate_id_has_key:
+                # Standard approach: ON DUPLICATE KEY UPDATE
+                query = f"""
+                    INSERT INTO candidate_profile_scores (
+                        {', '.join(columns)}
+                    ) VALUES (
+                        {', '.join(placeholders)}
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        {', '.join(update_clauses)},
+                        updated_at = CURRENT_TIMESTAMP
+                """
+            else:
+                # Fallback: Check if exists, then UPDATE or INSERT
+                if row_exists:
+                    # Build UPDATE query
+                    update_parts = [f"{col} = %s" for col in filtered_profile_type_to_column.values()]
+                    update_parts.append("updated_at = CURRENT_TIMESTAMP")
+                    query = f"""
+                        UPDATE candidate_profile_scores
+                        SET {', '.join(update_parts)}
+                        WHERE candidate_id = %s
+                    """
+                    # Values for UPDATE: scores first, then candidate_id
+                    update_values = [values[i+1] for i in range(len(filtered_profile_type_to_column))] + [candidate_id]
+                    values = update_values
+                    logger.debug(f"[PROFILE_SCORES] Using UPDATE query (no PRIMARY KEY on candidate_id)")
+                else:
+                    # Use INSERT (without ON DUPLICATE KEY UPDATE)
+                    query = f"""
+                        INSERT INTO candidate_profile_scores (
+                            {', '.join(columns)}
+                        ) VALUES (
+                            {', '.join(placeholders)}
+                        )
+                    """
+                    logger.debug(f"[PROFILE_SCORES] Using INSERT query (no PRIMARY KEY on candidate_id, row doesn't exist)")
+            
+            logger.debug(f"[PROFILE_SCORES] Executing query with {len(columns)} columns for candidate_id={candidate_id}")
+            logger.debug(f"[PROFILE_SCORES] Columns: {columns[:5]}... (showing first 5)")
+            logger.debug(f"[PROFILE_SCORES] Values count: {len(values)}, First few values: {values[:3]}...")
+            
+            try:
+                self.cursor.execute(query, values)
+                rows_affected = self.cursor.rowcount
+                self.connection.commit()
+                
+                if rows_affected == 0:
+                    logger.warning(f"[PROFILE_SCORES] Query executed but no rows affected for candidate_id={candidate_id}.")
+                    if not candidate_id_has_key:
+                        logger.warning(f"[PROFILE_SCORES] This might be because candidate_id doesn't have PRIMARY/UNIQUE key.")
+                        logger.warning(f"[PROFILE_SCORES] Consider running: ALTER TABLE candidate_profile_scores ADD UNIQUE KEY unique_candidate_id (candidate_id);")
+                else:
+                    logger.info(f"[PROFILE_SCORES] Successfully stored profile scores for candidate_id={candidate_id} (rows affected: {rows_affected})")
+                
+                # Log summary of non-zero scores stored (only for columns we're actually storing)
+                stored_non_zero = []
+                for profile_type, column_name in filtered_profile_type_to_column.items():
+                    score = profile_scores.get(profile_type, 0.0)
+                    if score > 0:
+                        stored_non_zero.append((profile_type, score, column_name))
+                
+                if stored_non_zero:
+                    logger.info(f"[PROFILE_SCORES] Stored {len(stored_non_zero)} non-zero scores:")
+                    for profile_type, score, col_name in stored_non_zero[:5]:  # Show first 5
+                        logger.info(f"[PROFILE_SCORES]   - {profile_type}: {score} (column: {col_name})")
+                    if len(stored_non_zero) > 5:
+                        logger.info(f"[PROFILE_SCORES]   ... and {len(stored_non_zero) - 5} more")
+                else:
+                    logger.warning(f"[PROFILE_SCORES] No non-zero scores to store for candidate_id={candidate_id}")
+                
+                return True
+            except Error as e:
+                # Re-raise to be caught by outer exception handler
+                raise
         except Error as e:
-            logger.error(f"Error inserting/updating profile scores: {e}")
+            error_code = e.errno if hasattr(e, 'errno') else None
+            error_msg = str(e)
+            
+            logger.error(f"[PROFILE_SCORES] Database error inserting/updating profile scores for candidate_id={candidate_id}")
+            logger.error(f"[PROFILE_SCORES] Error code: {error_code}, Message: {error_msg}")
+            
+            # Provide specific error messages for common issues
+            if error_code == 1146:  # Table doesn't exist
+                logger.error(f"[PROFILE_SCORES] Table 'candidate_profile_scores' does not exist. Please create it.")
+            elif error_code == 1054:  # Unknown column
+                logger.error(f"[PROFILE_SCORES] Column mismatch detected. The table schema may not match the expected columns.")
+                # Log expected columns if available
+                if profile_type_to_column:
+                    logger.error(f"[PROFILE_SCORES] Expected columns: {list(profile_type_to_column.values())[:5]}... (showing first 5)")
+            elif error_code == 1064:  # SQL syntax error
+                logger.error(f"[PROFILE_SCORES] SQL syntax error. Query may be malformed.")
+                # Query variable is not accessible here, but error message should contain details
+            elif error_code == 1406:  # Data too long
+                logger.error(f"[PROFILE_SCORES] Data too long for a column. Check score values.")
+            
             if self.connection:
-                self.connection.rollback()
+                try:
+                    self.connection.rollback()
+                except Error as rollback_error:
+                    logger.error(f"[PROFILE_SCORES] Error during rollback: {rollback_error}")
+            
+            return False
+        except Exception as e:
+            logger.error(f"[PROFILE_SCORES] Unexpected error inserting/updating profile scores for candidate_id={candidate_id}: {e}", exc_info=True)
+            if self.connection:
+                try:
+                    self.connection.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"[PROFILE_SCORES] Error during rollback: {rollback_error}")
             return False
     
     def search_by_skill(self, query: str, limit: int = 100) -> List[Dict[str, Any]]:

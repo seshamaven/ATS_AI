@@ -381,7 +381,8 @@ PROFILE_TYPE_RULES = [
         "fortran", "fortran programming", "fortran developer", "scientific computing", "scientific fortran"
     }),
     ("Assembly", {
-        "assembly", "assembly language", "asm", "x86 assembly", "arm assembly"
+        # Removed standalone "assembly" to prevent false positives
+        "assembly language", "asm", "x86 assembly", "arm assembly", "assembly programming", "assembly code"
     }),
     ("MATLAB", {
         "matlab", "matlab programming", "matlab developer", "matlab simulink",
@@ -1255,8 +1256,10 @@ PROFILE_TYPE_RULES_ENHANCED: List[Tuple[str, Dict[str, float]]] = [
     (
         "Assembly",
         {
-            "assembly": 5.0, "assembly language": 4.5, "asm": 4.0, "x86 assembly": 3.5,
-            "arm assembly": 3.5,
+            # Removed standalone "assembly" keyword to prevent false positives
+            # Only match specific programming-related terms
+            "assembly language": 5.0, "asm": 5.0, "x86 assembly": 4.5,
+            "arm assembly": 4.5, "assembly programming": 4.5, "assembly code": 4.0,
         }
     ),
     (
@@ -1493,6 +1496,7 @@ NEGATIVE_KEYWORDS: Dict[str, Set[str]] = {
     "Java": {"javascript", "javac", "java island", "java coffee"},
     ".Net": {"avoid .net", "don't use .net", "not .net"},
     "Python": {"python snake", "monty python"},
+    "Assembly": {"assembly line", "assembly meeting", "assembly point", "general assembly", "assembly area"},
 }
 
 # Pre-compiled regex patterns for word boundary matching
@@ -1849,27 +1853,32 @@ def determine_profile_types_enhanced(
         }
         metadata['matched_keywords'][ps.profile_type] = ps.matched_keywords
     
-    # Filter by confidence
+    # Sort by raw_score first (user requirement: highest raw score → profile_type)
+    # Profile scores are already sorted by raw_score from _calculate_normalized_scores()
+    
+    # Filter by confidence (but keep raw_score ranking)
     valid_scores = [ps for ps in profile_scores if ps.confidence >= min_confidence]
     if not valid_scores:
         return ([DEFAULT_PROFILE_TYPE], 0.0, metadata)
     
-    # Multi-profile logic with adaptive requirements based on confidence and score strength
-    top_score = valid_scores[0]
+    # Use raw_score for ranking (not normalized_score)
+    # This ensures profile_type matches database storage (which uses raw_score)
+    top_score = valid_scores[0]  # Already sorted by raw_score (highest first)
     equal_profiles = [top_score.profile_type]
+    top_raw = top_score.raw_score  # Use raw_score for comparison
     top_normalized = top_score.normalized_score
     top_confidence = top_score.confidence
     
-    # Log detailed scoring for debugging
-    logger.info(f"Profile type scoring details:")
+    # Log detailed scoring for debugging (using raw_score for ranking)
+    logger.info(f"Profile type scoring details (ranked by raw_score):")
     for i, ps in enumerate(valid_scores[:max_profiles]):
-        score_diff = top_normalized - ps.normalized_score if i > 0 else 0.0
-        score_diff_ratio = (score_diff / top_normalized * 100) if top_normalized > 0 and i > 0 else 0.0
-        score_ratio = (ps.normalized_score / top_normalized * 100) if top_normalized > 0 else 0.0
+        score_diff = top_raw - ps.raw_score if i > 0 else 0.0
+        score_diff_ratio = (score_diff / top_raw * 100) if top_raw > 0 and i > 0 else 0.0
+        score_ratio = (ps.raw_score / top_raw * 100) if top_raw > 0 else 0.0
         logger.info(
             f"  {i+1}. {ps.profile_type}: "
-            f"normalized={ps.normalized_score:.4f} ({score_ratio:.1f}% of top), "
-            f"raw={ps.raw_score:.2f}, "
+            f"raw={ps.raw_score:.2f} ({score_ratio:.1f}% of top), "
+            f"normalized={ps.normalized_score:.4f}, "
             f"confidence={ps.confidence:.3f}, "
             f"diff={score_diff_ratio:.1f}%, "
             f"keywords={ps.matched_keywords[:3]}"
@@ -1908,8 +1917,9 @@ def determine_profile_types_enhanced(
     logger.info(f"Using {tier} criteria for multi-profile inclusion")
     
     for score in valid_scores[1:max_profiles]:
-        score_diff_ratio = (top_normalized - score.normalized_score) / top_normalized if top_normalized > 0 else 1.0
-        score_ratio = score.normalized_score / top_normalized if top_normalized > 0 else 0.0
+        # Use raw_score for comparisons (matching database storage and user requirement)
+        score_diff_ratio = (top_raw - score.raw_score) / top_raw if top_raw > 0 else 1.0
+        score_ratio = score.raw_score / top_raw if top_raw > 0 else 0.0
         
         # Count only real keywords (exclude phrase matches)
         real_keywords = [kw for kw in score.matched_keywords if not kw.startswith("phrase_match_")]
@@ -1975,7 +1985,7 @@ def determine_profile_types_enhanced(
     
     logger.info(
         f"Detected profiles: {canonical_profiles} "
-        f"(scores: {[f'{ps.normalized_score:.2f}' for ps in valid_scores[:len(equal_profiles)]]}, "
+        f"(raw_scores: {[f'{ps.raw_score:.2f}' for ps in valid_scores[:len(equal_profiles)]]}, "
         f"confidence: {overall_confidence:.2f})"
     )
     
@@ -2377,13 +2387,9 @@ def _calculate_normalized_scores(
         logger.info("Business Development signals detected, but allowing all profiles to compete")
     
     for profile_type, keyword_weights in PROFILE_TYPE_RULES_ENHANCED:
-        # CRITICAL: Require core keyword to exist before scoring this profile type
-        # This prevents false positives (e.g., "Spring Hill College" matching "spring" → "Java")
-        core_keywords = _get_core_keywords(profile_type, keyword_weights)
-        if not _has_core_keyword(text_blob, profile_type, core_keywords):
-            # Skip this profile type entirely if core keyword doesn't exist
-            logger.debug(f"Skipping profile type '{profile_type}' - core keywords not found: {core_keywords}")
-            continue
+        # Removed core keyword requirement - score all profile types based on any matching keywords
+        # This allows profile types to be assigned based on highest score, even if core keyword is missing
+        # (e.g., "spring", "hibernate", "maven" can score Java profile even without "java" keyword)
         
         raw_score = 0.0
         matched_keywords = []
@@ -2468,7 +2474,9 @@ def _calculate_normalized_scores(
                           f"Matched keywords count: {len(matched_keywords)}, "
                           f"text_blob length: {len(text_blob)}")
     
-    return sorted(profile_scores, key=lambda x: x.normalized_score, reverse=True)
+    # Sort by raw_score (descending) to match database storage and user requirement
+    # First highest raw score → profile_type, second highest → sub_profile_type
+    return sorted(profile_scores, key=lambda x: x.raw_score, reverse=True)
 
 def _calculate_confidence(
     normalized_score: float,

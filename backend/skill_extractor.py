@@ -1590,7 +1590,8 @@ def _extract_skills_from_text(text: str, skill_set: Set[str]) -> Set[str]:
         logger.debug(f"[SKILL_EXTRACTION_DEBUG] Last 500 chars of cleaned text: {text_clean[-500:]}")
         # Check if 'azure' exists in text
         if 'azure' in text_clean:
-            logger.warning(f"[SKILL_EXTRACTION_DEBUG] 'azure' FOUND in text at positions: {[m.start() for m in re.finditer(r'\\bazure\\b', text_clean, re.IGNORECASE)]}")
+            azure_pattern = r'\bazure\b'
+            logger.warning(f"[SKILL_EXTRACTION_DEBUG] 'azure' FOUND in text at positions: {[m.start() for m in re.finditer(azure_pattern, text_clean, re.IGNORECASE)]}")
         else:
             logger.info(f"[SKILL_EXTRACTION_DEBUG] 'azure' NOT FOUND in text")
     

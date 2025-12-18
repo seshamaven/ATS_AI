@@ -223,6 +223,8 @@ class ExperienceExtractor:
 
     def __init__(self, resume_text: str) -> None:
         normalised_text = self._collapse_split_numbers(resume_text)
+        # Normalise corrupted year separators like "2019 �?\" 2022" → "2019 - 2022"
+        normalised_text = self._normalise_year_separators(normalised_text)
         self.raw_text = normalised_text
         self.cleaned_text = self._clean_text(normalised_text)
         self.lines = [ln.strip() for ln in self.cleaned_text.splitlines() if ln.strip()]
@@ -236,6 +238,26 @@ class ExperienceExtractor:
         text = re.sub(r"[•\t]", " ", text)
         text = re.sub(r"[ ]{2,}", " ", text)
         return text
+
+    @staticmethod
+    def _normalise_year_separators(text: str) -> str:
+        """
+        Fix corrupted separators between years, e.g. "2019 �?\" 2022" → "2019 - 2022".
+
+        This runs before any date parsing and makes sure year-only ranges and
+        year-to-present ranges have a clean, simple " - " between them.
+        """
+        pattern = re.compile(
+            r"(\d{4})\s*[^\w\s]{1,4}\s*(\d{4}|present|current|till date|till now|ongoing|now)",
+            re.IGNORECASE,
+        )
+
+        def _repl(match: Match[str]) -> str:
+            start_year = match.group(1)
+            end_part = match.group(2)
+            return f"{start_year} - {end_part}"
+
+        return pattern.sub(_repl, text)
 
     @staticmethod
     def _collapse_split_numbers(text: str) -> str:
@@ -335,6 +357,30 @@ class ExperienceExtractor:
         total_days = sum((rng.end - rng.start).days + 1 for rng in ranges)
         return round(total_days / 365.25, 2)
 
+    def _calculate_confidence(self, explicit: Optional[float], ranges: List[DateRange], explicit_used: bool) -> str:
+        """
+        Calculate confidence level based on source and data quality.
+        
+        Rules:
+        - "high": Direct experience value found OR ≥ 3 merged job ranges
+        - "medium": 1–2 valid job ranges
+        - "low": Inferred from weak or partial data
+        """
+        # High confidence: explicit experience found (most reliable)
+        if explicit_used and explicit is not None:
+            return "high"
+        
+        # High confidence: 3+ merged job ranges (strong date-based evidence)
+        if len(ranges) >= 3:
+            return "high"
+        
+        # Medium confidence: 1-2 valid job ranges
+        if len(ranges) >= 1:
+            return "medium"
+        
+        # Low confidence: no ranges found or weak data
+        return "low"
+
     # ----------------------------------------------------------- edu stripping
     def _strip_sections(self, headings: Iterable[str]) -> str:
         """
@@ -417,7 +463,16 @@ class ExperienceExtractor:
             add_range(f"{match.group(1)} {match.group(2)}", f"{match.group(3)} {match.group(4)}")
 
         # Pattern 7 – year only
-        year_range_pattern = re.compile(r"(\d{4})\s*[-–—to]+\s*(\d{4}|present|current|till date)")
+        # Be tolerant to any non-digit separator between years / keywords to handle
+        # corrupted dash characters from PDF extraction (e.g. 2019 �? 2022).
+        # Example matches:
+        #   2019 – 2022
+        #   2019 - 2022
+        #   2019 — Present
+        year_range_pattern = re.compile(
+            r"(\d{4})\s*\D+\s*(\d{4}|present|current|till date)",
+            re.IGNORECASE,
+        )
         for match in year_range_pattern.finditer(text):
             start = self._parse_token(match.group(1))
             end_token = match.group(2)
@@ -546,11 +601,20 @@ class ExperienceExtractor:
             for rng in ranges
         ]
 
+        # Calculate confidence level
+        confidence = self._calculate_confidence(explicit, ranges, explicit_used)
+        
+        # Determine source
+        source = "direct" if explicit_used else "calculated"
+
         return {
             "total_experience_years": total_years,
+            "experience_years": total_years,  # Alias for compatibility with proposed format
             "segments": segments,
             "ignored": self.ignored_entries,
             "explicit_experience_used": explicit_used,
+            "source": source,
+            "confidence": confidence,
         }
 
 

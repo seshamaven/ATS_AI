@@ -1177,6 +1177,16 @@ Resume Text (look for name in FIRST FEW LINES):
                 extractor = ExperienceExtractor(text)
                 result = extractor.extract()
                 total_experience = result.get('total_experience_years', 0.0)
+
+                # DEBUG: log which experience_extractor module/file is in use and what it produced
+                try:
+                    import experience_extractor
+                    logger.info(f"[DEBUG] ExperienceExtractor module file: {getattr(experience_extractor, '__file__', 'unknown')}")
+                except Exception:
+                    logger.info("[DEBUG] Could not import experience_extractor for file inspection")
+
+                logger.info(f"[DEBUG] Experience segments from ExperienceExtractor: {result.get('segments', [])}")
+                logger.info(f"[DEBUG] Experience total_years from ExperienceExtractor: {total_experience}")
                 
                 # Note: AI fallback is not implemented in the new ExperienceExtractor
                 # The new extractor handles all patterns without needing AI
@@ -1514,29 +1524,45 @@ Resume Text (look for name in FIRST FEW LINES):
                     # Get the first (highest) degree - keep the full extracted string with specialization
                     highest_degree_str = education_list[0]
                     
-                    # Use the extracted string as-is to preserve specialization (e.g., "BTech, Civil Engineering")
-                    # Only map to generic categories if the extracted string is too generic
-                    highest_degree_lower = highest_degree_str.lower()
-                    
-                    # If the extracted string is just a generic word like "bachelor" or "bachelors", map it
-                    # But if it contains specific degree info (like "BTech" or "B.Tech"), keep it as-is
-                    if highest_degree_str.strip().lower() in ['bachelor', 'bachelors', 'bachelor degree']:
-                        education_info['highest_degree'] = 'Bachelors'
-                    elif highest_degree_str.strip().lower() in ['master', 'masters', 'master degree']:
-                        education_info['highest_degree'] = 'Masters'
-                    elif highest_degree_str.strip().lower() in ['phd', 'doctorate', 'ph.d']:
-                        education_info['highest_degree'] = 'PhD'
-                    elif highest_degree_str.strip().lower() == 'diploma':
-                        education_info['highest_degree'] = 'Diploma'
+                    # CRITICAL: Validate that we got a meaningful string
+                    if not highest_degree_str or not isinstance(highest_degree_str, str):
+                        logger.warning(f"Invalid education_list[0]: {highest_degree_str}, type: {type(highest_degree_str)}")
+                        education_info['highest_degree'] = None
                     else:
-                        # Keep the full extracted string (preserves "BTech, Civil Engineering" or "B.Tech in CSE")
-                        education_info['highest_degree'] = highest_degree_str
+                        highest_degree_str = highest_degree_str.strip()
+                        highest_degree_lower_stripped = highest_degree_str.lower()
+                        
+                        # CRITICAL: Only map to generic if EXACTLY a generic word (no additional text)
+                        # Check for exact match (must be exactly one of these, nothing else)
+                        is_exact_generic = (
+                            highest_degree_lower_stripped == 'bachelor' or
+                            highest_degree_lower_stripped == 'bachelors' or
+                            highest_degree_lower_stripped == 'bachelor degree'
+                        )
+                        
+                        if is_exact_generic:
+                            logger.info(f"Mapping generic '{highest_degree_str}' to 'Bachelors'")
+                            education_info['highest_degree'] = 'Bachelors'
+                        elif highest_degree_lower_stripped in ['master', 'masters', 'master degree']:
+                            education_info['highest_degree'] = 'Masters'
+                        elif highest_degree_lower_stripped in ['phd', 'doctorate', 'ph.d']:
+                            education_info['highest_degree'] = 'PhD'
+                        elif highest_degree_lower_stripped == 'diploma':
+                            education_info['highest_degree'] = 'Diploma'
+                        else:
+                            # Keep the full extracted string (preserves "Bachelor's Degree in Civil Engineering", "BTech, Civil Engineering", etc.)
+                            logger.info(f"Preserving full degree string: '{highest_degree_str}'")
+                            education_info['highest_degree'] = highest_degree_str
                 
                 logger.info(f"EducationExtractor found {len(education_list)} degrees: {education_list}")
+                if education_list:
+                    logger.info(f"EducationExtractor highest degree: '{education_info['highest_degree']}'")
                 return education_info
                 
             except Exception as e:
                 logger.warning(f"EducationExtractor failed: {e}, falling back to regex extraction")
+                import traceback
+                logger.debug(f"EducationExtractor error traceback: {traceback.format_exc()}")
         
         # Fallback to original regex-based extraction
         education_info = {
@@ -1554,15 +1580,38 @@ Resume Text (look for name in FIRST FEW LINES):
             edu_text = edu_match.group(1)
             education_info['education_details'].append(edu_text.strip())
         
-        # Extract degree keywords
+        # Extract degree keywords - but try to preserve specialization if found
         degrees_found = []
         for keyword in self.EDUCATION_KEYWORDS:
             pattern = r'\b' + re.escape(keyword) + r'\b'
             if re.search(pattern, text_lower):
                 degrees_found.append(keyword)
         
+        # CRITICAL: Try to extract full degree with specialization before falling back to generic
+        # Look for patterns like "Bachelor's Degree in X" or "Bachelor of X"
+        specialization_patterns = [
+            r"\b(Bachelor(?:'?s)?\s+Degree\s+in\s+[A-Za-z][A-Za-z\s&/\-\.]+)",
+            r"\b(Bachelor(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)",
+            r'\b(B\.?Tech(?:\s+in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)',
+            r'\b(B\.?E\.?(?:\s+in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)',
+        ]
+        
+        full_degree_match = None
+        for pattern in specialization_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                full_degree_match = match.group(1).strip()
+                # Clean up - remove trailing dashes, years, etc.
+                full_degree_match = re.sub(r'\s*[–—]\s*\d{4}.*$', '', full_degree_match).strip()
+                full_degree_match = re.sub(r'\s*\([^)]*\).*$', '', full_degree_match).strip()
+                if len(full_degree_match) > 10:  # Must be substantial
+                    break
+        
         # Determine highest degree (simple heuristic)
-        if any(deg in degrees_found for deg in ['phd', 'doctorate']):
+        if full_degree_match:
+            # Use the full degree with specialization
+            education_info['highest_degree'] = full_degree_match
+        elif any(deg in degrees_found for deg in ['phd', 'doctorate']):
             education_info['highest_degree'] = 'PhD'
         elif any(deg in degrees_found for deg in ['m.tech', 'm.e.', 'master', 'mtech', 'mca', 'msc', 'mba', 'ma']):
             education_info['highest_degree'] = 'Masters'

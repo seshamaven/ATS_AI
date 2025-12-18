@@ -266,21 +266,30 @@ class EducationExtractor:
             (r'\b(M\.?Com\.?(?:\s+(?:in|from)\s+[A-Za-z][A-Za-z\s&/\-\.]+)?)', 6),
             
             # ==================== Bachelor's Degrees (Level 5) ====================
-            # Full form: Bachelor's of/in X
+            # CRITICAL: Order matters! More specific patterns MUST come before generic ones
+            
+            # Pattern 1: "Bachelor's Degree in X" - MOST SPECIFIC, MUST BE FIRST
+            (r"\b(Bachelor(?:'?s)?\s+Degree\s+in\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 5),
+            # Pattern 2: "Bachelor's Degree" (without "in") - still specific
+            (r"\b(Bachelor(?:'?s)?\s+Degree(?:\s+[A-Za-z][A-Za-z\s&/\-\.,]+)?)", 5),
+            # Pattern 3: "Bachelor's of X" or "Bachelor's in X" - specific with specialization
             (r"\b(Bachelor(?:'?s)?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)", 5),
+            # Pattern 4: "Bachelors of X" or "Bachelors in X" (without apostrophe)
             (r'\b(Bachelors?\s+(?:of|in)\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
-            (r"\b(Bachelor(?:'?s)?\s+Degree(?:\s+in)?[A-Za-z\s&/\-\.,]*)", 5),
-            # B.A. / BA directly followed by subject: e.g., "BA English Literature"
+            # Pattern 5: B.A. / BA directly followed by subject: e.g., "BA English Literature"
             (r'\b(B\.?A\.?\s+[A-Za-z][A-Za-z\s&/\-\.]+)', 5),
-            # Specific pattern for "Bachelor's in Computer Science"
+            # Pattern 6: Specific pattern for "Bachelor's in Computer Science"
             (r"\b(Bachelor'?s?\s+in\s+Computer\s+Science)\b", 5),
-            # Pattern for "Computer Science, Bachelors (BSCS)" format - fixed word boundary issue
+            # Pattern 7: "Computer Science, Bachelors (BSCS)" format
             (r'\b(Computer\s+Science,?\s+Bachelors?\s*\([A-Z]+\))', 5),
-            # Pattern for "Field, Bachelors (Abbreviation)" format - more general (e.g., "Computer Science, Bachelors (BSCS)")
+            # Pattern 8: "Field, Bachelors (Abbreviation)" format - more general
             (r'\b([A-Za-z][A-Za-z\s&/\-\.]+,?\s+Bachelors?\s*\([A-Z]+\))', 5),
-            # Standalone "Bachelors" pattern (with or without parentheses abbreviation)
+            # Pattern 9: Standalone "Bachelors" with parentheses abbreviation
             (r'\b(Bachelors?\s*\([A-Z]+\))', 5),
-            (r'\b(Bachelors?)\b', 5),  # Standalone "Bachelors" or "Bachelor"
+            # Pattern 10: CRITICAL: Only match standalone "Bachelors" if NOT part of a longer degree phrase
+            # This MUST be LAST to avoid matching when a more specific pattern exists
+            # Use negative lookahead to ensure it's not followed by "'s", " Degree", " of", or " in"
+            (r'\b(Bachelors?)(?!\s*[\'s]|\s+Degree|\s+of|\s+in)\b', 5),  # Standalone "Bachelors" or "Bachelor" (not part of longer phrase)
             # B.Tech / B. Tech / BTech - with specialization (comma, in, from)
             (r'\b(B\.?\s*[-]?\s*Tech\.?(?:nology)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
             (r'\b(B\.?\s*[-]?\s*E\.?(?:ng)?(?:[\s,]+(?:in\s+)?[A-Za-z][A-Za-z\s&/\-\.]+)?)', 5),
@@ -838,9 +847,51 @@ class EducationExtractor:
                             break
                     
                     # Also truncate at common stop points
-                    for stop in [' at ', ' - ', '\n', '|', '–', '—', ',  ', '  ']:
+                    # BUT preserve specializations - don't truncate if it's part of the degree name
+                    # Only truncate at these if they're followed by dates/years or other non-degree text
+                    for stop in [' at ', ' - ', '\n', '|', ',  ', '  ']:
                         if stop in clean_degree:
-                            clean_degree = clean_degree.split(stop)[0]
+                            # Check if what comes after the stop is a year/date (e.g., "– 2016")
+                            parts = clean_degree.split(stop, 1)
+                            if len(parts) == 2:
+                                after_stop = parts[1].strip()
+                                # If it's a year (4 digits) or date pattern, truncate there
+                                if re.match(r'^\d{4}', after_stop) or re.match(r'^\d{1,2}[/-]\d{4}', after_stop):
+                                    clean_degree = parts[0]
+                                    break
+                                # If it's clearly not part of degree (e.g., university name, location), truncate
+                                if any(word in after_stop.lower() for word in ['university', 'college', 'institute', 'school', 'minor in', 'major in']):
+                                    # Don't truncate - this might be part of the degree context
+                                    pass
+                                else:
+                                    # Might be part of degree name, be conservative and don't truncate
+                                    pass
+                    
+                    # Handle em dashes and en dashes separately (often used before years)
+                    # CRITICAL: Only truncate if the dash is followed by a year/date
+                    # DO NOT truncate if it's part of the degree name (e.g., "Bachelor's Degree in Civil Engineering – 2016")
+                    for dash in ['–', '—', '-']:
+                        if dash in clean_degree:
+                            parts = clean_degree.split(dash, 1)
+                            if len(parts) == 2:
+                                before_dash = parts[0].strip()
+                                after_dash = parts[1].strip()
+                                
+                                # CRITICAL: Only truncate if:
+                                # 1. Followed by year/date (e.g., "– 2016")
+                                # 2. AND the part before dash contains "Degree" or "in" (indicating it's a complete degree phrase)
+                                # This prevents truncating "Bachelor's Degree in Civil Engineering" to just "Bachelor"
+                                is_complete_degree = 'degree' in before_dash.lower() or ' in ' in before_dash.lower()
+                                
+                                if is_complete_degree and (re.match(r'^\d{4}', after_dash) or re.match(r'^\d{1,2}[/-]\d{4}', after_dash)):
+                                    # Safe to truncate - we have a complete degree phrase before the dash
+                                    clean_degree = before_dash
+                                    break
+                                # If followed by "(minor in" or "(major in", truncate at dash but keep degree
+                                elif is_complete_degree and re.match(r'^\s*\(', after_dash):
+                                    clean_degree = before_dash
+                                    break
+                                # Otherwise, don't truncate - might be part of degree name
                     
                     # Only truncate at "from" if it's followed by common non-university words
                     # Keep "from University/College/Institute" patterns
@@ -910,13 +961,93 @@ class EducationExtractor:
                     degrees.append((clean_degree, level, match))
         
         # Remove duplicates, keeping highest level
+        # CRITICAL: If we have both a generic match (e.g., "Bachelor") and a specific match 
+        # (e.g., "Bachelor's Degree in Civil Engineering"), prefer the specific one
         seen = {}
         for name, level, original in degrees:
-            key = name[:30].lower()
-            if key not in seen or level > seen[key][1]:
+            # Use first word as key to group related degrees (e.g., "bachelor", "bachelor's", "bachelors")
+            name_lower = name.lower().strip()
+            first_word = name_lower.split()[0] if name_lower.split() else name_lower[:10]
+            key = first_word
+            
+            # If we already have a match for this key, prefer the longer/more specific one
+            if key in seen:
+                existing_name, existing_level, existing_orig = seen[key]
+                existing_lower = existing_name.lower().strip()
+                
+                # CRITICAL: Always prefer longer, more specific names at the same level
+                # e.g., "Bachelor's Degree in Civil Engineering" > "Bachelor"
+                if level == existing_level:
+                    if len(name) > len(existing_name):
+                        seen[key] = (name, level, original)
+                    # Also prefer if it contains "degree" or "in" (more specific)
+                    elif 'degree' in name_lower or ' in ' in name_lower:
+                        if 'degree' not in existing_lower and ' in ' not in existing_lower:
+                            seen[key] = (name, level, original)
+                # If different level, prefer higher level
+                elif level > existing_level:
+                    seen[key] = (name, level, original)
+            else:
                 seen[key] = (name, level, original)
         
-        return [(name, level, orig) for name, level, orig in seen.values()]
+        # Additional pass: Remove generic matches if we have specific matches
+        # e.g., remove "Bachelor" if we have "Bachelor's Degree in Civil Engineering"
+        filtered_degrees = []
+        generic_keys = set()
+        specific_keys = set()
+        
+        for name, level, orig in seen.values():
+            name_lower = name.lower().strip()
+            # Check if it's a generic match (exact match only)
+            if name_lower in ['bachelor', 'bachelors', 'master', 'masters', 'phd', 'doctorate', 'diploma']:
+                generic_keys.add((name_lower, level))
+            else:
+                # For specific matches, use a broader key to catch variations
+                # e.g., "bachelor's degree in civil engineering" -> "bachelor"
+                base_key = name_lower.split()[0] if name_lower.split() else name_lower[:10]
+                specific_keys.add((base_key, level))
+        
+        # Only add generic matches if no specific match exists for that level
+        # CRITICAL: Always prefer specific matches over generic ones
+        for name, level, orig in seen.values():
+            name_lower = name.lower().strip()
+            is_generic = name_lower in ['bachelor', 'bachelors', 'master', 'masters', 'phd', 'doctorate', 'diploma']
+            
+            if is_generic:
+                # Check if there's a specific match at the same level that starts with the same base word
+                base_key = name_lower  # For "bachelor", base_key is "bachelor"
+                has_specific = any(
+                    level == spec_level and (spec_key == base_key or spec_key.startswith(base_key))
+                    for spec_key, spec_level in specific_keys
+                )
+                if not has_specific:
+                    filtered_degrees.append((name, level, orig))
+                else:
+                    # Log that we're filtering out a generic match in favor of a specific one
+                    logger.debug(f"Filtering out generic '{name}' in favor of specific match at level {level}")
+            else:
+                filtered_degrees.append((name, level, orig))
+        
+        # Final check: if we still have both generic and specific, remove generic
+        final_filtered = []
+        generic_names = {name.lower().strip() for name, _, _ in filtered_degrees 
+                        if name.lower().strip() in ['bachelor', 'bachelors', 'master', 'masters', 'phd', 'doctorate', 'diploma']}
+        specific_names = {name.lower().strip() for name, _, _ in filtered_degrees 
+                         if name.lower().strip() not in ['bachelor', 'bachelors', 'master', 'masters', 'phd', 'doctorate', 'diploma']}
+        
+        for name, level, orig in filtered_degrees:
+            name_lower = name.lower().strip()
+            # If it's generic and we have any specific match at the same level, skip it
+            if name_lower in generic_names and specific_names:
+                # Check if any specific name starts with the same base word
+                base_word = name_lower.split()[0] if name_lower.split() else name_lower
+                has_matching_specific = any(spec_name.startswith(base_word) for spec_name in specific_names)
+                if has_matching_specific:
+                    logger.debug(f"Final filter: Removing generic '{name}' because specific match exists")
+                    continue
+            final_filtered.append((name, level, orig))
+        
+        return final_filtered if final_filtered else [(name, level, orig) for name, level, orig in seen.values()]
     
     def get_highest_degree(self, degrees: List[Tuple[str, int, str]]) -> Tuple[Optional[str], int]:
         """Get the highest degree from a list of (degree_name, level, original) tuples."""
